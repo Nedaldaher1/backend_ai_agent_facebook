@@ -59,11 +59,11 @@ export class ProductsRepository {
   /** Resolve a dialect color term to its canonical family, or null if unknown. */
   async resolveColorFamily(term: string): Promise<string | null> {
     const [row] = await this.db
-      .select({ colorFamily: colorSynonyms.colorFamily })
+      .select({ canonicalFamily: colorSynonyms.canonicalFamily })
       .from(colorSynonyms)
       .where(eq(colorSynonyms.term, term))
       .limit(1);
-    return row?.colorFamily ?? null;
+    return row?.canonicalFamily ?? null;
   }
 
   /** Admin write path — new products start unpublished (draft). */
