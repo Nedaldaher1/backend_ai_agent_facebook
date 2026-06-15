@@ -3,16 +3,22 @@ import { ConversationsModule } from '@/modules/conversations/conversations.modul
 import { KnowledgeModule } from '@/modules/knowledge/knowledge.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { ProductsModule } from '@/modules/products/products.module';
+import { AgentBehaviorRepository } from './agent-behavior.repository';
+import { AgentBehaviorService } from './agent-behavior.service';
 import { AgentService } from './agent.service';
 
 /**
  * Importing a module gives access to its *exported services* only. That is the
  * single allowed channel between domains — if you ever need forwardRef() here,
  * the boundary is wrong, not the wiring.
+ *
+ * agent_behavior is owned here (the agent's own persona config), so its
+ * repository/service are local providers; AgentBehaviorService is exported for
+ * the admin UI to manage personas.
  */
 @Module({
   imports: [ProductsModule, ConversationsModule, OrdersModule, KnowledgeModule],
-  providers: [AgentService],
-  exports: [AgentService],
+  providers: [AgentService, AgentBehaviorService, AgentBehaviorRepository],
+  exports: [AgentService, AgentBehaviorService],
 })
 export class AgentModule {}
