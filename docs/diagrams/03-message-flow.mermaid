@@ -1,0 +1,29 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+flowchart TD
+    A["رسالة الزبون تصل<br/>Playground الآن / ManyChat لاحقاً"]
+    B["المحوّل يستخرج:<br/>psid, text, last_image_url, ad_ref"]
+    C{"فيه صورة؟"}
+    D["vision.ts → Claude<br/>استخراج صفات الصورة"]
+    E["agent.generate(text + الصفات,<br/>memory: resource=psid, thread)"]
+    F["Mastra يحمّل ذاكرة المحادثة<br/>تلقائياً عبر resource / thread"]
+    G{"Claude يقرّر:<br/>أي أداة؟"}
+    H["تنفيذ الأدوات<br/>search_products / availability / media<br/>استعلام Postgres"]
+    I["Claude يصيغ الرد النهائي<br/>+ المنتجات المعروضة"]
+    J["تنسيق الرد<br/>Playground / Dynamic Block v2 (cards)"]
+    K["حفظ الدور في الذاكرة"]
+    L["الرد يصل الزبون"]
+
+    A --> B --> C
+    C -->|نعم| D --> E
+    C -->|لا| E
+    E --> F --> G
+    G -->|يحتاج بيانات| H --> I
+    G -->|لا يحتاج أداة| I
+    I --> J --> K --> L
+
+    style D fill:#FBEBE4,stroke:#D97757
+    style G fill:#FBEBE4,stroke:#D97757
+    style I fill:#FBEBE4,stroke:#D97757
+    style H fill:#ECFDF5,stroke:#10B981
+    style F fill:#FEF3C7,stroke:#F59E0B
+    style K fill:#FEF3C7,stroke:#F59E0B

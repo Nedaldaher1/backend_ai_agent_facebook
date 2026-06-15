@@ -1,0 +1,23 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+flowchart TB
+    LOGIN["🔐 تسجيل الدخول"]
+    SHELL["هيكل لوحة التحكم<br/>تنقّل + حماية"]
+    P["📦 المنتجات<br/>قائمة + بحث/فلترة"]
+    PF["نموذج منتج<br/>كل الصفات + رفع صور<br/>+ (اختياري) استخراج بالرؤية + نشر"]
+    C["🎨 الألوان والمرادفات<br/>نبيتي → أحمر"]
+    B["⚙️ سلوك الوكيل<br/>الشخصية + النبرة + القواعد<br/>+ ترحيب + رد احتياطي"]
+    K["📚 قاعدة المعرفة / FAQ<br/>سياسات + شحن + دفع"]
+    CONV["💬 سجل المحادثات<br/>مرحلة الوكيل — لاحقاً"]
+
+    LOGIN --> SHELL
+    SHELL --> P --> PF
+    SHELL --> C
+    SHELL --> B
+    SHELL --> K
+    SHELL -. لاحقاً .-> CONV
+
+    style LOGIN fill:#FEF3C7,stroke:#F59E0B
+    style SHELL fill:#E0E7FF,stroke:#6366F1
+    style P fill:#ECFDF5,stroke:#10B981
+    style PF fill:#ECFDF5,stroke:#10B981
+    style CONV fill:#F3F4F6,stroke:#9CA3AF,stroke-dasharray: 5 5

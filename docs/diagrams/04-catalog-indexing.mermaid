@@ -1,0 +1,15 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+flowchart LR
+    A["صور المنتجات<br/>الكتالوج"]
+    B["catalog-index.ts<br/>سكربت محلي — لكل منتج"]
+    C["Claude Vision<br/>استخراج صفات مُهيكلة"]
+    D["تقنين الألوان<br/>نبيتي / عنابي → أحمر"]
+    E[("PostgreSQL<br/>color_family, shade, sleeve,<br/>fabric, price, sizes, tags")]
+    F["جاهز للبحث:<br/>search_products / find_similar"]
+
+    A --> B --> C --> D --> E --> F
+
+    style C fill:#FBEBE4,stroke:#D97757
+    style D fill:#FEF3C7,stroke:#F59E0B
+    style E fill:#FFF7ED,stroke:#F59E0B
+    style F fill:#ECFDF5,stroke:#10B981

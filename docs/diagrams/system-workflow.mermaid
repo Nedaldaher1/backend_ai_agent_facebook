@@ -1,0 +1,33 @@
+%%{init: {'theme':'base', 'themeVariables': {
+  'fontFamily':'Tahoma, Arial, sans-serif',
+  'primaryColor':'#ffffff',
+  'primaryTextColor':'#000000',
+  'primaryBorderColor':'#1f2937',
+  'lineColor':'#1f2937',
+  'textColor':'#000000',
+  'nodeTextColor':'#000000'
+}}}%%
+flowchart TD
+    A["📩 رسالة الزبون تصل<br/>ManyChat → الـ Backend"]
+    B["تحميل ذاكرة المحادثة<br/>قراءة: conversations, messages"]:::read
+    C["تحميل سلوك الوكيل + المعرفة<br/>قراءة: agent_behavior, knowledge_entries"]:::read
+    D{"فيه صورة؟"}
+    E["تحليل الصورة بالرؤية (Claude)<br/>استخراج صفات"]:::ai
+    F["الوكيل (Claude) يقرّر الأداة"]:::ai
+    G["search_products<br/>قراءة: products + color_synonyms<br/>(is_published = true فقط)"]:::read
+    H["صياغة الرد + اختيار المنتجات"]
+    I["حفظ الدور<br/>كتابة: messages, conversations.state"]:::write
+    J{"نية طلب COD؟"}
+    K["تسجيل الطلب<br/>كتابة: orders, order_items"]:::write
+    L["📤 الرد للزبون<br/>نص + معرض cards"]
+
+    A --> B --> C --> D
+    D -->|نعم| E --> F
+    D -->|لا| F
+    F --> G --> H --> I --> J
+    J -->|نعم| K --> L
+    J -->|لا| L
+
+    classDef read fill:#ffffff,stroke:#10b981,color:#111827
+    classDef write fill:#ffffff,stroke:#f59e0b,color:#111827
+    classDef ai fill:#ffffff,stroke:#d97757,color:#111827

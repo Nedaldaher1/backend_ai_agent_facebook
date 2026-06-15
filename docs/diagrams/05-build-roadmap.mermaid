@@ -1,0 +1,19 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+flowchart TB
+    P0["Phase 0 — إعداد محلي<br/>Next.js + Mastra + Postgres (Docker)<br/>.env: ANTHROPIC_API_KEY"]
+    P1["Phase 1 — فهرسة الكتالوج<br/>استخراج صفات المنتجات بالرؤية"]
+    P2["Phase 2 — الوكيل + search_products<br/>اختبر 'العبايات الحمراء' في Playground"]
+    P3["Phase 3 — الذاكرة<br/>resourceId / threadId — تماسك السياق"]
+    P4["Phase 4 — الرؤية + بقية الأدوات<br/>توفّر / معرض / تصعيد / طلب<br/>+ الحالات الشاذة + الحواجز"]
+    P5["Phase 5 — محوّل ManyChat<br/>+ اختبار E2E عبر نفق"]
+    P6["Phase 6 (لاحقاً) — النشر<br/>Postgres سحابي + تخزين صور + Redis/debounce"]
+
+    P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6
+
+    style P0 fill:#EEF0FF,stroke:#6366F1
+    style P1 fill:#FBEBE4,stroke:#D97757
+    style P2 fill:#ECFDF5,stroke:#10B981
+    style P3 fill:#FEF3C7,stroke:#F59E0B
+    style P4 fill:#EEF0FF,stroke:#6366F1
+    style P5 fill:#E8F0FE,stroke:#1877F2
+    style P6 fill:#F3F4F6,stroke:#9CA3AF,stroke-dasharray: 5 5

@@ -1,0 +1,43 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+flowchart TB
+    subgraph LOCAL["💻 بيئتك المحلية — localhost (المرحلة الحالية)"]
+        direction TB
+        subgraph APP["تطبيق Next.js"]
+            PLAY["Mastra Playground<br/>واجهة الاختبار المحلية"]
+            UI["لوحة التحكم (Admin)"]
+            API["api/manychat — المحوّل<br/>يُضاف بالنهاية"]
+        end
+        subgraph BRAIN["دماغ الوكيل — Mastra"]
+            AGENT["Sales Agent<br/>instructions + tools + memory"]
+            VISION["خط الرؤية — vision.ts"]
+            INDEX["فهرسة الكتالوج — catalog-index.ts"]
+        end
+        DB[("PostgreSQL محلي<br/>الكتالوج + الذاكرة + الصفات")]
+        IMG["صور محلية<br/>عيّنات للاختبار"]
+    end
+
+    CLAUDE["☁️ Claude API<br/>الخدمة الخارجية الوحيدة"]
+    TUNNEL["نفق cloudflared / ngrok<br/>HTTPS عام مؤقت"]
+    MC["ManyChat + صفحة فيسبوك<br/>مرحلة لاحقة"]
+
+    PLAY --> AGENT
+    UI --> DB
+    AGENT --> VISION
+    AGENT <--> DB
+    VISION --> IMG
+    INDEX --> DB
+    AGENT -->|استدعاء النموذج| CLAUDE
+    VISION -->|تحليل الصور| CLAUDE
+    INDEX -->|استخراج الصفات| CLAUDE
+
+    API -. عند الربط .-> AGENT
+    MC -. عبر النفق .-> TUNNEL
+    TUNNEL -. إلى .-> API
+
+    style LOCAL fill:#EEF0FF,stroke:#6366F1
+    style BRAIN fill:#E0E7FF,stroke:#6366F1
+    style CLAUDE fill:#FBEBE4,stroke:#D97757
+    style DB fill:#FFF7ED,stroke:#F59E0B
+    style MC fill:#E8F0FE,stroke:#1877F2,stroke-dasharray: 5 5
+    style TUNNEL fill:#F3F4F6,stroke:#9CA3AF,stroke-dasharray: 5 5
+    style API fill:#F3F4F6,stroke:#9CA3AF,stroke-dasharray: 5 5

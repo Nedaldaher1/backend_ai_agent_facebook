@@ -1,0 +1,72 @@
+%%{init: {'theme':'base', 'themeVariables': {
+  'fontFamily':'Tahoma, Arial, sans-serif',
+  'primaryColor':'#ffffff',
+  'primaryTextColor':'#000000',
+  'primaryBorderColor':'#1f2937',
+  'lineColor':'#1f2937',
+  'textColor':'#000000',
+  'attributeBackgroundColorOdd':'#ffffff',
+  'attributeBackgroundColorEven':'#f3f4f6'
+}}}%%
+erDiagram
+    PRODUCTS {
+        uuid id PK
+        text name
+        text description
+        text sku
+        numeric price_jod
+        text color_family "مُقنّن — مفهرس"
+        text color_shade "نبيتي/عنابي"
+        text sleeve_type
+        text fabric
+        text embellishment
+        text occasion
+        text_array sizes
+        text stock_status "in_stock/low/out"
+        text_array image_urls
+        text_array tags
+        jsonb attributes "صفات مرنة من الرؤية"
+        bool is_published "يعرضه الوكيل؟"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    COLOR_SYNONYMS {
+        uuid id PK
+        text term "نبيتي"
+        text canonical_family "أحمر"
+        timestamp created_at
+    }
+
+    AGENT_BEHAVIOR {
+        uuid id PK
+        text persona
+        text tone "اللهجة"
+        text rules "القواعد + الحواجز"
+        text greeting
+        text fallback_message
+        jsonb escalation_triggers
+        bool is_active
+        timestamp updated_at
+    }
+
+    KNOWLEDGE_ENTRIES {
+        uuid id PK
+        text category "faq/policy/shipping"
+        text title
+        text content
+        text_array tags
+        int priority
+        bool is_published
+        timestamp updated_at
+    }
+
+    ADMIN_USERS {
+        uuid id PK
+        text email
+        text password_hash
+        text role
+        timestamp created_at
+    }
+
+    PRODUCTS }o--|| COLOR_SYNONYMS : "تطبيع اللون"

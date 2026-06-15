@@ -1,0 +1,52 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+flowchart TD
+    A["👤 الزبون يرسل رسالة<br/>على صفحة الفيسبوك"]
+    B["Messenger Platform<br/>Webhook رسمي من Meta"]
+
+    subgraph MC["ManyChat — طبقة الربط المدعومة رسمياً"]
+        direction TB
+        C["تشغيل Default Reply<br/>أو Keyword Trigger"]
+        D["External Request — ميزة Pro<br/>POST: نص الرسالة + معرّف المشترك"]
+        E["حفظ الرد في Custom Field"]
+        F["إرسال الرد للزبون"]
+    end
+
+    subgraph BE["الـ Backend — الوكيل اليدوي (Next.js API)"]
+        direction TB
+        G["نقطة api/webhook<br/>التحقق من صحة الطلب"]
+        H["جلب قاعدة المعرفة<br/>+ إعدادات أسلوب الرد"]
+        I["بناء الـ Prompt<br/>واستدعاء Claude API"]
+        J["إرجاع رد بصيغة JSON"]
+    end
+
+    K["🤖 Claude<br/>يولّد الرد المناسب"]
+
+    subgraph DB["قاعدة البيانات — PostgreSQL"]
+        direction TB
+        L["معلومات المنتجات والأسعار<br/>والأسئلة الشائعة"]
+        M["إعدادات السلوك<br/>النبرة + القواعد + رد احتياطي"]
+        N["سجل المحادثات — اختياري"]
+    end
+
+    subgraph ADMIN["لوحة التحكم — Frontend"]
+        direction TB
+        O["🛠️ أنت / المدير"]
+        P["إدارة معلومات المتجر"]
+        Q["إدارة أسلوب الرد"]
+    end
+
+    A --> B --> C --> D --> G --> H --> I --> K --> J --> E --> F
+    F -->|"Send API ضمن نافذة 24 ساعة"| A
+
+    H -.->|قراءة| L
+    H -.->|قراءة| M
+    I -.->|تسجيل اختياري| N
+
+    O --> P -->|كتابة| L
+    O --> Q -->|كتابة| M
+
+    style MC fill:#E6FAF6,stroke:#00C2A8
+    style BE fill:#EEF0FF,stroke:#6366F1
+    style DB fill:#FFF7ED,stroke:#F59E0B
+    style ADMIN fill:#FFF1F2,stroke:#F43F5E
+    style K fill:#FBEBE4,stroke:#D97757

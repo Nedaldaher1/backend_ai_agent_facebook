@@ -1,0 +1,49 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+erDiagram
+    PRODUCTS {
+        uuid id PK
+        text name
+        numeric price_jod
+        text color_family "مُقنّن — مفهرس"
+        text color_shade "نبيتي/عنابي"
+        text sleeve_type
+        text fabric
+        text_array sizes
+        text stock_status "in_stock/low/out"
+        text_array image_urls
+        text_array tags
+        jsonb attributes "صفات مرنة من الرؤية"
+        bool is_published "هل يعرضه الوكيل"
+    }
+    COLOR_SYNONYMS {
+        uuid id PK
+        text term "نبيتي"
+        text canonical_family "أحمر"
+    }
+    AGENT_BEHAVIOR {
+        uuid id PK
+        text persona
+        text tone "اللهجة"
+        text rules "القواعد + الحواجز"
+        text greeting
+        text fallback_message
+        jsonb escalation_triggers
+        bool is_active
+    }
+    KNOWLEDGE_ENTRIES {
+        uuid id PK
+        text category "faq/policy/shipping"
+        text title
+        text content
+        text_array tags
+        int priority
+        bool is_published
+    }
+    ADMIN_USERS {
+        uuid id PK
+        text email
+        text password_hash
+        text role
+    }
+
+    PRODUCTS }o--|| COLOR_SYNONYMS : "تطبيع اللون عند البحث"

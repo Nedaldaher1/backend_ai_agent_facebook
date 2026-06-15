@@ -1,0 +1,35 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+flowchart TB
+    MASTRA["Mastra instance<br/>@mastra/core"]
+    STORAGE[("Storage<br/>PostgresStore / LibSQL<br/>قابل للتبديل dev → prod")]
+    AGENT["Agent: masa-sales-agent"]
+    INSTR["instructions<br/>الشخصية + القواعد + الحواجز"]
+    MODEL["model<br/>@ai-sdk/anthropic → Claude"]
+    MEM["Memory<br/>resourceId = الزبون<br/>threadId = المحادثة<br/>ضغط تلقائي (OM)"]
+
+    subgraph TOOLS["Tools — createTool + zod"]
+        direction TB
+        T1["search_products"]
+        T2["check_availability"]
+        T3["get_product_media"]
+        T4["escalate_to_human"]
+        T5["capture_order"]
+    end
+
+    MASTRA --> STORAGE
+    MASTRA --> AGENT
+    AGENT --> INSTR
+    AGENT --> MODEL
+    AGENT --> MEM
+    AGENT --> TOOLS
+    MEM -.->|يقرأ / يكتب| STORAGE
+    T1 -.->|استعلام| STORAGE
+    T2 -.->|استعلام| STORAGE
+    T3 -.->|استعلام| STORAGE
+
+    style MASTRA fill:#E0E7FF,stroke:#6366F1
+    style AGENT fill:#EEF0FF,stroke:#6366F1
+    style MODEL fill:#FBEBE4,stroke:#D97757
+    style TOOLS fill:#ECFDF5,stroke:#10B981
+    style STORAGE fill:#FFF7ED,stroke:#F59E0B
+    style MEM fill:#FEF3C7,stroke:#F59E0B

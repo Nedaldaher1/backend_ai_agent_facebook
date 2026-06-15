@@ -1,0 +1,102 @@
+%%{init: {'theme':'base', 'themeVariables': {
+  'fontFamily':'Tahoma, Arial, sans-serif',
+  'primaryColor':'#ffffff',
+  'primaryTextColor':'#000000',
+  'primaryBorderColor':'#1f2937',
+  'lineColor':'#1f2937',
+  'textColor':'#000000',
+  'attributeBackgroundColorOdd':'#ffffff',
+  'attributeBackgroundColorEven':'#f3f4f6'
+}}}%%
+erDiagram
+    ADMIN_USERS {
+        uuid id PK
+        text email
+        text password_hash
+        text role
+    }
+
+    PRODUCTS {
+        uuid id PK
+        uuid created_by FK
+        text name
+        numeric price_jod
+        text color_family "مُقنّن — مفهرس"
+        text color_shade
+        text_array sizes
+        text stock_status
+        text_array image_urls
+        text_array tags
+        jsonb attributes
+        bool is_published "يعرضه الوكيل؟"
+    }
+
+    COLOR_SYNONYMS {
+        uuid id PK
+        text term "نبيتي"
+        text canonical_family "أحمر"
+    }
+
+    AGENT_BEHAVIOR {
+        uuid id PK
+        text persona
+        text tone "اللهجة"
+        text rules "القواعد + الحواجز"
+        text greeting
+        text fallback_message
+        bool is_active
+    }
+
+    KNOWLEDGE_ENTRIES {
+        uuid id PK
+        uuid created_by FK
+        text category "faq/policy/shipping"
+        text title
+        text content
+        bool is_published
+    }
+
+    CONVERSATIONS {
+        uuid id PK
+        text psid "معرّف الزبون"
+        text thread_id
+        text ad_ref "إعلان المصدر"
+        jsonb state "تفضيلات + المرحلة"
+        timestamp created_at
+    }
+
+    MESSAGES {
+        uuid id PK
+        uuid conversation_id FK
+        text role "زبون/وكيل"
+        text content
+        text image_url
+        jsonb attributes
+        timestamp created_at
+    }
+
+    ORDERS {
+        uuid id PK
+        uuid conversation_id FK
+        text customer_name
+        text phone
+        text address
+        text status
+        timestamp created_at
+    }
+
+    ORDER_ITEMS {
+        uuid id PK
+        uuid order_id FK
+        uuid product_id FK
+        text size
+        int qty
+    }
+
+    ADMIN_USERS ||--o{ PRODUCTS : "ينشئ"
+    ADMIN_USERS ||--o{ KNOWLEDGE_ENTRIES : "ينشئ"
+    PRODUCTS }o--|| COLOR_SYNONYMS : "تطبيع اللون"
+    CONVERSATIONS ||--o{ MESSAGES : "تحتوي"
+    CONVERSATIONS ||--o{ ORDERS : "ينتج عنها"
+    ORDERS ||--o{ ORDER_ITEMS : "تتضمّن"
+    PRODUCTS ||--o{ ORDER_ITEMS : "مطلوب في"

@@ -1,0 +1,30 @@
+%%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
+flowchart LR
+    subgraph FE["لوحة التحكم — Frontend (الآن)"]
+        direction TB
+        UI["شاشات:<br/>المنتجات / الألوان /<br/>السلوك / المعرفة"]
+    end
+
+    subgraph BE["الـ Backend (الآن)"]
+        direction TB
+        SA["Server Actions<br/>create / update / delete"]
+        Q["طبقة Drizzle<br/>+ مخططات zod"]
+    end
+
+    DB[("PostgreSQL محلي<br/>products · color_synonyms<br/>agent_behavior · knowledge")]
+
+    subgraph AG["وكيل Mastra (لاحقاً)"]
+        direction TB
+        TOOLS["search_products<br/>KB context<br/>system prompt"]
+    end
+
+    UI -->|كتابة| SA --> Q -->|INSERT / UPDATE| DB
+    DB -. قراءة فقط .-> TOOLS
+
+    NOTE["قاعدة البيانات = العقد:<br/>أنت تكتب، الوكيل يقرأ"]
+
+    style FE fill:#EEF0FF,stroke:#6366F1
+    style BE fill:#E0E7FF,stroke:#6366F1
+    style DB fill:#FFF7ED,stroke:#F59E0B
+    style AG fill:#FBEBE4,stroke:#D97757,stroke-dasharray: 5 5
+    style NOTE fill:#FEF9C3,stroke:#CA8A04
