@@ -2,13 +2,17 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ListOptions, PaginatedResult } from '@/common/types/query';
 import { normalizeListOptions } from '@/common/types/query';
 import {
+  createKnowledgeEntrySchema,
+  parseOrThrow,
+  updateKnowledgeEntrySchema,
+  type CreateKnowledgeEntryInput,
+  type UpdateKnowledgeEntryInput,
+} from '@/common/validation';
+import {
   KnowledgeRepository,
   type KnowledgeFilter,
 } from './knowledge.repository';
-import type {
-  KnowledgeEntry,
-  NewKnowledgeEntry,
-} from './entities/knowledge-entry.entity';
+import type { KnowledgeEntry } from './entities/knowledge-entry.entity';
 
 /** Public filters for knowledge listing (admin honors `isPublished`). */
 export type KnowledgeListFilter = Omit<KnowledgeFilter, never>;
@@ -64,15 +68,17 @@ export class KnowledgeService {
 
   // --- Admin write path ---
 
-  create(input: NewKnowledgeEntry): Promise<KnowledgeEntry> {
-    return this.repo.insert(input);
+  create(input: CreateKnowledgeEntryInput): Promise<KnowledgeEntry> {
+    const data = parseOrThrow(createKnowledgeEntrySchema, input);
+    return this.repo.insert(data);
   }
 
   async update(
     id: string,
-    patch: Partial<NewKnowledgeEntry>,
+    patch: UpdateKnowledgeEntryInput,
   ): Promise<KnowledgeEntry> {
-    const row = await this.repo.updateById(id, patch);
+    const data = parseOrThrow(updateKnowledgeEntrySchema, patch);
+    const row = await this.repo.updateById(id, data);
     if (!row) {
       throw new NotFoundException(`Knowledge entry ${id} not found`);
     }

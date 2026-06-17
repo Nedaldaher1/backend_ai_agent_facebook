@@ -3,6 +3,9 @@ import { OrdersService } from '../orders.service';
 import type { OrdersRepository } from '../orders.repository';
 import { ORDER_STATUSES } from '../entities/order.entity';
 
+/** A real (v4) UUID — product_id is a uuid column, so the schema enforces format. */
+const PRODUCT_ID = '3f1a9b2c-4d5e-4f6a-8b7c-9d0e1f2a3b4c';
+
 const makeOrder = (overrides: Record<string, unknown> = {}) => ({
   id: 'o1',
   conversationId: null,
@@ -112,18 +115,24 @@ describe('OrdersService', () => {
     expect(result).toEqual([]);
   });
 
-  it('createItems with items calls the repo', async () => {
-    const item = {
-      productId: 'p1',
-      quantity: 2,
-      unitPriceJod: '45.000',
-      selectedSize: 'M',
-    };
+  it('createItems with items validates each item then calls the repo', async () => {
+    // Field names match the order_items table: productId (uuid), size, qty.
+    const item = { productId: PRODUCT_ID, size: 'M', qty: 2 };
     insertItems.mockResolvedValue([{ ...item, orderId: 'o1', id: 'i1' }]);
 
     const result = await service.createItems('o1', [item]);
 
     expect(insertItems).toHaveBeenCalledWith('o1', [item]);
     expect(result).toHaveLength(1);
+  });
+
+  it('createItems rejects an item carrying an unknown field', () => {
+    expect(() =>
+      // `unitPriceJod` is not a column; strict validation must reject it.
+      service.createItems('o1', [
+        { productId: PRODUCT_ID, qty: 1, unitPriceJod: '45.000' } as never,
+      ]),
+    ).toThrow(BadRequestException);
+    expect(insertItems).not.toHaveBeenCalled();
   });
 });

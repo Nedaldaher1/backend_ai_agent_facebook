@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ListOptions } from '@/common/types/query';
+import {
+  createAgentBehaviorSchema,
+  parseOrThrow,
+  updateAgentBehaviorSchema,
+  type CreateAgentBehaviorInput,
+  type UpdateAgentBehaviorInput,
+} from '@/common/validation';
 import { AgentBehaviorRepository } from './agent-behavior.repository';
-import type {
-  AgentBehavior,
-  NewAgentBehavior,
-} from './entities/agent-behavior.entity';
+import type { AgentBehavior } from './entities/agent-behavior.entity';
 
 /**
  * Agent-persona logic. The agent reads the active behavior to assemble its
@@ -31,17 +35,19 @@ export class AgentBehaviorService {
     return row;
   }
 
-  create(input: NewAgentBehavior): Promise<AgentBehavior> {
+  create(input: CreateAgentBehaviorInput): Promise<AgentBehavior> {
+    const data = parseOrThrow(createAgentBehaviorSchema, input);
     // New personas start inactive; activation is exclusively via setActive,
     // which preserves the single-active-row invariant.
-    return this.repo.insert({ ...input, isActive: false });
+    return this.repo.insert({ ...data, isActive: false });
   }
 
   async update(
     id: string,
-    patch: Partial<NewAgentBehavior>,
+    patch: UpdateAgentBehaviorInput,
   ): Promise<AgentBehavior> {
-    const row = await this.repo.updateById(id, patch);
+    const data = parseOrThrow(updateAgentBehaviorSchema, patch);
+    const row = await this.repo.updateById(id, data);
     if (!row) {
       throw new NotFoundException(`Agent behavior ${id} not found`);
     }

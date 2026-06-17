@@ -5,12 +5,15 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 import type { ListOptions } from '@/common/types/query';
-import { OrdersRepository, type NewOrderItemInput } from './orders.repository';
 import {
-  ORDER_STATUSES,
-  type NewOrder,
-  type Order,
-} from './entities/order.entity';
+  createOrderItemSchema,
+  createOrderSchema,
+  parseOrThrow,
+  type CreateOrderInput,
+  type CreateOrderItemInput,
+} from '@/common/validation';
+import { OrdersRepository } from './orders.repository';
+import { ORDER_STATUSES, type Order } from './entities/order.entity';
 import type { OrderItem } from './entities/order-item.entity';
 
 /**
@@ -39,11 +42,9 @@ export class OrdersService {
     return this.repo.listByConversation(conversationId);
   }
 
-  create(input: NewOrder): Promise<Order> {
-    if (input.status !== undefined) {
-      this.assertValidStatus(input.status);
-    }
-    return this.repo.insert(input);
+  create(input: CreateOrderInput): Promise<Order> {
+    const data = parseOrThrow(createOrderSchema, input);
+    return this.repo.insert(data);
   }
 
   async updateStatus(id: string, status: string): Promise<Order> {
@@ -66,12 +67,13 @@ export class OrdersService {
 
   // --- order_items ---
 
-  /** Attach line items to an existing order. */
+  /** Attach line items to an existing order; each item is validated. */
   createItems(
     orderId: string,
-    items: NewOrderItemInput[],
+    items: CreateOrderItemInput[],
   ): Promise<OrderItem[]> {
-    return this.repo.insertItems(orderId, items);
+    const data = items.map((item) => parseOrThrow(createOrderItemSchema, item));
+    return this.repo.insertItems(orderId, data);
   }
 
   listItems(orderId: string): Promise<OrderItem[]> {

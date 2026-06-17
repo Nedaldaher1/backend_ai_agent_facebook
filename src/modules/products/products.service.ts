@@ -1,19 +1,16 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { z } from 'zod';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ListOptions, PaginatedResult } from '@/common/types/query';
 import { normalizeListOptions } from '@/common/types/query';
+import {
+  createProductSchema,
+  parseOrThrow,
+  updateProductSchema,
+  type CreateProductInput,
+  type UpdateProductInput,
+} from '@/common/validation';
 import { ColorSynonymsService } from './color-synonyms.service';
 import { ProductsRepository, type ProductFilter } from './products.repository';
-import {
-  PRICE_JOD_REGEX,
-  STOCK_STATUSES,
-  type NewProduct,
-  type Product,
-} from './entities/product.entity';
+import type { Product } from './entities/product.entity';
 
 /** Public list filters. `isPublished` is honored only on the admin path. */
 export type ProductListFilter = ProductFilter;
@@ -102,20 +99,20 @@ export class ProductsService {
   // --- Admin write path ---
 
   /** Create a product. Defaults to a draft unless `isPublished` is set. */
-  create(input: NewProduct): Promise<Product> {
-    this.assertWritable(input);
-    return this.repo.insert({ isPublished: false, ...input });
+  create(input: CreateProductInput): Promise<Product> {
+    const data = parseOrThrow(createProductSchema, input);
+    return this.repo.insert({ isPublished: false, ...data });
   }
 
   /** Back-compat alias for the original draft-creation entry point. */
-  createDraft(input: NewProduct): Promise<Product> {
-    this.assertWritable(input);
-    return this.repo.insert({ ...input, isPublished: false });
+  createDraft(input: CreateProductInput): Promise<Product> {
+    const data = parseOrThrow(createProductSchema, input);
+    return this.repo.insert({ ...data, isPublished: false });
   }
 
-  async update(id: string, patch: Partial<NewProduct>): Promise<Product> {
-    this.assertWritable(patch);
-    const product = await this.repo.updateById(id, patch);
+  async update(id: string, patch: UpdateProductInput): Promise<Product> {
+    const data = parseOrThrow(updateProductSchema, patch);
+    const product = await this.repo.updateById(id, data);
     if (!product) {
       throw new NotFoundException(`Product ${id} not found`);
     }
@@ -152,23 +149,6 @@ export class ProductsService {
   }
 
   // --- internals ---
-
-  /** Validate enum/money-shaped fields before they reach the database. */
-  private assertWritable(input: Partial<NewProduct>): void {
-    if (input.priceJod !== undefined && !PRICE_JOD_REGEX.test(input.priceJod)) {
-      throw new BadRequestException(
-        `Invalid JOD price "${input.priceJod}"; use a number with up to 3 decimals`,
-      );
-    }
-    if (
-      input.stockStatus !== undefined &&
-      !z.enum(STOCK_STATUSES).safeParse(input.stockStatus).success
-    ) {
-      throw new BadRequestException(
-        `Invalid stock status "${input.stockStatus}"; allowed: ${STOCK_STATUSES.join(', ')}`,
-      );
-    }
-  }
 
   private async requirePublishUpdate(
     id: string,

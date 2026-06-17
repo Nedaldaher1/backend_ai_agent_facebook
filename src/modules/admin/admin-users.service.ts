@@ -1,7 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ListOptions } from '@/common/types/query';
+import {
+  createAdminUserSchema,
+  parseOrThrow,
+  updateAdminUserSchema,
+  type CreateAdminUserInput,
+  type UpdateAdminUserInput,
+} from '@/common/validation';
 import { AdminUsersRepository } from './admin-users.repository';
-import type { AdminUser, NewAdminUser } from './entities/admin-user.entity';
+import type { AdminUser } from './entities/admin-user.entity';
 
 /**
  * Admin-account logic. CRUD over admin_users; the agent never touches this.
@@ -27,12 +34,14 @@ export class AdminUsersService {
     return this.repo.findByEmail(email);
   }
 
-  create(input: NewAdminUser): Promise<AdminUser> {
-    return this.repo.insert(input);
+  create(input: CreateAdminUserInput): Promise<AdminUser> {
+    const data = parseOrThrow(createAdminUserSchema, input);
+    return this.repo.insert(data);
   }
 
-  async update(id: string, patch: Partial<NewAdminUser>): Promise<AdminUser> {
-    const row = await this.repo.updateById(id, patch);
+  async update(id: string, patch: UpdateAdminUserInput): Promise<AdminUser> {
+    const data = parseOrThrow(updateAdminUserSchema, patch);
+    const row = await this.repo.updateById(id, data);
     if (!row) {
       throw new NotFoundException(`Admin user ${id} not found`);
     }

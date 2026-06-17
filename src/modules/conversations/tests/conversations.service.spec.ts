@@ -3,6 +3,9 @@ import { ConversationsService } from '../conversations.service';
 import type { ConversationsRepository } from '../conversations.repository';
 import { MESSAGE_ROLES } from '../entities/message.entity';
 
+/** A real (v4) UUID — conversation_id is a uuid column, so the schema enforces format. */
+const CONVERSATION_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+
 const makeConversation = (overrides: Record<string, unknown> = {}) => ({
   id: 'c1',
   psid: 'psid-123',
@@ -60,7 +63,7 @@ describe('ConversationsService', () => {
       insertMessage.mockResolvedValue(message);
 
       const result = await service.addMessage({
-        conversationId: 'c1',
+        conversationId: CONVERSATION_ID,
         role,
         content: 'test',
       });

@@ -1,20 +1,15 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { z } from 'zod';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ListOptions } from '@/common/types/query';
-import { ConversationsRepository } from './conversations.repository';
-import type {
-  Conversation,
-  NewConversation,
-} from './entities/conversation.entity';
 import {
-  MESSAGE_ROLES,
-  type Message,
-  type NewMessage,
-} from './entities/message.entity';
+  createConversationSchema,
+  createMessageSchema,
+  parseOrThrow,
+  type CreateConversationInput,
+  type CreateMessageInput,
+} from '@/common/validation';
+import { ConversationsRepository } from './conversations.repository';
+import type { Conversation } from './entities/conversation.entity';
+import type { Message } from './entities/message.entity';
 
 /** Options when opening (or reusing) a thread for a psid. */
 export interface FindOrCreateConversationInput {
@@ -49,8 +44,9 @@ export class ConversationsService {
     return this.repo.findConversationByPsid(psid);
   }
 
-  create(input: NewConversation): Promise<Conversation> {
-    return this.repo.insertConversation(input);
+  create(input: CreateConversationInput): Promise<Conversation> {
+    const data = parseOrThrow(createConversationSchema, input);
+    return this.repo.insertConversation(data);
   }
 
   /**
@@ -65,7 +61,7 @@ export class ConversationsService {
     if (existing) {
       return existing;
     }
-    return this.repo.insertConversation({
+    return this.create({
       psid,
       threadId: input.threadId,
       adRef: input.adRef,
@@ -94,12 +90,8 @@ export class ConversationsService {
     return row;
   }
 
-  addMessage(input: NewMessage): Promise<Message> {
-    if (!z.enum(MESSAGE_ROLES).safeParse(input.role).success) {
-      throw new BadRequestException(
-        `Invalid message role "${input.role}"; allowed: ${MESSAGE_ROLES.join(', ')}`,
-      );
-    }
-    return this.repo.insertMessage(input);
+  addMessage(input: CreateMessageInput): Promise<Message> {
+    const data = parseOrThrow(createMessageSchema, input);
+    return this.repo.insertMessage(data);
   }
 }
