@@ -5,6 +5,7 @@ import { OrdersModule } from '@/modules/orders/orders.module';
 import { ProductsModule } from '@/modules/products/products.module';
 import { AgentBehaviorRepository } from './agent-behavior.repository';
 import { AgentBehaviorService } from './agent-behavior.service';
+import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
 
 /**
@@ -15,9 +16,13 @@ import { AgentService } from './agent.service';
  * agent_behavior is owned here (the agent's own persona config), so its
  * repository/service are local providers; AgentBehaviorService is exported for
  * the admin UI to manage personas.
+ *
+ * AgentController is a TEMPORARY smoke-test surface (POST /agent/ping) that
+ * will be replaced by the ManyChat webhook controller in a later ticket.
  */
 @Module({
   imports: [ProductsModule, ConversationsModule, OrdersModule, KnowledgeModule],
+  controllers: [AgentController],
   providers: [AgentService, AgentBehaviorService, AgentBehaviorRepository],
   exports: [AgentService, AgentBehaviorService],
 })
