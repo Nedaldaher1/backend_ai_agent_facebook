@@ -86,6 +86,90 @@ export class ProductsService {
     return product;
   }
 
+  /**
+   * Normalize a raw (possibly dialect) color term to a canonical color family.
+   * Delegates to ColorSynonymsService: exact → fuzzy → raw-term fallback.
+   */
+  normalizeColor(term: string): Promise<string> {
+    return this.colors.normalizeColor(term);
+  }
+
+  /**
+   * Return published products linked to a Facebook ad reference slug.
+   * Used by search_products to surface ad-specific products first.
+   */
+  findByAdRef(adRef: string): Promise<Product[]> {
+    return this.repo.findByAdRef(adRef);
+  }
+
+  /**
+   * Fuzzy-text search over the published catalog; falls back to structured
+   * search when `query` is empty/absent.
+   *
+   * NOTE: tool's `category` input maps to `occasion` on the product row —
+   * there is no separate `category` column. This is intentional (documented
+   * on the search tool too).
+   */
+  async searchFuzzy(
+    query: string,
+    input: ProductSearchInput = {},
+  ): Promise<Product[]> {
+    const filter = await this.toPublishedFilter(input);
+    return this.repo.searchFuzzy(query, filter);
+  }
+
+  /**
+   * Check whether a product is available and which sizes are in stock.
+   * Always enforces the publish gate: an unpublished product is treated as
+   * unavailable so the agent never surfaces it.
+   *
+   * @param productId  UUID of the product to check.
+   * @param size       Optional requested size; narrows `available` to that size.
+   */
+  async checkAvailability(
+    productId: string,
+    size?: string,
+  ): Promise<{
+    available: boolean;
+    inStockSizes: string[];
+    note?: string;
+    product?: Product;
+  }> {
+    let product: Product | undefined;
+    try {
+      product = await this.getPublishedById(productId);
+    } catch {
+      return { available: false, inStockSizes: [], note: 'المنتج غير متوفر' };
+    }
+
+    let available = product.stockStatus !== 'out';
+    const inStockSizes = available ? (product.sizes ?? []) : [];
+
+    if (size !== undefined) {
+      available = available && inStockSizes.includes(size);
+    }
+
+    // Return the product too so write callers (capture_order) can read its
+    // price/name without a second fetch.
+    return { available, inStockSizes, product };
+  }
+
+  /**
+   * Return the media (images) attached to a published product.
+   * Returns an empty array for unpublished or missing products.
+   */
+  async getMedia(
+    productId: string,
+  ): Promise<{ url: string; type: string }[]> {
+    let product: Product | undefined;
+    try {
+      product = await this.getPublishedById(productId);
+    } catch {
+      return [];
+    }
+    return (product.imageUrls ?? []).map((url) => ({ url, type: 'image' }));
+  }
+
   // --- Admin read path (drafts visible) ---
 
   /** Admin listing. Pass `filter.isPublished` to narrow; omit to see all. */

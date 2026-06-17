@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
@@ -52,6 +52,31 @@ export class ColorSynonymsRepository {
       .select({ canonicalFamily: colorSynonyms.canonicalFamily })
       .from(colorSynonyms)
       .where(eq(colorSynonyms.term, term))
+      .limit(1);
+    return row?.canonicalFamily ?? null;
+  }
+
+  /**
+   * Fuzzy-match a dialect color term using pg_trgm similarity.
+   * Falls back gracefully to null when no synonym exceeds the threshold.
+   * Requires the pg_trgm extension to be installed (already in place).
+   *
+   * @param term       The raw color term the customer typed (may be misspelled).
+   * @param threshold  Minimum trigram similarity score (0–1); default 0.3.
+   */
+  async resolveColorFamilyFuzzy(
+    term: string,
+    threshold = 0.3,
+  ): Promise<string | null> {
+    const [row] = await this.db
+      .select({ canonicalFamily: colorSynonyms.canonicalFamily })
+      .from(colorSynonyms)
+      .where(
+        sql`similarity(${colorSynonyms.term}, ${term}) >= ${threshold}`,
+      )
+      .orderBy(
+        sql`similarity(${colorSynonyms.term}, ${term}) DESC`,
+      )
       .limit(1);
     return row?.canonicalFamily ?? null;
   }
