@@ -88,4 +88,27 @@ export class OrdersRepository {
       .where(eq(orderItems.orderId, orderId))
       .orderBy(asc(orderItems.id));
   }
+
+  /**
+   * Atomically insert an order and its line items inside one transaction, so a
+   * draft is never left with a header but no items (or vice versa).
+   */
+  async createWithItems(
+    order: NewOrder,
+    items: NewOrderItemInput[],
+  ): Promise<{ order: Order; items: OrderItem[] }> {
+    return this.db.transaction(async (tx) => {
+      const [createdOrder] = await tx.insert(orders).values(order).returning();
+      const createdItems =
+        items.length > 0
+          ? await tx
+              .insert(orderItems)
+              .values(
+                items.map((item) => ({ ...item, orderId: createdOrder.id })),
+              )
+              .returning()
+          : [];
+      return { order: createdOrder, items: createdItems };
+    });
+  }
 }

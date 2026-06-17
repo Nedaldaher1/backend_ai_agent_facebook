@@ -41,6 +41,28 @@ export class ColorSynonymsService {
     return this.repo.resolveColorFamily(term);
   }
 
+  /**
+   * Normalize a customer-supplied color term to a canonical family.
+   * Resolution order:
+   *   1. Exact match via color_synonyms.term (fast, indexed).
+   *   2. Fuzzy trigram match via pg_trgm similarity (catches misspellings).
+   *   3. Raw term fallback — returned as-is so the agent can still mention it.
+   *
+   * @param term  Any dialect color word the customer typed (e.g. "نبيتي").
+   * @returns     Canonical color family (e.g. "red"), or the raw term if unknown.
+   */
+  async normalizeColor(term: string): Promise<string> {
+    const exact = await this.repo.resolveColorFamily(term);
+    if (exact) {
+      return exact;
+    }
+    const fuzzy = await this.repo.resolveColorFamilyFuzzy(term);
+    if (fuzzy) {
+      return fuzzy;
+    }
+    return term;
+  }
+
   create(input: CreateColorSynonymInput): Promise<ColorSynonym> {
     const data = parseOrThrow(createColorSynonymSchema, input);
     return this.repo.insert(data);

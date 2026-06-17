@@ -7,6 +7,7 @@ import {
   count,
   desc,
   eq,
+  getTableColumns,
   ilike,
   sql,
   type SQL,
@@ -18,6 +19,7 @@ import {
   type NewProduct,
   type Product,
 } from './entities/product.entity';
+import { adProductLinks } from './entities/ad-product-link.entity';
 
 /**
  * Filters for the product catalog. `isPublished` is an explicit field so the
@@ -183,5 +185,63 @@ export class ProductsRepository {
       .where(eq(products.id, id))
       .returning();
     return row;
+  }
+
+  /**
+   * Return all published products linked to the given ad reference, ordered by
+   * the position column so the agent surfaces them in the admin-configured order.
+   * Only active ad links (is_active = true) are followed.
+   */
+  async findByAdRef(adRef: string): Promise<Product[]> {
+    const productCols = getTableColumns(products);
+    const rows = await this.db
+      .select(productCols)
+      .from(adProductLinks)
+      .innerJoin(products, eq(adProductLinks.productId, products.id))
+      .where(
+        and(
+          eq(adProductLinks.adRef, adRef),
+          eq(adProductLinks.isActive, true),
+          eq(products.isPublished, true),
+        ),
+      )
+      .orderBy(asc(adProductLinks.position));
+    return rows;
+  }
+
+  /**
+   * Full-text fuzzy search on product name + description using pg_trgm.
+   * Structured conditions from buildConditions (including isPublished) are
+   * AND-ed with the similarity predicates so publish gate + filters still apply.
+   *
+   * NOTE: A GIN index on (name, description) would speed this up for large
+   * catalogs; that is tracked in the catalog-indexing ticket.
+   *
+   * @param query   Free-form search text from the customer.
+   * @param filter  Structured filter (must include isPublished for the gate).
+   * @param limit   Maximum rows returned; default 8.
+   */
+  async searchFuzzy(
+    query: string,
+    filter: ProductFilter,
+    limit = 8,
+  ): Promise<Product[]> {
+    const conditions = this.buildConditions(filter);
+    const similarityCondition = sql`(
+      similarity(${products.name}, ${query}) >= 0.3
+      OR similarity(coalesce(${products.description}, ''), ${query}) >= 0.2
+    )`;
+
+    return this.db
+      .select()
+      .from(products)
+      .where(and(...conditions, similarityCondition))
+      .orderBy(
+        sql`greatest(
+          similarity(${products.name}, ${query}),
+          similarity(coalesce(${products.description}, ''), ${query})
+        ) DESC`,
+      )
+      .limit(limit);
   }
 }

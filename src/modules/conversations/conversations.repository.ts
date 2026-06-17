@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
@@ -69,6 +69,28 @@ export class ConversationsRepository {
     const [row] = await this.db
       .update(conversations)
       .set({ state })
+      .where(eq(conversations.id, id))
+      .returning();
+    return row;
+  }
+
+  /**
+   * Atomically shallow-merge `patch` into the `state` jsonb in a single
+   * statement (no read-modify-write): `||` overwrites the keys present in
+   * `patch` and preserves the rest; coalesce handles a NULL column. Returns
+   * undefined if the row does not exist.
+   */
+  async mergeConversationState(
+    id: string,
+    patch: Record<string, unknown>,
+  ): Promise<Conversation | undefined> {
+    const [row] = await this.db
+      .update(conversations)
+      .set({
+        state: sql`coalesce(${conversations.state}, '{}'::jsonb) || ${JSON.stringify(
+          patch,
+        )}::jsonb`,
+      })
       .where(eq(conversations.id, id))
       .returning();
     return row;

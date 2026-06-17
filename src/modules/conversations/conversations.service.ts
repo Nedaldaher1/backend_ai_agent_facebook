@@ -94,4 +94,35 @@ export class ConversationsService {
     const data = parseOrThrow(createMessageSchema, input);
     return this.repo.insertMessage(data);
   }
+
+  /**
+   * Mark a conversation as needing human attention.
+   * Merges the escalation marker into the existing `state` jsonb so that no
+   * other state keys (customer preferences, funnel stage, etc.) are lost.
+   *
+   * The `stage: 'needs_human'` key is the machine-readable signal used by the
+   * admin panel and the ManyChat webhook to route the thread to a human agent.
+   *
+   * @param conversationId  UUID of the conversation to escalate.
+   * @param reason          Human-readable escalation note for the admin side.
+   */
+  async escalateToHuman(
+    conversationId: string,
+    reason: string,
+  ): Promise<Conversation> {
+    // Atomic shallow jsonb merge (no read-modify-write): preserves any other
+    // state keys (customer preferences, funnel stage) while setting the
+    // escalation marker, so a concurrent state write can't clobber it.
+    const updated = await this.repo.mergeConversationState(conversationId, {
+      stage: 'needs_human',
+      escalation: {
+        reason,
+        at: new Date().toISOString(),
+      },
+    });
+    if (!updated) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+    return updated;
+  }
 }
