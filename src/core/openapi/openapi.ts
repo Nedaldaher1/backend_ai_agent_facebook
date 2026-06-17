@@ -84,6 +84,7 @@ export async function setupOpenApi(app: NestFastifyApplication): Promise<void> {
     .addTag('Knowledge', 'Brand knowledge-base entries the agent can cite.')
     .addTag('Agent', 'AI agent runtime, persona configuration, and tools.')
     .addTag('Admin', 'Admin-only management endpoints (require Bearer auth).')
+    .addTag('Auth', 'Admin account signup, login, and current-user lookup.')
     .addTag('Health', 'Service liveness and database-connectivity probes.')
     .build();
 

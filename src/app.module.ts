@@ -3,6 +3,7 @@ import { AppConfigModule } from '@/core/config/config.module';
 import { DatabaseModule } from '@/core/database/database.module';
 import { HealthModule } from '@/core/health/health.module';
 import { AdminModule } from '@/modules/admin/admin.module';
+import { AuthModule } from '@/modules/auth/auth.module';
 import { AgentModule } from '@/modules/agent/agent.module';
 import { ConversationsModule } from '@/modules/conversations/conversations.module';
 import { KnowledgeModule } from '@/modules/knowledge/knowledge.module';
@@ -21,6 +22,7 @@ import { ProductsModule } from '@/modules/products/products.module';
     HealthModule,
     // domains
     AdminModule,
+    AuthModule,
     ProductsModule,
     ConversationsModule,
     OrdersModule,

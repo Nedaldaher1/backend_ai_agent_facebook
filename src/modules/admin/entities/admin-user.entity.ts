@@ -23,6 +23,7 @@ export const adminUsers = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     email: text('email').notNull(),
+    name: text('name'),
     passwordHash: text('password_hash').notNull(),
     role: text('role').notNull().default('admin'),
     createdAt: timestamp('created_at', { withTimezone: true })

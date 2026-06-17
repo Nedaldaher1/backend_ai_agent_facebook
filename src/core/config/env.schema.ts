@@ -11,6 +11,9 @@ export const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().url(),
   ANTHROPIC_API_KEY: z.string().min(1),
+  // Auth: secret for signing admin JWTs + token lifetime (e.g. '7d', '12h').
+  JWT_SECRET: z.string().min(16),
+  JWT_EXPIRES_IN: z.string().default('7d'),
 });
 
 export type Env = z.infer<typeof envSchema>;
