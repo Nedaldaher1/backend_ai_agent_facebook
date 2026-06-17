@@ -142,6 +142,29 @@ export class ProductsRepository {
     return row;
   }
 
+  /**
+   * Append image URLs to image_urls in a single atomic statement (no
+   * read-modify-write, so concurrent uploads don't clobber each other).
+   * coalesce handles a NULL column; `||` concatenates the text[] arrays.
+   */
+  async appendImageUrls(
+    id: string,
+    urls: string[],
+  ): Promise<Product | undefined> {
+    if (urls.length === 0) {
+      return this.findById(id);
+    }
+    const [row] = await this.db
+      .update(products)
+      .set({
+        imageUrls: sql`coalesce(${products.imageUrls}, '{}'::text[]) || ${urls}::text[]`,
+        updatedAt: new Date(),
+      })
+      .where(eq(products.id, id))
+      .returning();
+    return row;
+  }
+
   async deleteById(id: string): Promise<Product | undefined> {
     const [row] = await this.db
       .delete(products)
