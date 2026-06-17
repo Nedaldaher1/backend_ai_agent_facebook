@@ -14,6 +14,17 @@ import {
 } from './knowledge.repository';
 import type { KnowledgeEntry } from './entities/knowledge-entry.entity';
 
+/**
+ * Input for the agent's relevance retrieval path.
+ * `productIds` narrows the search to product-specific entries for the currently
+ * discussed product(s); omit it to get only global entries.
+ */
+export interface KnowledgeRelevanceInput {
+  query?: string;
+  productIds?: string[];
+  category?: string;
+}
+
 /** Public filters for knowledge listing (admin honors `isPublished`). */
 export type KnowledgeListFilter = Omit<KnowledgeFilter, never>;
 
@@ -47,6 +58,52 @@ export class KnowledgeService {
       throw new NotFoundException(`Knowledge entry ${id} not found`);
     }
     return row;
+  }
+
+  /**
+   * Retrieve the most relevant published knowledge entries for an agent turn.
+   *
+   * Tiering (product-specific first):
+   *  1. If `productIds` is non-empty, fetch up to LIMIT product-specific entries
+   *     (productId IN productIds, isPublished = true).
+   *  2. Fill remaining slots (LIMIT − specific.length) from global entries
+   *     (productId IS NULL, isPublished = true).
+   *  3. Merge product-specific first, dedupe by id, cap at LIMIT.
+   *
+   * Publish gate: always forced to `true` here — callers cannot bypass it.
+   * Cap: 5 entries maximum per turn (enough context without overloading the prompt).
+   */
+  async getRelevant(input: KnowledgeRelevanceInput): Promise<KnowledgeEntry[]> {
+    const LIMIT = 5;
+
+    // --- product-specific tier ---
+    let specific: KnowledgeEntry[] = [];
+    if (input.productIds?.length) {
+      specific = await this.repo.findRelevant({
+        scope: { type: 'products', productIds: input.productIds },
+        isPublished: true,
+        category: input.category,
+        query: input.query,
+        limit: LIMIT,
+      });
+    }
+
+    // --- global tier (fills remaining slots) ---
+    const remaining = LIMIT - specific.length;
+    let global: KnowledgeEntry[] = [];
+    if (remaining > 0) {
+      global = await this.repo.findRelevant({
+        scope: { type: 'global' },
+        isPublished: true,
+        category: input.category,
+        query: input.query,
+        limit: remaining,
+      });
+    }
+
+    // Merge product-specific first, dedupe by id, cap at LIMIT.
+    const seen = new Set(specific.map((e) => e.id));
+    return [...specific, ...global.filter((e) => !seen.has(e.id))].slice(0, LIMIT);
   }
 
   // --- Admin read path (drafts visible) ---

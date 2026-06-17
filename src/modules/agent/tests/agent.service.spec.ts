@@ -62,6 +62,7 @@ import type { ProductsService } from '@/modules/products/products.service';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
 import type { OrdersService } from '@/modules/orders/orders.service';
 import type { AgentBehaviorService } from '../agent-behavior.service';
+import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 
 // ---------------------------------------------------------------------------
 // Typed cast helpers
@@ -91,6 +92,9 @@ const ordersMock = {} as unknown as OrdersService;
 const agentBehaviorMock = {
   getInstructions: jest.fn().mockResolvedValue('x'),
 } as unknown as AgentBehaviorService;
+
+/** A minimal KnowledgeService stub. */
+const knowledgeMock = {} as unknown as KnowledgeService;
 
 /**
  * A ConversationsService stub with findOrCreateByPsid and addMessage.
@@ -142,6 +146,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
 
     service.onModuleInit();
@@ -160,12 +165,31 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
 
     service.onModuleInit();
 
     expect(mockBuildMastra).toHaveBeenCalledWith(
       expect.objectContaining({ agentBehavior: expect.anything() }),
+    );
+  });
+
+  it('onModuleInit calls buildMastra with the knowledge service', () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+    );
+
+    service.onModuleInit();
+
+    expect(mockBuildMastra).toHaveBeenCalledWith(
+      expect.objectContaining({ knowledge: expect.anything() }),
     );
   });
 
@@ -181,6 +205,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -202,6 +227,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -225,6 +251,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -250,6 +277,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -274,6 +302,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -298,6 +327,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -334,6 +364,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -354,6 +385,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -374,6 +406,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
@@ -410,6 +443,7 @@ describe('AgentService', () => {
       conversations,
       ordersMock,
       agentBehaviorMock,
+      knowledgeMock,
     );
     service.onModuleInit();
 
