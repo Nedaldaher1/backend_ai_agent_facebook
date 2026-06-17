@@ -40,7 +40,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     void reply.status(status).send({
-      statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,
       error: body,
