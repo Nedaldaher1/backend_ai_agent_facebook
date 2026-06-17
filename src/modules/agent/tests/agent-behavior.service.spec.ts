@@ -121,4 +121,112 @@ describe('AgentBehaviorService', () => {
 
     expect(result.isActive).toBe(true);
   });
+
+  // --- getInstructions ---
+  // Each test creates a fresh AgentBehaviorService instance so the in-memory
+  // cache does not leak between tests (jest.clearAllMocks() resets mock call
+  // counts but cannot clear the instance-level cache property).
+
+  describe('getInstructions', () => {
+    it('composes prompt from active row persona and appends guardrails', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(makeBehavior({ persona: 'أنا مساعد متجر ماسة' })),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const result = await svc.getInstructions();
+
+      expect(result).toContain('أنا مساعد متجر ماسة');
+      expect(result).toContain('لا تخترعي أسعاراً');
+    });
+
+    it('falls back to DEFAULT_PERSONA when no active row exists', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(undefined),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const result = await svc.getInstructions();
+
+      expect(result.length).toBeGreaterThan(0);
+      expect(result).toContain('ماسة');
+      expect(result).toContain('لا تخترعي أسعاراً');
+    });
+
+    it('guardrails are present even when active row has persona content', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(
+          makeBehavior({
+            persona: 'مساعدة ودودة',
+            tone: 'warm',
+            rules: 'تجنبي الحديث عن المنافسين',
+            greeting: 'أهلاً حبيبتي',
+          }),
+        ),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const result = await svc.getInstructions();
+
+      // All three guardrail substrings must appear.
+      expect(result).toContain('احفظيها في الـ working memory');
+      expect(result).toContain('لا تخترعي أسعاراً');
+      expect(result).toContain('لا تدّعي أن الطلب اكتمل');
+    });
+
+    it('caches the result and calls findActive only once on two calls', async () => {
+      const localFindActive = jest.fn().mockResolvedValue(makeBehavior());
+      const freshRepo = {
+        list,
+        findActive: localFindActive,
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const first = await svc.getInstructions();
+      const second = await svc.getInstructions();
+
+      expect(localFindActive).toHaveBeenCalledTimes(1);
+      expect(first).toBe(second);
+    });
+
+    it('never throws when findActive rejects — returns default brand text instead', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockRejectedValue(new Error('DB down')),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const result = await svc.getInstructions();
+
+      expect(result).toContain('ماسة');
+    });
+  });
 });

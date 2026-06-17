@@ -56,6 +56,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { ProductsService } from '@/modules/products/products.service';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
 import type { OrdersService } from '@/modules/orders/orders.service';
+import type { AgentBehaviorService } from '../agent-behavior.service';
 
 // ---------------------------------------------------------------------------
 // Typed cast helpers
@@ -80,6 +81,11 @@ const productsMock = {} as unknown as ProductsService;
 
 /** A minimal OrdersService stub. */
 const ordersMock = {} as unknown as OrdersService;
+
+/** A minimal AgentBehaviorService stub. */
+const agentBehaviorMock = {
+  getInstructions: jest.fn().mockResolvedValue('x'),
+} as unknown as AgentBehaviorService;
 
 /** A ConversationsService stub whose findOrCreateByPsid always resolves. */
 function makeConversationsMock(conversationId = 'convo-1'): ConversationsService {
@@ -126,6 +132,7 @@ describe('AgentService', () => {
       productsMock,
       conversations,
       ordersMock,
+      agentBehaviorMock,
     );
 
     service.onModuleInit();
@@ -133,6 +140,23 @@ describe('AgentService', () => {
     expect(mockBuildMastra).toHaveBeenCalledTimes(1);
     expect(mockBuildMastra).toHaveBeenCalledWith(
       expect.objectContaining({ connectionString: url }),
+    );
+  });
+
+  it('onModuleInit calls buildMastra with the agentBehavior service', () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+    );
+
+    service.onModuleInit();
+
+    expect(mockBuildMastra).toHaveBeenCalledWith(
+      expect.objectContaining({ agentBehavior: expect.anything() }),
     );
   });
 
@@ -147,6 +171,7 @@ describe('AgentService', () => {
       productsMock,
       conversations,
       ordersMock,
+      agentBehaviorMock,
     );
     service.onModuleInit();
 
@@ -163,6 +188,7 @@ describe('AgentService', () => {
       productsMock,
       conversations,
       ordersMock,
+      agentBehaviorMock,
     );
     service.onModuleInit();
 
@@ -183,6 +209,7 @@ describe('AgentService', () => {
       productsMock,
       conversations,
       ordersMock,
+      agentBehaviorMock,
     );
     service.onModuleInit();
 
@@ -201,6 +228,7 @@ describe('AgentService', () => {
       productsMock,
       conversations,
       ordersMock,
+      agentBehaviorMock,
     );
     service.onModuleInit();
 
@@ -218,6 +246,7 @@ describe('AgentService', () => {
       productsMock,
       conversations,
       ordersMock,
+      agentBehaviorMock,
     );
     service.onModuleInit();
 

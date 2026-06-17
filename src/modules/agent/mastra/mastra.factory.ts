@@ -28,6 +28,11 @@
  *    `buildSalesTools` and registered here. Adding `tools` does NOT remove
  *    the auto-registered `updateWorkingMemory` tool.
  *
+ *  - `instructions` is a dynamic async function backed by
+ *    AgentBehaviorService.getInstructions() (60s TTL cache). Admin edits to
+ *    the agent_behavior table propagate without a redeploy. Mastra v1.42
+ *    supports async instructions functions natively.
+ *
  * TODO (next ticket): enable semantic recall (requires an embedder + PgVector).
  *
  * TODO (next ticket): wire the vision pipeline (Haiku-powered attribute extractor).
@@ -41,6 +46,7 @@ import { z } from 'zod';
 import type { ProductsService } from '@/modules/products/products.service';
 import type { OrdersService } from '@/modules/orders/orders.service';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
+import type { AgentBehaviorService } from '../agent-behavior.service';
 import { buildSalesTools } from '../tools/index';
 
 /** Dependencies required to build the Mastra instance. */
@@ -53,6 +59,8 @@ export interface BuildMastraDeps {
   orders: OrdersService;
   /** ConversationsService — for the escalate_to_human write tool. */
   conversations: ConversationsService;
+  /** AgentBehaviorService — compiles dynamic system prompt (60s TTL cache). */
+  agentBehavior: AgentBehaviorService;
 }
 
 /**
@@ -65,7 +73,7 @@ export function buildMastra(deps: BuildMastraDeps): {
   mastra: Mastra;
   salesAgent: Agent;
 } {
-  const { connectionString, products, orders, conversations } = deps;
+  const { connectionString, products, orders, conversations, agentBehavior } = deps;
 
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
@@ -87,20 +95,11 @@ export function buildMastra(deps: BuildMastraDeps): {
     id: 'sales-agent',
     name: 'Masa Sales Agent',
 
-    instructions: [
-      // Brand voice + language
-      'أنتِ مساعدة مبيعات لمتجر عبايات "ماسة" في الأردن. ردّي باللهجة الأردنية وباختصار.',
-
-      // Working-memory duty: capture customer profile whenever new info appears
-      'عندما تذكر الزبونة اسمها أو مقاسها أو ألوانها المفضّلة أو ستايلها، ' +
-        'احفظيها في الـ working memory مباشرةً باستخدام الأداة المتاحة.',
-
-      // Guardrail: only state prices and availability from tool results
-      'لا تخترعي أسعاراً أو توفراً — استخدمي أدوات البحث والتحقق دائماً للحصول على هذه المعلومات من قاعدة البيانات. إذا لم تتوفر المعلومات، قولي ذلك أو حوّلي إلى موظف.',
-
-      // Order guardrail
-      'لا تدّعي أن الطلب اكتمل إذا فشلت أداة تسجيل الطلب أو أعادت خطأ.',
-    ].join('\n'),
+    // DYNAMIC instructions: resolved per-generate from the cached
+    // AgentBehaviorService.getInstructions() (60s TTL) so admin edits to the
+    // agent_behavior row propagate without a redeploy. Mastra v1.42 supports an
+    // async instructions function. Falls back to a safe default when empty.
+    instructions: async () => agentBehavior.getInstructions(),
 
     // Mastra's model router — reads ANTHROPIC_API_KEY from the environment
     // automatically.  Do NOT import @ai-sdk/anthropic directly here.

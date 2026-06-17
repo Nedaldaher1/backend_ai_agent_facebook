@@ -9,6 +9,7 @@ import {
 } from '@/modules/products/products.service';
 import { ConversationsService } from '@/modules/conversations/conversations.service';
 import { OrdersService } from '@/modules/orders/orders.service';
+import { AgentBehaviorService } from './agent-behavior.service';
 import { buildMastra } from './mastra/mastra.factory';
 
 /**
@@ -61,6 +62,7 @@ export class AgentService implements OnModuleInit {
     private readonly products: ProductsService,
     private readonly conversations: ConversationsService,
     private readonly orders: OrdersService,
+    private readonly agentBehavior: AgentBehaviorService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -74,12 +76,13 @@ export class AgentService implements OnModuleInit {
       products: this.products,
       orders: this.orders,
       conversations: this.conversations,
+      agentBehavior: this.agentBehavior,
     });
     this.mastra = mastra;
     this.salesAgent = salesAgent;
 
     this.logger.log(
-      'Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=6',
+      'Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=6, instructions=dynamic',
     );
   }
 
