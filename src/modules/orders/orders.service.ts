@@ -79,4 +79,40 @@ export class OrdersService {
   listItems(orderId: string): Promise<OrderItem[]> {
     return this.repo.listItemsByOrder(orderId);
   }
+
+  /**
+   * Capture a COD order draft from the agent. Validates each item via the
+   * shared zod schema (same source of truth as the admin UI) then writes both
+   * the order header and line items atomically via the repository.
+   *
+   * Called ONLY by the capture_order tool; never by the admin controllers.
+   */
+  async createCodDraft(input: {
+    conversationId: string;
+    customerName?: string;
+    phone: string;
+    address: string;
+    items: { productId: string; size?: string; qty: number }[];
+  }): Promise<{ order: Order; items: OrderItem[] }> {
+    // Validate the order header using the shared schema.
+    const orderData = parseOrThrow(createOrderSchema, {
+      conversationId: input.conversationId,
+      customerName: input.customerName,
+      phone: input.phone,
+      address: input.address,
+      status: 'draft',
+    });
+
+    // Validate each line item using the shared schema.
+    // Note: createOrderItemSchema omits `orderId` — the repo fills it in.
+    const itemsData = input.items.map((item) =>
+      parseOrThrow(createOrderItemSchema, {
+        productId: item.productId,
+        size: item.size,
+        qty: item.qty,
+      }),
+    );
+
+    return this.repo.createWithItems(orderData, itemsData);
+  }
 }

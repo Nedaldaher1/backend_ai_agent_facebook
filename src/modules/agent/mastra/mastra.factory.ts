@@ -23,8 +23,10 @@
  *    calls the tool to keep the JSON blob up-to-date as it learns about the
  *    customer.
  *
- * TODO (next ticket): register domain tools (search_products, check_availability,
- *   get_product_media, capture_order, escalate_to_human, find_similar_by_image).
+ *  - Domain tools (search_products, check_availability, get_product_media,
+ *    capture_order, escalate_to_human, find_similar_by_image) are built via
+ *    `buildSalesTools` and registered here. Adding `tools` does NOT remove
+ *    the auto-registered `updateWorkingMemory` tool.
  *
  * TODO (next ticket): enable semantic recall (requires an embedder + PgVector).
  *
@@ -36,19 +38,35 @@ import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
 import { z } from 'zod';
+import type { ProductsService } from '@/modules/products/products.service';
+import type { OrdersService } from '@/modules/orders/orders.service';
+import type { ConversationsService } from '@/modules/conversations/conversations.service';
+import { buildSalesTools } from '../tools/index';
+
+/** Dependencies required to build the Mastra instance. */
+export interface BuildMastraDeps {
+  /** Full PostgreSQL connection URL (DATABASE_URL env var). */
+  connectionString: string;
+  /** ProductsService — for catalog read tools. */
+  products: ProductsService;
+  /** OrdersService — for the capture_order write tool. */
+  orders: OrdersService;
+  /** ConversationsService — for the escalate_to_human write tool. */
+  conversations: ConversationsService;
+}
 
 /**
  * Builds the single Mastra instance together with the sales agent.
  *
  * Call this ONCE at module-init time and hold both the returned `mastra`
  * and `salesAgent` references alive for the lifetime of the process.
- *
- * @param connectionString  Full PostgreSQL URL (read from DATABASE_URL env var).
  */
-export function buildMastra(connectionString: string): {
+export function buildMastra(deps: BuildMastraDeps): {
   mastra: Mastra;
   salesAgent: Agent;
 } {
+  const { connectionString, products, orders, conversations } = deps;
+
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
   // `public` schema so drizzle-kit migrate never touches them and Mastra's own
@@ -58,6 +76,11 @@ export function buildMastra(connectionString: string): {
     connectionString,
     schemaName: 'mastra',
   });
+
+  // ------------------------------------------------------------------- tools
+  // Build domain tools by closing over the injected services.
+  // `updateWorkingMemory` is auto-registered by Memory and is NOT removed here.
+  const tools = buildSalesTools({ products, orders, conversations });
 
   // ------------------------------------------------------------- sales agent
   const salesAgent = new Agent({
@@ -72,13 +95,18 @@ export function buildMastra(connectionString: string): {
       'عندما تذكر الزبونة اسمها أو مقاسها أو ألوانها المفضّلة أو ستايلها، ' +
         'احفظيها في الـ working memory مباشرةً باستخدام الأداة المتاحة.',
 
-      // Guardrail: never fabricate product data
-      'لا تختلقي أسعاراً أو توفّراً — هذه ستأتي لاحقاً من قاعدة البيانات.',
+      // Guardrail: only state prices and availability from tool results
+      'لا تخترعي أسعاراً أو توفراً — استخدمي أدوات البحث والتحقق دائماً للحصول على هذه المعلومات من قاعدة البيانات. إذا لم تتوفر المعلومات، قولي ذلك أو حوّلي إلى موظف.',
+
+      // Order guardrail
+      'لا تدّعي أن الطلب اكتمل إذا فشلت أداة تسجيل الطلب أو أعادت خطأ.',
     ].join('\n'),
 
     // Mastra's model router — reads ANTHROPIC_API_KEY from the environment
     // automatically.  Do NOT import @ai-sdk/anthropic directly here.
     model: 'anthropic/claude-sonnet-4-6',
+
+    tools,
 
     memory: new Memory({
       options: {
@@ -122,10 +150,6 @@ export function buildMastra(connectionString: string): {
         },
       },
     }),
-
-    // TODO (next ticket): register domain tools here once they are built:
-    //   tools: { search_products, check_availability, get_product_media,
-    //            capture_order, escalate_to_human, find_similar_by_image }
   });
 
   // ------------------------------------------------------------ mastra root
