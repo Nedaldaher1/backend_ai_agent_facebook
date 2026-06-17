@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { ListOptions, PaginatedResult } from '@/common/types/query';
 import { normalizeListOptions } from '@/common/types/query';
 import {
@@ -8,6 +12,7 @@ import {
   type CreateProductInput,
   type UpdateProductInput,
 } from '@/common/validation';
+import { StorageService } from '@/core/storage/storage.service';
 import { ColorSynonymsService } from './color-synonyms.service';
 import { ProductsRepository, type ProductFilter } from './products.repository';
 import type { Product } from './entities/product.entity';
@@ -29,6 +34,12 @@ export interface ProductSearchInput {
   priceMax?: string;
 }
 
+/** In-memory file handed from the HTTP layer to storage (no temp files). */
+export interface UploadedImage {
+  buffer: Buffer;
+  filename: string;
+}
+
 /**
  * Product business logic and the single cross-module surface (the agent and the
  * admin UI both call this, never the repository).
@@ -43,6 +54,7 @@ export class ProductsService {
   constructor(
     private readonly repo: ProductsRepository,
     private readonly colors: ColorSynonymsService,
+    private readonly storage: StorageService,
   ) {}
 
   // --- Agent / customer read path (publish gate forced on) ---
@@ -117,6 +129,44 @@ export class ProductsService {
       throw new NotFoundException(`Product ${id} not found`);
     }
     return product;
+  }
+
+  /**
+   * Persist uploaded image files through the storage layer and record their URLs
+   * on the product. Appends by default; `replace` overwrites image_urls. The
+   * product must exist first so files are never orphaned for a missing product;
+   * if it vanishes mid-write, the just-saved files are cleaned up.
+   */
+  async addImages(
+    id: string,
+    files: UploadedImage[],
+    { replace = false }: { replace?: boolean } = {},
+  ): Promise<Product> {
+    if (files.length === 0) {
+      throw new BadRequestException('No files were provided.');
+    }
+    if (!(await this.repo.findById(id))) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+
+    const saved = await Promise.all(
+      files.map((f) => this.storage.saveImage(f.buffer, f.filename)),
+    );
+    const urls = saved.map((s) => s.url);
+
+    const updated = replace
+      ? await this.repo.updateById(id, { imageUrls: urls })
+      : await this.repo.appendImageUrls(id, urls);
+
+    if (!updated) {
+      // Product was deleted between the existence check and the write — undo the
+      // just-saved files so they don't leak.
+      await Promise.allSettled(
+        saved.map((s) => this.storage.deleteImage(s.key)),
+      );
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    return updated;
   }
 
   async delete(id: string): Promise<Product> {

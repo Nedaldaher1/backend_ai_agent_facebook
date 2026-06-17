@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppConfigModule } from '@/core/config/config.module';
 import { DatabaseModule } from '@/core/database/database.module';
 import { HealthModule } from '@/core/health/health.module';
+import { StorageModule } from '@/core/storage/storage.module';
 import { AdminModule } from '@/modules/admin/admin.module';
 import { AgentModule } from '@/modules/agent/agent.module';
 import { ConversationsModule } from '@/modules/conversations/conversations.module';
@@ -18,6 +19,7 @@ import { ProductsModule } from '@/modules/products/products.module';
     // core
     AppConfigModule,
     DatabaseModule,
+    StorageModule,
     HealthModule,
     // domains
     AdminModule,

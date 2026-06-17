@@ -1,7 +1,14 @@
+// flydrive is ESM-only and isolated inside StorageService; stub it so importing
+// the products -> storage chain doesn't load the real module under Jest (CJS).
+// This spec injects a mock StorageService, so the stubs are never exercised.
+jest.mock('flydrive', () => ({ Disk: jest.fn() }));
+jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
+
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { ProductsService } from '../products.service';
 import type { ColorSynonymsService } from '../color-synonyms.service';
 import type { ProductsRepository } from '../products.repository';
+import type { StorageService } from '@/core/storage/storage.service';
 
 const makeProduct = (overrides: Record<string, unknown> = {}) => ({
   id: 'p1',
@@ -36,6 +43,7 @@ describe('ProductsService', () => {
   const updateById = jest.fn();
   const deleteById = jest.fn();
   const setPublished = jest.fn();
+  const appendImageUrls = jest.fn();
 
   const repo = {
     list,
@@ -45,13 +53,21 @@ describe('ProductsService', () => {
     updateById,
     deleteById,
     setPublished,
+    appendImageUrls,
   } as unknown as ProductsRepository;
 
   const colors = {
     resolveColorFamily,
   } as unknown as ColorSynonymsService;
 
-  const service = new ProductsService(repo, colors);
+  const saveImage = jest.fn();
+  const deleteImage = jest.fn();
+  const storage = {
+    saveImage,
+    deleteImage,
+  } as unknown as StorageService;
+
+  const service = new ProductsService(repo, colors, storage);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -234,5 +250,85 @@ describe('ProductsService', () => {
 
     expect(updateById).toHaveBeenCalledWith('p1', { priceJod: '20.000' });
     expect(result.priceJod).toBe('20.000');
+  });
+
+  // --- addImages (upload -> storage -> image_urls) ---
+
+  const file = (name = 'a.jpg') => ({
+    buffer: Buffer.from('x'),
+    filename: name,
+  });
+
+  it('addImages appends saved URLs to image_urls by default', async () => {
+    findById.mockResolvedValue(makeProduct({ id: 'p1' }));
+    saveImage
+      .mockResolvedValueOnce({ key: 'k1.jpg', url: 'http://h/uploads/k1.jpg' })
+      .mockResolvedValueOnce({ key: 'k2.png', url: 'http://h/uploads/k2.png' });
+    const updated = makeProduct({
+      imageUrls: ['http://h/uploads/k1.jpg', 'http://h/uploads/k2.png'],
+    });
+    appendImageUrls.mockResolvedValue(updated);
+
+    const result = await service.addImages('p1', [
+      file('a.jpg'),
+      file('b.png'),
+    ]);
+
+    expect(saveImage).toHaveBeenCalledTimes(2);
+    expect(appendImageUrls).toHaveBeenCalledWith('p1', [
+      'http://h/uploads/k1.jpg',
+      'http://h/uploads/k2.png',
+    ]);
+    expect(updateById).not.toHaveBeenCalled();
+    expect(result).toBe(updated);
+  });
+
+  it('addImages replaces image_urls when replace=true', async () => {
+    findById.mockResolvedValue(makeProduct({ id: 'p1' }));
+    saveImage.mockResolvedValue({
+      key: 'k.jpg',
+      url: 'http://h/uploads/k.jpg',
+    });
+    const updated = makeProduct({ imageUrls: ['http://h/uploads/k.jpg'] });
+    updateById.mockResolvedValue(updated);
+
+    const result = await service.addImages('p1', [file()], { replace: true });
+
+    expect(updateById).toHaveBeenCalledWith('p1', {
+      imageUrls: ['http://h/uploads/k.jpg'],
+    });
+    expect(appendImageUrls).not.toHaveBeenCalled();
+    expect(result).toBe(updated);
+  });
+
+  it('addImages throws BadRequestException when no files are provided', async () => {
+    await expect(service.addImages('p1', [])).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(findById).not.toHaveBeenCalled();
+    expect(saveImage).not.toHaveBeenCalled();
+  });
+
+  it('addImages throws NotFoundException for a missing product (nothing stored)', async () => {
+    findById.mockResolvedValue(undefined);
+
+    await expect(service.addImages('ghost', [file()])).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(saveImage).not.toHaveBeenCalled();
+  });
+
+  it('addImages cleans up saved files if the product vanishes mid-write', async () => {
+    findById.mockResolvedValue(makeProduct({ id: 'p1' }));
+    saveImage.mockResolvedValue({
+      key: 'orphan.jpg',
+      url: 'http://h/uploads/orphan.jpg',
+    });
+    appendImageUrls.mockResolvedValue(undefined); // deleted between check and write
+
+    await expect(service.addImages('p1', [file()])).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(deleteImage).toHaveBeenCalledWith('orphan.jpg');
   });
 });

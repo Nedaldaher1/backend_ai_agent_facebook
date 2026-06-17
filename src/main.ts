@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
@@ -7,20 +8,54 @@ import {
 } from '@nestjs/platform-fastify';
 import compress from '@fastify/compress';
 import helmet from '@fastify/helmet';
+import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import { AppModule } from '@/app.module';
 import { AllExceptionsFilter } from '@/common/filters/all-exceptions.filter';
 import { DOCS_ROUTE, setupOpenApi } from '@/core/openapi/openapi';
+import {
+  UPLOAD_PUBLIC_PREFIX,
+  resolveUploadDir,
+} from '@/core/storage/storage.constants';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({ logger: true }),
   );
+  const config = app.get(ConfigService);
 
   // Security & transport plugins (Fastify-native).
   await app.register(helmet);
   await app.register(compress);
   app.enableCors({ origin: true, credentials: true });
+
+  // File uploads: parsed in-memory (no temp files) and capped by env. The buffer
+  // is handed to StorageService, which owns the storage driver (flydrive).
+  await app.register(multipart, {
+    limits: {
+      fileSize: config.get<number>('UPLOAD_MAX_BYTES') ?? 5 * 1024 * 1024,
+      files: 20,
+    },
+  });
+
+  // Serve locally stored files at `/uploads/<key>` — the same URLs StorageService
+  // records on products. After a swap to cloud storage those URLs point at the
+  // bucket instead and this mount simply goes unused; no code changes needed.
+  const uploadDir = resolveUploadDir(
+    config.get<string>('UPLOAD_DIR') ?? './uploads',
+  );
+  mkdirSync(uploadDir, { recursive: true }); // StorageService also ensures this
+  await app.register(fastifyStatic, {
+    root: uploadDir,
+    prefix: `/${UPLOAD_PUBLIC_PREFIX}/`,
+    decorateReply: false,
+    // Let the separate-origin admin panel render images despite helmet's
+    // default same-origin resource policy.
+    setHeaders: (res) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  });
 
   // class-validator DTOs go through this; zod DTOs use ZodValidationPipe per-route.
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
@@ -30,7 +65,6 @@ async function bootstrap() {
   // /docs/openapi.json). Registered before listen so the Fastify plugin mounts.
   await setupOpenApi(app);
 
-  const config = app.get(ConfigService);
   const port = config.get<number>('PORT') ?? 3000;
 
   // Bind to 0.0.0.0 — required to reach the server from Windows under WSL.
