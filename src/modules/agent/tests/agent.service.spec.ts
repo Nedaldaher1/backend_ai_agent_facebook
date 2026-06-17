@@ -1,18 +1,22 @@
 /**
- * Unit tests for AgentService — Phase 2 (tools wired in).
+ * Unit tests for AgentService — AIA-27 (handleMessage + memory scoping).
  *
  * Strategy: mock the factory module so no real Anthropic API call or
  * Postgres connection is made. The mock returns a salesAgent whose
- * `generate` is a jest.fn() that resolves immediately with a fixed text.
+ * `generate` is a jest.fn() that resolves immediately with a fixed result.
  *
  * Test coverage:
- *  1. `onModuleInit` calls `buildMastra` with an object containing
- *     `connectionString` (the DATABASE_URL from config) plus the three
- *     injected services.
- *  2. `ping` finds-or-creates a Conversation via ConversationsService, then
- *     delegates to `salesAgent.generate` with the correct memory shape AND
- *     a requestContext.
- *  3. `ping` resolves to the `.text` string from the generate result.
+ *  1. `onModuleInit` calls `buildMastra` with connectionString + agentBehavior.
+ *  2. `handleMessage` derives resourceId/threadId correctly and passes the right
+ *     memory shape to salesAgent.generate.
+ *  3. `findOrCreateByPsid` is called with the correct arguments.
+ *  4. The RequestContext carries the required identity keys.
+ *  5. Isolation: two consecutive calls with different contactIds produce
+ *     different memory.resource scopes.
+ *  6. Both addMessage calls (inbound + outbound) happen on every turn.
+ *  7. The reply equals the generate result text.
+ *  8. Products are extracted and deduped from search_products toolResults.
+ *  9. When toolResults is absent, products is undefined.
  */
 
 // Mock the factory BEFORE any import of AgentService so the module-level
@@ -29,9 +33,10 @@ jest.mock('../mastra/mastra.factory', () => ({ buildMastra: jest.fn() }));
 jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 
-// RequestContext is used by AgentService.ping. We mock @mastra/core/di so Jest
-// doesn't load the real ESM module. The mock provides a minimal implementation
-// that lets us assert requestContext.set() was called with the right values.
+// RequestContext is used by AgentService.handleMessage. We mock @mastra/core/di
+// so Jest doesn't load the real ESM module. The mock provides a minimal
+// implementation that lets us assert requestContext.set() was called with the
+// right values.
 jest.mock('@mastra/core/di', () => {
   const instances: Array<{ sets: Map<string, unknown> }> = [];
   const MockRequestContext = jest.fn().mockImplementation(() => {
@@ -87,10 +92,14 @@ const agentBehaviorMock = {
   getInstructions: jest.fn().mockResolvedValue('x'),
 } as unknown as AgentBehaviorService;
 
-/** A ConversationsService stub whose findOrCreateByPsid always resolves. */
+/**
+ * A ConversationsService stub with findOrCreateByPsid and addMessage.
+ * Both resolve immediately; addMessage call order is asserted in the tests.
+ */
 function makeConversationsMock(conversationId = 'convo-1'): ConversationsService {
   return {
     findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId }),
+    addMessage: jest.fn().mockResolvedValue({}),
   } as unknown as ConversationsService;
 }
 
@@ -161,10 +170,10 @@ describe('AgentService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // ping
+  // handleMessage — scope derivation
   // -------------------------------------------------------------------------
 
-  it('ping returns a non-empty string after onModuleInit', async () => {
+  it('derives resourceId + threadId and passes the correct memory shape to generate', async () => {
     const conversations = makeConversationsMock();
     const service = new AgentService(
       makeConfigMock(),
@@ -175,53 +184,17 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    const result = await service.ping('مرحبا', 'psid-x', 't1');
-
-    expect(typeof result).toBe('string');
-    expect(result.length).toBeGreaterThan(0);
-  });
-
-  it('ping passes the correct memory shape to salesAgent.generate', async () => {
-    const conversations = makeConversationsMock();
-    const service = new AgentService(
-      makeConfigMock(),
-      productsMock,
-      conversations,
-      ordersMock,
-      agentBehaviorMock,
-    );
-    service.onModuleInit();
-
-    await service.ping('ما أحلى العبايات؟', 'psid-abc', 'thread-42');
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
 
     expect(fakeSalesAgent.generate).toHaveBeenCalledWith(
-      'ما أحلى العبايات؟',
+      'مرحبا',
       expect.objectContaining({
-        memory: { resource: 'psid-abc', thread: 'thread-42' },
+        memory: { resource: 'C1', thread: 'thread:C1' },
       }),
     );
   });
 
-  it('ping includes a requestContext in the generate call', async () => {
-    const conversations = makeConversationsMock();
-    const service = new AgentService(
-      makeConfigMock(),
-      productsMock,
-      conversations,
-      ordersMock,
-      agentBehaviorMock,
-    );
-    service.onModuleInit();
-
-    await service.ping('مرحبا', 'psid-x', 't1');
-
-    expect(fakeSalesAgent.generate).toHaveBeenCalledWith(
-      'مرحبا',
-      expect.objectContaining({ requestContext: expect.anything() }),
-    );
-  });
-
-  it('ping calls findOrCreateByPsid before generating', async () => {
+  it('calls findOrCreateByPsid with contactId and the derived threadId', async () => {
     const conversations = makeConversationsMock('convo-42');
     const service = new AgentService(
       makeConfigMock(),
@@ -232,14 +205,44 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    await service.ping('مرحبا', 'psid-x', 't1');
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا', adRef: undefined });
 
     expect(
       (conversations.findOrCreateByPsid as jest.Mock),
-    ).toHaveBeenCalledWith('psid-x', { threadId: 't1' });
+    ).toHaveBeenCalledWith('C1', { threadId: 'thread:C1', adRef: undefined });
   });
 
-  it('ping resolves to the .text from the generate result', async () => {
+  // -------------------------------------------------------------------------
+  // handleMessage — RequestContext identity
+  // -------------------------------------------------------------------------
+
+  it('requestContext carries contactId, conversationId, threadId and generate is called with it', async () => {
+    const CONVO_ID = 'convo-ctx-test';
+    const conversations = makeConversationsMock(CONVO_ID);
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا', adRef: 'spring' });
+
+    const instance = MockRequestContextCtor.instances[0];
+    expect(instance.sets.get('contactId')).toBe('C1');
+    expect(instance.sets.get('conversationId')).toBe(CONVO_ID);
+    expect(instance.sets.get('threadId')).toBe('thread:C1');
+    expect(instance.sets.get('adRef')).toBe('spring');
+
+    expect(fakeSalesAgent.generate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ requestContext: expect.anything() }),
+    );
+  });
+
+  it('does not set adRef on requestContext when adRef is not supplied', async () => {
     const conversations = makeConversationsMock();
     const service = new AgentService(
       makeConfigMock(),
@@ -250,8 +253,170 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    const reply = await service.ping('مرحبا', 'psid-x', 't1');
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
 
-    expect(reply).toBe(FAKE_REPLY);
+    const instance = MockRequestContextCtor.instances[0];
+    expect(instance.sets.has('adRef')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — isolation (scope-derivation proxy)
+  // -------------------------------------------------------------------------
+
+  it('two calls with different contactIds produce different memory.resource scopes', async () => {
+    // Note: true working-memory isolation (the Mastra PostgresStore separating
+    // one customer's data from another's) is verified live with the real model+store.
+    // This test is the unit-level proof that the service derives separate resourceIds.
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+    await service.handleMessage({ contactId: 'C2', text: 'أهلاً' });
+
+    const calls = fakeSalesAgent.generate.mock.calls;
+    expect(calls[0][1]).toMatchObject({ memory: { resource: 'C1' } });
+    expect(calls[1][1]).toMatchObject({ memory: { resource: 'C2' } });
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — business record (addMessage)
+  // -------------------------------------------------------------------------
+
+  it('persists both the inbound customer message and the outbound agent reply', async () => {
+    const CONVO_ID = 'convo-log';
+    const conversations = makeConversationsMock(CONVO_ID);
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    const addMessage = conversations.addMessage as jest.Mock;
+    expect(addMessage).toHaveBeenCalledTimes(2);
+
+    // First call — inbound
+    expect(addMessage).toHaveBeenNthCalledWith(1, {
+      conversationId: CONVO_ID,
+      role: 'customer',
+      content: 'مرحبا',
+    });
+
+    // Second call — outbound
+    expect(addMessage).toHaveBeenNthCalledWith(2, {
+      conversationId: CONVO_ID,
+      role: 'agent',
+      content: FAKE_REPLY,
+    });
+  });
+
+  it('still returns the reply when a business-log write fails (best-effort)', async () => {
+    // The customer reply is the primary product; a failure to persist the
+    // secondary admin/eval log row must not throw or drop the reply.
+    const conversations = makeConversationsMock();
+    (conversations.addMessage as jest.Mock).mockRejectedValue(
+      new Error('DB down'),
+    );
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+    );
+    service.onModuleInit();
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    expect(result.reply).toBe(FAKE_REPLY);
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — reply
+  // -------------------------------------------------------------------------
+
+  it('returns { reply } equal to the generate text', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+    );
+    service.onModuleInit();
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    expect(result.reply).toBe(FAKE_REPLY);
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — products extraction
+  // -------------------------------------------------------------------------
+
+  it('extracts and dedupes products from search_products toolResults (price as string)', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+    );
+    service.onModuleInit();
+
+    fakeSalesAgent.generate.mockResolvedValueOnce({
+      text: 'إليك المنتجات',
+      toolResults: [
+        {
+          payload: {
+            toolName: 'search_products',
+            isError: false,
+            result: {
+              products: [
+                { id: 'p1', name: 'عباية', price: '45.000', available: true },
+                // Duplicate — should be dropped
+                { id: 'p1', name: 'dup', price: '45.000', available: true },
+              ],
+            },
+          },
+        },
+      ],
+    });
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'عبايات' });
+
+    // Deduped to one entry; price is the STRING '45.000' (not a number)
+    expect(result.products).toEqual([{ id: 'p1', name: 'عباية', price: '45.000' }]);
+  });
+
+  it('returns products: undefined when toolResults is absent', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+    );
+    service.onModuleInit();
+
+    fakeSalesAgent.generate.mockResolvedValueOnce({ text: 'لا يوجد' });
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'كيف الأسعار؟' });
+
+    expect(result.products).toBeUndefined();
   });
 });
