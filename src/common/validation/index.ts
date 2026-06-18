@@ -6,6 +6,7 @@ import { insertMessageSchema } from '@/modules/conversations/entities/message.en
 import { insertKnowledgeEntrySchema } from '@/modules/knowledge/entities/knowledge-entry.entity';
 import { insertOrderSchema } from '@/modules/orders/entities/order.entity';
 import { insertOrderItemSchema } from '@/modules/orders/entities/order-item.entity';
+import { insertAdProductLinkSchema } from '@/modules/products/entities/ad-product-link.entity';
 import { insertColorSynonymSchema } from '@/modules/products/entities/color-synonym.entity';
 import { insertProductSchema } from '@/modules/products/entities/product.entity';
 
@@ -40,6 +41,16 @@ export const createProductSchema = insertProductSchema
 export const updateProductSchema = createProductSchema.partial().strict();
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
+
+// --- ad_product_links (control-plane: maps ad refs to products) ---
+export const createAdProductLinkSchema = insertAdProductLinkSchema
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .strict();
+export const updateAdProductLinkSchema = createAdProductLinkSchema
+  .partial()
+  .strict();
+export type CreateAdProductLinkInput = z.infer<typeof createAdProductLinkSchema>;
+export type UpdateAdProductLinkInput = z.infer<typeof updateAdProductLinkSchema>;
 
 // --- color_synonyms (control-plane) ---
 export const createColorSynonymSchema = insertColorSynonymSchema

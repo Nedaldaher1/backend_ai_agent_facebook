@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
 import { SecurityModule } from '@/core/security/security.module';
+import { AdProductLinksAdminController } from './ad-product-links-admin.controller';
+import { AdProductLinksRepository } from './ad-product-links.repository';
+import { AdProductLinksService } from './ad-product-links.service';
+import { ColorSynonymsAdminController } from './color-synonyms-admin.controller';
 import { ColorSynonymsRepository } from './color-synonyms.repository';
 import { ColorSynonymsService } from './color-synonyms.service';
 import { ProductImagesAdminController } from './product-images-admin.controller';
@@ -27,12 +31,16 @@ import { ProductsService } from './products.service';
     ProductImagesController,
     ProductsAdminController,
     ProductImagesAdminController,
+    AdProductLinksAdminController,
+    ColorSynonymsAdminController,
   ],
   providers: [
     ProductsService,
     ProductsRepository,
     ColorSynonymsService,
     ColorSynonymsRepository,
+    AdProductLinksRepository,
+    AdProductLinksService,
   ],
   exports: [ProductsService, ColorSynonymsService],
 })
