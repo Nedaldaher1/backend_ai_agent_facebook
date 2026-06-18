@@ -66,7 +66,7 @@ type AdLinksListQuery = z.infer<typeof adLinksListQuerySchema>;
  *   PATCH  /admin/ad-links/:id       → update fields (covers toggling isActive/position)
  *   DELETE /admin/ad-links/:id       → hard delete
  */
-@ApiTags('Admin')
+@ApiTags('Ad Links')
 @Controller('admin/ad-links')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'editor')

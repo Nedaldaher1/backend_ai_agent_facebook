@@ -81,7 +81,7 @@ type AdminListQuery = z.infer<typeof adminListQuerySchema>;
  *   PATCH  /admin/products/:id/publish → set published flag
  *   GET    /admin/products          → list (all, with optional published filter)
  */
-@ApiTags('Admin')
+@ApiTags('Products')
 @Controller('admin/products')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'editor')

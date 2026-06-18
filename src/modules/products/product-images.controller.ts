@@ -45,7 +45,7 @@ import { ProductsService, type UploadedImage } from './products.service';
  *
  * Admin action: requires a valid Bearer JWT with role `admin` or `editor`.
  */
-@ApiTags('Admin')
+@ApiTags('Products')
 @Controller('products/:id/images')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'editor')

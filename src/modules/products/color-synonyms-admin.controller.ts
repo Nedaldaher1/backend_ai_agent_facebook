@@ -62,7 +62,7 @@ type ColorSynonymsListQuery = z.infer<typeof colorSynonymsListQuerySchema>;
  *   PATCH  /admin/color-synonyms/:id      → update fields
  *   DELETE /admin/color-synonyms/:id      → hard delete
  */
-@ApiTags('Admin')
+@ApiTags('Color Synonyms')
 @Controller('admin/color-synonyms')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'editor')

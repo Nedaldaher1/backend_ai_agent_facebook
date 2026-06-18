@@ -72,18 +72,36 @@ export async function setupOpenApi(app: NestFastifyApplication): Promise<void> {
       },
       BEARER_AUTH_NAME,
     )
+    // Tags group endpoints by domain (resource), not by audience. Admin-only
+    // routes live under their resource's tag and are marked with the Bearer lock
+    // rather than a separate "Admin" section.
     .addTag(
       'Products',
-      'Customer/agent catalog search and lookup (published only).',
+      'Catalog search and lookup for customers/agent (published only), plus ' +
+        'admin catalog management — create, update, publish, and images. ' +
+        'Admin routes require Bearer auth.',
+    )
+    .addTag(
+      'Ad Links',
+      'Admin mapping of Facebook ad reference slugs to featured products. ' +
+        'Requires Bearer auth.',
+    )
+    .addTag(
+      'Color Synonyms',
+      'Admin mapping of dialect color terms to canonical color families. ' +
+        'Requires Bearer auth.',
+    )
+    .addTag(
+      'Knowledge',
+      'Brand knowledge-base entries the agent can cite. Admin-managed; ' +
+        'requires Bearer auth.',
     )
     .addTag('Orders', 'Cash-on-delivery order drafts captured by the agent.')
     .addTag(
       'Conversations',
       'Customer conversation threads and their messages.',
     )
-    .addTag('Knowledge', 'Brand knowledge-base entries the agent can cite.')
     .addTag('Agent', 'AI agent runtime, persona configuration, and tools.')
-    .addTag('Admin', 'Admin-only management endpoints (require Bearer auth).')
     .addTag('Auth', 'Admin account signup, login, and current-user lookup.')
     .addTag('Health', 'Service liveness and database-connectivity probes.')
     .build();

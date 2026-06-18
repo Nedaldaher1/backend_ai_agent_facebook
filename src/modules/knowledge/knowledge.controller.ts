@@ -82,7 +82,7 @@ type AdminListQuery = z.infer<typeof adminListQuerySchema>;
  *   PATCH  /admin/knowledge/:id/publish → set published flag
  *   GET    /admin/knowledge          → list (all, with optional filters; includes drafts)
  */
-@ApiTags('Admin')
+@ApiTags('Knowledge')
 @Controller('admin/knowledge')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'editor')

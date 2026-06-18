@@ -36,7 +36,7 @@ import { ProductsService } from './products.service';
  *   DELETE /admin/products/:id/images/:imageId        → delete one image
  *   PATCH  /admin/products/:id/images/:imageId/primary → promote to primary (index 0)
  */
-@ApiTags('Admin')
+@ApiTags('Products')
 @Controller('admin/products/:id/images')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'editor')
