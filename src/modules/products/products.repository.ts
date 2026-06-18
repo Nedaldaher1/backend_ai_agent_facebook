@@ -147,7 +147,13 @@ export class ProductsRepository {
   /**
    * Append image URLs to image_urls in a single atomic statement (no
    * read-modify-write, so concurrent uploads don't clobber each other).
-   * coalesce handles a NULL column; `||` concatenates the text[] arrays.
+   * coalesce handles a NULL column.
+   *
+   * The new keys are emitted as a parameterized `array[$1, $2, ...]::text[]`
+   * constructor. Interpolating the JS array directly (`${urls}::text[]`) makes
+   * drizzle bind each element as a separate scalar param, so a single key
+   * renders as `'key'::text[]` and Postgres rejects it with "malformed array
+   * literal"; building the ARRAY[] explicitly keeps every element parameterized.
    */
   async appendImageUrls(
     id: string,
@@ -156,10 +162,14 @@ export class ProductsRepository {
     if (urls.length === 0) {
       return this.findById(id);
     }
+    const newKeys = sql`array[${sql.join(
+      urls.map((u) => sql`${u}`),
+      sql`, `,
+    )}]::text[]`;
     const [row] = await this.db
       .update(products)
       .set({
-        imageUrls: sql`coalesce(${products.imageUrls}, '{}'::text[]) || ${urls}::text[]`,
+        imageUrls: sql`coalesce(${products.imageUrls}, '{}'::text[]) || ${newKeys}`,
         updatedAt: new Date(),
       })
       .where(eq(products.id, id))
