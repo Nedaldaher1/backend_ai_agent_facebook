@@ -7,7 +7,10 @@ import {
   desc,
   eq,
   ilike,
+  inArray,
+  isNull,
   or,
+  sql,
   type SQL,
 } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
@@ -22,12 +25,28 @@ import {
  * Filters for knowledge_entries. `isPublished` is explicit so the publish gate
  * is the caller's decision (service): the agent path forces `true`, admin omits
  * it. `search` matches title OR content; `tags` uses array overlap.
+ * `productId` narrows to product-specific entries; omit for all entries.
  */
 export interface KnowledgeFilter {
   category?: string;
   isPublished?: boolean;
   tags?: string[];
   search?: string;
+  productId?: string;
+}
+
+/** Scope for relevance queries: either product-specific or global (productId IS NULL). */
+export type KnowledgeScope =
+  | { type: 'products'; productIds: string[] }
+  | { type: 'global' };
+
+/** Input for `findRelevant` — the service always forces isPublished:true on the agent path. */
+export interface KnowledgeRelevanceFilter {
+  scope: KnowledgeScope;
+  isPublished?: boolean; // the service forces this true on every agent call
+  category?: string;
+  query?: string;
+  limit?: number;
 }
 
 /**
@@ -60,6 +79,9 @@ export class KnowledgeRepository {
       if (match) {
         conditions.push(match);
       }
+    }
+    if (filter.productId) {
+      conditions.push(eq(knowledgeEntries.productId, filter.productId));
     }
 
     return conditions;
@@ -141,5 +163,88 @@ export class KnowledgeRepository {
       .where(eq(knowledgeEntries.id, id))
       .returning();
     return row;
+  }
+
+  /**
+   * Retrieve knowledge entries relevant to a query/scope. Used by the agent path only.
+   *
+   * Scope:
+   *  - `type==='products'`: filters to entries where productId IN productIds.
+   *    Returns [] immediately when productIds is empty (no scope to search).
+   *  - `type==='global'`: filters to entries where productId IS NULL.
+   *
+   * Fuzzy search (when query is set): uses pg_trgm similarity on the GIN-indexed
+   * expression `(coalesce(title,'') || ' ' || coalesce(situation,'') || ' ' || coalesce(content,''))`.
+   * The ILIKE term is a safety net for short Arabic keywords that fall below the
+   * similarity threshold. Both use bound parameters — the query is NEVER concatenated
+   * into the SQL string.
+   *
+   * Ordering: query present → priority DESC + similarity DESC; else → priority DESC + createdAt DESC.
+   */
+  async findRelevant(filter: KnowledgeRelevanceFilter): Promise<KnowledgeEntry[]> {
+    // Short-circuit: products scope with empty list can match nothing.
+    if (filter.scope.type === 'products' && filter.scope.productIds.length === 0) {
+      return [];
+    }
+
+    const conditions: SQL[] = [];
+
+    if (filter.isPublished !== undefined) {
+      conditions.push(eq(knowledgeEntries.isPublished, filter.isPublished));
+    }
+    if (filter.category) {
+      conditions.push(eq(knowledgeEntries.category, filter.category));
+    }
+
+    // Scope condition
+    if (filter.scope.type === 'products') {
+      conditions.push(inArray(knowledgeEntries.productId, filter.scope.productIds));
+    } else {
+      conditions.push(isNull(knowledgeEntries.productId));
+    }
+
+    // Searchable expression — mirrors the GIN pg_trgm index defined in
+    // knowledge-entry.entity.ts. Drizzle renders the columns table-qualified
+    // here vs. bare in the index DDL, but Postgres normalizes both to the same
+    // expression node, so the index still applies.
+    const searchable = sql`(coalesce(${knowledgeEntries.title}, '') || ' ' || coalesce(${knowledgeEntries.situation}, '') || ' ' || coalesce(${knowledgeEntries.content}, ''))`;
+
+    const limit = filter.limit ?? 5;
+
+    // No free-text query: pure structured filter, ordered by priority then recency.
+    if (!filter.query) {
+      return this.db
+        .select()
+        .from(knowledgeEntries)
+        .where(and(...conditions))
+        .orderBy(
+          sql`${knowledgeEntries.priority} DESC`,
+          sql`${knowledgeEntries.createdAt} DESC`,
+        )
+        .limit(limit);
+    }
+
+    // Fuzzy path. The pg_trgm `%` operator is the INDEXABLE form of
+    // `similarity() >= threshold`; pairing it with ILIKE (both GIN-trgm-indexable)
+    // lets Postgres use knowledge_entries_search_trgm_idx. A bare
+    // `similarity() >= 0.2` call is NOT indexable and would force a seq scan.
+    // `%` reads its cutoff from pg_trgm.similarity_threshold, so we lower it to
+    // 0.2 (lenient for Arabic) with SET LOCAL inside a tx — scoped to this query
+    // and safe on a pooled connection. ORDER BY similarity() needs no index.
+    const q = filter.query;
+    const match = sql`(${searchable} % ${q} OR ${searchable} ILIKE '%' || ${q} || '%')`;
+
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL pg_trgm.similarity_threshold = 0.2`);
+      return tx
+        .select()
+        .from(knowledgeEntries)
+        .where(and(...conditions, match))
+        .orderBy(
+          sql`${knowledgeEntries.priority} DESC`,
+          sql`similarity(${searchable}, ${q}) DESC`,
+        )
+        .limit(limit);
+    });
   }
 }

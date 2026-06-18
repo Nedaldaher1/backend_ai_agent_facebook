@@ -16,6 +16,26 @@ jest.mock('flydrive/drivers/fs', () => ({
     })),
 }));
 
+// S3Driver mock: capture constructor args for assertion, and mirror the REAL
+// driver's getUrl, which resolves `new URL(key, cdnUrl)` (not a string concat) —
+// so the test would catch a regression in how cdnUrl is normalized.
+let s3ConstructorArgs: Record<string, unknown> | undefined;
+jest.mock('flydrive/drivers/s3', () => ({
+  __esModule: true,
+  S3Driver: jest.fn().mockImplementation((options: Record<string, unknown>) => {
+    s3ConstructorArgs = options;
+    const cdnUrl = options.cdnUrl as string | undefined;
+    const toUrl = (key: string) =>
+      Promise.resolve(
+        cdnUrl ? new URL(key, cdnUrl).toString() : `s3-endpoint/${key}`,
+      );
+    return {
+      options,
+      urlBuilder: { generateURL: toUrl, generateSignedURL: toUrl },
+    };
+  }),
+}));
+
 jest.mock('flydrive', () => {
   const put = jest.fn().mockResolvedValue(undefined);
   const remove = jest.fn().mockResolvedValue(undefined);
@@ -58,8 +78,26 @@ const makeConfig = (overrides: Record<string, unknown> = {}): ConfigService =>
       })[key],
   }) as unknown as ConfigService;
 
+/** Config factory for the R2 driver with sane test defaults. */
+const makeR2Config = (overrides: Record<string, unknown> = {}): ConfigService =>
+  makeConfig({
+    STORAGE_DRIVER: 'r2',
+    R2_ACCESS_KEY_ID: 'test-key-id',
+    R2_SECRET_ACCESS_KEY: 'test-secret',
+    R2_ENDPOINT: 'https://account123.r2.cloudflarestorage.com',
+    R2_BUCKET: 'masa-images',
+    R2_PUBLIC_URL: 'https://pub.example.com',
+    R2_REGION: 'auto',
+    ...overrides,
+  });
+
 describe('StorageService', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    s3ConstructorArgs = undefined;
+  });
+
+  // --- fs driver (existing tests, kept) ---
 
   it('saves under a uuid + sanitized extension key and returns its public URL', async () => {
     const service = new StorageService(makeConfig());
@@ -121,5 +159,72 @@ describe('StorageService', () => {
     expect(
       () => new StorageService(makeConfig({ STORAGE_DRIVER: 's3' })),
     ).toThrow(/Unsupported STORAGE_DRIVER/);
+  });
+
+  // --- r2 driver ---
+
+  it('r2: getUrl returns ${R2_PUBLIC_URL}/${key} (public-URL shape)', async () => {
+    const service = new StorageService(makeR2Config());
+
+    const url = await service.getUrl('abc.jpg');
+
+    expect(url).toBe('https://pub.example.com/abc.jpg');
+  });
+
+  it('r2: URL is NOT the S3 endpoint', async () => {
+    const service = new StorageService(makeR2Config());
+
+    const url = await service.getUrl('abc.jpg');
+
+    expect(url).not.toContain('r2.cloudflarestorage.com');
+  });
+
+  it('r2: saveImage uploads and returns public URL from R2_PUBLIC_URL', async () => {
+    const service = new StorageService(makeR2Config());
+
+    const { key, url } = await service.saveImage(
+      Buffer.from('img'),
+      'photo.jpg',
+    );
+
+    expect(key).toMatch(/^[0-9a-f-]{36}\.jpg$/i);
+    expect(put).toHaveBeenCalledWith(key, expect.any(Buffer));
+    expect(url).toBe(`https://pub.example.com/${key}`);
+  });
+
+  it('r2: S3Driver is constructed with supportsACL: false (no ACL params)', () => {
+    new StorageService(makeR2Config());
+
+    expect(s3ConstructorArgs).toBeDefined();
+    expect(s3ConstructorArgs!['supportsACL']).toBe(false);
+  });
+
+  it('r2: normalizes a trailing slash on R2_PUBLIC_URL', async () => {
+    const service = new StorageService(
+      makeR2Config({ R2_PUBLIC_URL: 'https://pub.example.com/' }),
+    );
+
+    const url = await service.getUrl('img.png');
+
+    expect(url).toBe('https://pub.example.com/img.png');
+  });
+
+  it('r2: preserves a subpath in R2_PUBLIC_URL', async () => {
+    const service = new StorageService(
+      makeR2Config({ R2_PUBLIC_URL: 'https://pub.example.com/cdn' }),
+    );
+
+    expect(await service.getUrl('img.png')).toBe(
+      'https://pub.example.com/cdn/img.png',
+    );
+  });
+
+  it('r2: S3Driver receives the correct endpoint and region', () => {
+    new StorageService(makeR2Config());
+
+    expect(s3ConstructorArgs!['endpoint']).toBe(
+      'https://account123.r2.cloudflarestorage.com',
+    );
+    expect(s3ConstructorArgs!['region']).toBe('auto');
   });
 });
