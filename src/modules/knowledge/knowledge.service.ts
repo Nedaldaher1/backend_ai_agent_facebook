@@ -8,6 +8,7 @@ import {
   type CreateKnowledgeEntryInput,
   type UpdateKnowledgeEntryInput,
 } from '@/common/validation';
+import { ProductsService } from '@/modules/products/products.service';
 import {
   KnowledgeRepository,
   type KnowledgeFilter,
@@ -40,7 +41,10 @@ export type KnowledgeSearchInput = Omit<KnowledgeFilter, 'isPublished'>;
  */
 @Injectable()
 export class KnowledgeService {
-  constructor(private readonly repo: KnowledgeRepository) {}
+  constructor(
+    private readonly repo: KnowledgeRepository,
+    private readonly products: ProductsService,
+  ) {}
 
   // --- Agent read path (publish gate forced on) ---
 
@@ -125,8 +129,12 @@ export class KnowledgeService {
 
   // --- Admin write path ---
 
-  create(input: CreateKnowledgeEntryInput): Promise<KnowledgeEntry> {
+  async create(input: CreateKnowledgeEntryInput): Promise<KnowledgeEntry> {
     const data = parseOrThrow(createKnowledgeEntrySchema, input);
+    if (data.productId != null) {
+      // Verify the product exists (throws NotFoundException if missing).
+      await this.products.getById(data.productId);
+    }
     return this.repo.insert(data);
   }
 
@@ -135,6 +143,10 @@ export class KnowledgeService {
     patch: UpdateKnowledgeEntryInput,
   ): Promise<KnowledgeEntry> {
     const data = parseOrThrow(updateKnowledgeEntrySchema, patch);
+    if (data.productId != null) {
+      // Verify the product exists before persisting the foreign key.
+      await this.products.getById(data.productId);
+    }
     const row = await this.repo.updateById(id, data);
     if (!row) {
       throw new NotFoundException(`Knowledge entry ${id} not found`);

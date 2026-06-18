@@ -1,6 +1,13 @@
+// flydrive is ESM-only; stub it so importing the knowledge → products → storage
+// chain doesn't try to load the real module under Jest (CJS).
+jest.mock('flydrive', () => ({ Disk: jest.fn() }));
+jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
+jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
+
 import { NotFoundException } from '@nestjs/common';
 import { KnowledgeService } from '../knowledge.service';
 import type { KnowledgeRepository } from '../knowledge.repository';
+import type { ProductsService } from '@/modules/products/products.service';
 
 const makeEntry = (overrides: Record<string, unknown> = {}) => ({
   id: 'k1',
@@ -13,6 +20,30 @@ const makeEntry = (overrides: Record<string, unknown> = {}) => ({
   createdBy: null,
   productId: null,
   situation: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  ...overrides,
+});
+
+const makeProduct = (overrides: Record<string, unknown> = {}) => ({
+  id: 'p1',
+  name: 'عباءة',
+  priceJod: '45.000',
+  stockStatus: 'in_stock' as const,
+  isPublished: true,
+  colorFamily: null,
+  colorShade: null,
+  sleeveType: null,
+  fabric: null,
+  embellishment: null,
+  occasion: null,
+  sizes: [],
+  imageUrls: [],
+  tags: [],
+  attributes: null,
+  sku: null,
+  description: null,
+  createdBy: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   ...overrides,
@@ -39,7 +70,10 @@ describe('KnowledgeService', () => {
     findRelevant,
   } as unknown as KnowledgeRepository;
 
-  const service = new KnowledgeService(repo);
+  const getById = jest.fn();
+  const products = { getById } as unknown as ProductsService;
+
+  const service = new KnowledgeService(repo, products);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -248,6 +282,157 @@ describe('KnowledgeService', () => {
         ([f]) => f.scope.type === 'global',
       );
       expect(globalCall).toBeUndefined();
+    });
+  });
+
+  // --- create: product existence check ---
+
+  /** A fixed valid UUID used as a product id in tests. */
+  const PRODUCT_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
+  describe('create', () => {
+    it('create with a valid productId verifies the product then inserts', async () => {
+      const product = makeProduct({ id: PRODUCT_UUID });
+      getById.mockResolvedValue(product);
+      const entry = makeEntry({ productId: PRODUCT_UUID });
+      insert.mockResolvedValue(entry);
+
+      const result = await service.create({
+        category: 'faq',
+        title: 'عنوان',
+        content: 'محتوى',
+        productId: PRODUCT_UUID,
+      });
+
+      expect(getById).toHaveBeenCalledWith(PRODUCT_UUID);
+      expect(insert).toHaveBeenCalled();
+      expect(result).toBe(entry);
+    });
+
+    it('create with a missing product throws NotFoundException and does NOT insert', async () => {
+      getById.mockRejectedValue(new NotFoundException('Product not found'));
+
+      await expect(
+        service.create({
+          category: 'faq',
+          title: 'عنوان',
+          content: 'محتوى',
+          productId: PRODUCT_UUID,
+        }),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(insert).not.toHaveBeenCalled();
+    });
+
+    it('create with null productId (global entry) does NOT call products.getById and inserts', async () => {
+      const entry = makeEntry({ productId: null });
+      insert.mockResolvedValue(entry);
+
+      const result = await service.create({
+        category: 'policy',
+        title: 'سياسة',
+        content: 'نص السياسة',
+        productId: null,
+      });
+
+      expect(getById).not.toHaveBeenCalled();
+      expect(insert).toHaveBeenCalled();
+      expect(result).toBe(entry);
+    });
+
+    it('create without productId (global entry) does NOT call products.getById and inserts', async () => {
+      const entry = makeEntry({ productId: null });
+      insert.mockResolvedValue(entry);
+
+      const result = await service.create({
+        category: 'shipping',
+        title: 'توصيل',
+        content: 'نص التوصيل',
+      });
+
+      expect(getById).not.toHaveBeenCalled();
+      expect(insert).toHaveBeenCalled();
+      expect(result).toBe(entry);
+    });
+  });
+
+  // --- update: product existence check ---
+
+  const PRODUCT_UUID_2 = 'b1cccd00-1d1c-4ff9-ab7e-7cc0ce491b22';
+
+  describe('update', () => {
+    it('update with a valid productId verifies the product then patches', async () => {
+      const product = makeProduct({ id: PRODUCT_UUID_2 });
+      getById.mockResolvedValue(product);
+      const entry = makeEntry({ id: 'k1', productId: PRODUCT_UUID_2 });
+      updateById.mockResolvedValue(entry);
+
+      const result = await service.update('k1', { productId: PRODUCT_UUID_2 });
+
+      expect(getById).toHaveBeenCalledWith(PRODUCT_UUID_2);
+      expect(updateById).toHaveBeenCalledWith('k1', { productId: PRODUCT_UUID_2 });
+      expect(result).toBe(entry);
+    });
+
+    it('update with a missing product throws NotFoundException and does NOT update', async () => {
+      getById.mockRejectedValue(new NotFoundException('Product not found'));
+
+      await expect(
+        service.update('k1', { productId: PRODUCT_UUID }),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(updateById).not.toHaveBeenCalled();
+    });
+
+    it('update with productId: null (make global) does NOT call products.getById', async () => {
+      const entry = makeEntry({ id: 'k1', productId: null });
+      updateById.mockResolvedValue(entry);
+
+      const result = await service.update('k1', { productId: null });
+
+      expect(getById).not.toHaveBeenCalled();
+      expect(updateById).toHaveBeenCalledWith('k1', { productId: null });
+      expect(result).toBe(entry);
+    });
+
+    it('update without productId field does NOT call products.getById', async () => {
+      const entry = makeEntry({ id: 'k1', title: 'تحديث' });
+      updateById.mockResolvedValue(entry);
+
+      const result = await service.update('k1', { title: 'تحديث' });
+
+      expect(getById).not.toHaveBeenCalled();
+      expect(updateById).toHaveBeenCalledWith('k1', { title: 'تحديث' });
+      expect(result).toBe(entry);
+    });
+  });
+
+  // --- list: productId filter is passed through ---
+
+  describe('list', () => {
+    it('list passes productId filter to the repo', async () => {
+      const entry = makeEntry({ productId: 'p1' });
+      list.mockResolvedValue([entry]);
+      count.mockResolvedValue(1);
+
+      await service.list({ productId: 'p1' });
+
+      expect(list).toHaveBeenCalledWith(
+        expect.objectContaining({ productId: 'p1' }),
+        undefined,
+      );
+    });
+
+    it('list without productId does not include productId in the filter', async () => {
+      await service.list({ category: 'faq' });
+
+      expect(list).toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'faq' }),
+        undefined,
+      );
+      // productId should not be present (or be undefined)
+      const callArg = (list.mock.calls[0] as [Record<string, unknown>])[0];
+      expect(callArg.productId).toBeUndefined();
     });
   });
 });

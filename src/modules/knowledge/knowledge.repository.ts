@@ -25,12 +25,14 @@ import {
  * Filters for knowledge_entries. `isPublished` is explicit so the publish gate
  * is the caller's decision (service): the agent path forces `true`, admin omits
  * it. `search` matches title OR content; `tags` uses array overlap.
+ * `productId` narrows to product-specific entries; omit for all entries.
  */
 export interface KnowledgeFilter {
   category?: string;
   isPublished?: boolean;
   tags?: string[];
   search?: string;
+  productId?: string;
 }
 
 /** Scope for relevance queries: either product-specific or global (productId IS NULL). */
@@ -77,6 +79,9 @@ export class KnowledgeRepository {
       if (match) {
         conditions.push(match);
       }
+    }
+    if (filter.productId) {
+      conditions.push(eq(knowledgeEntries.productId, filter.productId));
     }
 
     return conditions;
