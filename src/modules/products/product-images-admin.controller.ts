@@ -22,6 +22,7 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 import { RolesGuard } from '@/common/guards/roles.guard';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
+import { ProductDto } from './dto/product.dto';
 import type { Product } from './entities/product.entity';
 import { ProductsService } from './products.service';
 
@@ -88,7 +89,10 @@ export class ProductImagesAdminController {
     name: 'imageId',
     description: 'Storage key of the image (e.g. `abc123.jpg`).',
   })
-  @ApiOkResponse({ description: 'Image deleted; updated product returned.' })
+  @ApiOkResponse({
+    description: 'Image deleted; updated product returned.',
+    type: ProductDto,
+  })
   @ApiNotFoundResponse({
     description: 'No product exists with that id, or the key is not present.',
   })
@@ -114,7 +118,10 @@ export class ProductImagesAdminController {
     name: 'imageId',
     description: 'Storage key of the image to promote.',
   })
-  @ApiOkResponse({ description: 'Primary image updated; updated product returned.' })
+  @ApiOkResponse({
+    description: 'Primary image updated; updated product returned.',
+    type: ProductDto,
+  })
   @ApiNotFoundResponse({
     description: 'No product exists with that id, or the key is not present.',
   })

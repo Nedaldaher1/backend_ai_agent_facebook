@@ -36,6 +36,12 @@ import {
   type UpdateKnowledgeEntryInput,
 } from '@/common/validation';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
+import {
+  CreateKnowledgeEntryDto,
+  KnowledgeEntryDto,
+  PaginatedKnowledgeDto,
+  UpdateKnowledgeEntryDto,
+} from './dto/knowledge.dto';
 import type { KnowledgeEntry } from './entities/knowledge-entry.entity';
 import { KnowledgeService } from './knowledge.service';
 
@@ -93,7 +99,11 @@ export class KnowledgeController {
       'The entry will not be visible to the agent until published. ' +
       'Pass productId to associate the entry with a specific product.',
   })
-  @ApiCreatedResponse({ description: 'Knowledge entry draft created.' })
+  @ApiBody({ type: CreateKnowledgeEntryDto })
+  @ApiCreatedResponse({
+    description: 'Knowledge entry draft created.',
+    type: KnowledgeEntryDto,
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   @ApiNotFoundResponse({
@@ -113,7 +123,11 @@ export class KnowledgeController {
       'Partial (PATCH) update of a knowledge entry. Only the supplied fields are changed. ' +
       'Drafts and published entries are both reachable.',
   })
-  @ApiOkResponse({ description: 'Knowledge entry updated.' })
+  @ApiBody({ type: UpdateKnowledgeEntryDto })
+  @ApiOkResponse({
+    description: 'Knowledge entry updated.',
+    type: KnowledgeEntryDto,
+  })
   @ApiNotFoundResponse({ description: 'No entry exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -131,7 +145,10 @@ export class KnowledgeController {
     summary: 'Delete a knowledge entry',
     description: 'Hard-deletes the knowledge entry row and returns the deleted entry.',
   })
-  @ApiOkResponse({ description: 'Knowledge entry deleted.' })
+  @ApiOkResponse({
+    description: 'Knowledge entry deleted.',
+    type: KnowledgeEntryDto,
+  })
   @ApiNotFoundResponse({ description: 'No entry exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -153,7 +170,7 @@ export class KnowledgeController {
       properties: { is_published: { type: 'boolean' } },
     },
   })
-  @ApiOkResponse({ description: 'Publish flag updated.' })
+  @ApiOkResponse({ description: 'Publish flag updated.', type: KnowledgeEntryDto })
   @ApiNotFoundResponse({ description: 'No entry exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -182,7 +199,10 @@ export class KnowledgeController {
   })
   @ApiQuery({ name: 'limit', required: false, example: 50 })
   @ApiQuery({ name: 'offset', required: false, example: 0 })
-  @ApiOkResponse({ description: 'Paginated knowledge entry list.' })
+  @ApiOkResponse({
+    description: 'Paginated knowledge entry list.',
+    type: PaginatedKnowledgeDto,
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   list(

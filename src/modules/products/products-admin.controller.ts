@@ -37,7 +37,12 @@ import {
   type UpdateProductInput,
 } from '@/common/validation';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
-import { ProductDto } from './dto/product.dto';
+import {
+  CreateProductDto,
+  PaginatedProductsDto,
+  ProductDto,
+  UpdateProductDto,
+} from './dto/product.dto';
 import type { Product } from './entities/product.entity';
 import { ProductsService } from './products.service';
 
@@ -92,6 +97,7 @@ export class ProductsAdminController {
       'Creates a new product in draft state (is_published = false). The product ' +
       'will not be visible to customers or the agent until published.',
   })
+  @ApiBody({ type: CreateProductDto })
   @ApiCreatedResponse({ description: 'Product draft created.', type: ProductDto })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -108,6 +114,7 @@ export class ProductsAdminController {
       'Partial (PATCH) update of a product. Only the supplied fields are changed. ' +
       'Drafts and published products are both reachable.',
   })
+  @ApiBody({ type: UpdateProductDto })
   @ApiOkResponse({ description: 'Product updated.', type: ProductDto })
   @ApiNotFoundResponse({ description: 'No product exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
@@ -174,7 +181,10 @@ export class ProductsAdminController {
   })
   @ApiQuery({ name: 'limit', required: false, example: 50 })
   @ApiQuery({ name: 'offset', required: false, example: 0 })
-  @ApiOkResponse({ description: 'Paginated product list.', type: [ProductDto] })
+  @ApiOkResponse({
+    description: 'Paginated product list.',
+    type: PaginatedProductsDto,
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   list(

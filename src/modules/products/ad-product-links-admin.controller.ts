@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -35,6 +36,11 @@ import {
 } from '@/common/validation';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
 import { AdProductLinksService } from './ad-product-links.service';
+import {
+  AdProductLinkDto,
+  CreateAdProductLinkDto,
+  UpdateAdProductLinkDto,
+} from './dto/ad-product-link.dto';
 import type { AdProductLink } from './entities/ad-product-link.entity';
 
 /**
@@ -76,7 +82,8 @@ export class AdProductLinksAdminController {
       'Links a product to a Facebook ad reference slug. The linked product will be ' +
       'surfaced by the agent when a customer arrives from that ad (is_active = true).',
   })
-  @ApiCreatedResponse({ description: 'Link created.' })
+  @ApiBody({ type: CreateAdProductLinkDto })
+  @ApiCreatedResponse({ description: 'Link created.', type: AdProductLinkDto })
   @ApiNotFoundResponse({ description: 'Referenced product does not exist.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -102,7 +109,10 @@ export class AdProductLinksAdminController {
   })
   @ApiQuery({ name: 'limit', required: false, example: 50 })
   @ApiQuery({ name: 'offset', required: false, example: 0 })
-  @ApiOkResponse({ description: 'List of ad-product links.' })
+  @ApiOkResponse({
+    description: 'List of ad-product links.',
+    type: [AdProductLinkDto],
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   list(
@@ -123,7 +133,8 @@ export class AdProductLinksAdminController {
       '(deactivating a link removes it from the agent\'s ad-ref results without ' +
       'deleting it) and reordering via `position`.',
   })
-  @ApiOkResponse({ description: 'Link updated.' })
+  @ApiBody({ type: UpdateAdProductLinkDto })
+  @ApiOkResponse({ description: 'Link updated.', type: AdProductLinkDto })
   @ApiNotFoundResponse({ description: 'No link or product exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -141,7 +152,7 @@ export class AdProductLinksAdminController {
     summary: 'Delete an ad-product link',
     description: 'Hard-deletes the link row and returns the deleted row.',
   })
-  @ApiOkResponse({ description: 'Link deleted.' })
+  @ApiOkResponse({ description: 'Link deleted.', type: AdProductLinkDto })
   @ApiNotFoundResponse({ description: 'No link exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })

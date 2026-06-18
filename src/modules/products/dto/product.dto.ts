@@ -1,5 +1,9 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
+import {
+  createProductSchema,
+  updateProductSchema,
+} from '@/common/validation';
 import { selectProductSchema } from '../entities/product.entity';
 
 /**
@@ -19,3 +23,23 @@ export const productResponseSchema = selectProductSchema.extend({
 });
 
 export class ProductDto extends createZodDto(productResponseSchema) {}
+
+/** Page of products returned by `GET /admin/products`. */
+export const paginatedProductsSchema = z.object({
+  items: z.array(productResponseSchema),
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+});
+
+/**
+ * Request DTOs for the admin write surface. Validation stays with the zod
+ * schemas in `@/common/validation`; these only document the request bodies in
+ * the Scalar docs. The create/update schemas omit the server-managed `id` and
+ * timestamp columns, so they carry no `Date`-typed field and serialize cleanly.
+ */
+export class CreateProductDto extends createZodDto(createProductSchema) {}
+export class UpdateProductDto extends createZodDto(updateProductSchema) {}
+export class PaginatedProductsDto extends createZodDto(
+  paginatedProductsSchema,
+) {}

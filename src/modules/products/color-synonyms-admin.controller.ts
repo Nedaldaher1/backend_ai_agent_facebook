@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -35,6 +36,11 @@ import {
 } from '@/common/validation';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
 import { ColorSynonymsService } from './color-synonyms.service';
+import {
+  ColorSynonymDto,
+  CreateColorSynonymDto,
+  UpdateColorSynonymDto,
+} from './dto/color-synonym.dto';
 import type { ColorSynonym } from './entities/color-synonym.entity';
 
 /** Pagination-only query schema for the color-synonyms list. */
@@ -72,7 +78,8 @@ export class ColorSynonymsAdminController {
       'Maps a dialect color term (e.g. "نبيتي") to a canonical color family ' +
       '(e.g. "red") so the agent can normalize customer language during product search.',
   })
-  @ApiCreatedResponse({ description: 'Synonym created.' })
+  @ApiBody({ type: CreateColorSynonymDto })
+  @ApiCreatedResponse({ description: 'Synonym created.', type: ColorSynonymDto })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   create(
@@ -89,7 +96,10 @@ export class ColorSynonymsAdminController {
   })
   @ApiQuery({ name: 'limit', required: false, example: 50 })
   @ApiQuery({ name: 'offset', required: false, example: 0 })
-  @ApiOkResponse({ description: 'List of color synonyms.' })
+  @ApiOkResponse({
+    description: 'List of color synonyms.',
+    type: [ColorSynonymDto],
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   list(
@@ -104,7 +114,8 @@ export class ColorSynonymsAdminController {
     summary: 'Update a color synonym',
     description: 'Partial (PATCH) update of a color synonym mapping.',
   })
-  @ApiOkResponse({ description: 'Synonym updated.' })
+  @ApiBody({ type: UpdateColorSynonymDto })
+  @ApiOkResponse({ description: 'Synonym updated.', type: ColorSynonymDto })
   @ApiNotFoundResponse({ description: 'No synonym exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -122,7 +133,7 @@ export class ColorSynonymsAdminController {
     summary: 'Delete a color synonym',
     description: 'Hard-deletes the synonym row and returns the deleted row.',
   })
-  @ApiOkResponse({ description: 'Synonym deleted.' })
+  @ApiOkResponse({ description: 'Synonym deleted.', type: ColorSynonymDto })
   @ApiNotFoundResponse({ description: 'No synonym exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
