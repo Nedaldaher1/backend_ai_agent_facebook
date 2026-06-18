@@ -5,6 +5,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Disk } from 'flydrive';
 import { FSDriver } from 'flydrive/drivers/fs';
+import { S3Driver } from 'flydrive/drivers/s3';
 import {
   ALLOWED_IMAGE_EXTENSIONS,
   UPLOAD_PUBLIC_PREFIX,
@@ -20,12 +21,12 @@ export interface SavedImage {
 /**
  * The ONLY place in the codebase that imports flydrive. Every other module talks
  * to storage through these three methods, so swapping the local `fs` driver for
- * S3/R2/GCS later is a config + driver change *here alone* — `saveImage`,
+ * R2/GCS later is a config + driver change *here alone* — `saveImage`,
  * `getUrl`, `deleteImage`, and all of their callers stay identical.
  *
- * Driver is chosen by `STORAGE_DRIVER` (default `fs`). The fs driver writes to
- * `UPLOAD_DIR` (created on boot) and produces URLs of the form
- * `${PUBLIC_BASE_URL}/uploads/<key>`, served by @fastify/static (see main.ts).
+ * Driver is chosen by `STORAGE_DRIVER` (default `r2`).
+ *   - 'fs': writes to `UPLOAD_DIR` (created on boot); serves via @fastify/static.
+ *   - 'r2': uploads to Cloudflare R2 (S3-compatible); public URLs from R2_PUBLIC_URL.
  */
 @Injectable()
 export class StorageService {
@@ -35,7 +36,7 @@ export class StorageService {
   private readonly disk: Disk;
 
   constructor(private readonly config: ConfigService) {
-    this.driver = config.get<string>('STORAGE_DRIVER') ?? 'fs';
+    this.driver = config.get<string>('STORAGE_DRIVER') ?? 'r2';
     this.publicBaseUrl = (
       config.get<string>('PUBLIC_BASE_URL') ?? 'http://localhost:3000'
     ).replace(/\/+$/, '');
@@ -45,7 +46,8 @@ export class StorageService {
   /**
    * Persist a file's bytes under a freshly generated, collision-free key and
    * return that key plus the public URL produced by the active driver. Callers
-   * store `url` verbatim; it stays valid as-is after a later driver swap.
+   * store `key` (not `url`) in the database; URLs are resolved on read via
+   * `getUrl(key)` so the storage backend can change without a data migration.
    */
   async saveImage(buffer: Buffer, originalName: string): Promise<SavedImage> {
     const key = this.buildKey(originalName);
@@ -67,8 +69,9 @@ export class StorageService {
   // --- internals ---
 
   /**
-   * Build a flydrive Disk for the configured driver. Adding S3/R2/GCS later is a
-   * new `case` here (plus its env) — no method signature or caller changes.
+   * Build a flydrive Disk for the configured driver. Adding GCS or a second
+   * region is a new `case` here (plus its env) — no method signature or caller
+   * changes.
    */
   private buildDisk(): Disk {
     switch (this.driver) {
@@ -92,10 +95,47 @@ export class StorageService {
           }),
         );
       }
+
+      case 'r2': {
+        // All R2_* vars are guaranteed present by env.schema.ts superRefine
+        // (boot fails before this code runs if any are missing).
+        const bucket = this.config.get<string>('R2_BUCKET')!;
+        // flydrive's S3 driver resolves URLs with `new URL(key, cdnUrl)`, which
+        // drops cdnUrl's last path segment unless it ends in a slash. Normalize
+        // to exactly one trailing slash so getUrl(key) yields
+        // `${R2_PUBLIC_URL}/${key}` and any subpath in R2_PUBLIC_URL is kept.
+        const publicUrl = this.config
+          .get<string>('R2_PUBLIC_URL')!
+          .replace(/\/*$/, '/');
+
+        this.logger.log(
+          `Storage driver "r2" -> ${bucket} (public: ${publicUrl})`,
+        );
+
+        return new Disk(
+          new S3Driver({
+            credentials: {
+              accessKeyId: this.config.get<string>('R2_ACCESS_KEY_ID')!,
+              secretAccessKey: this.config.get<string>('R2_SECRET_ACCESS_KEY')!,
+            },
+            endpoint: this.config.get<string>('R2_ENDPOINT')!,
+            region: this.config.get<string>('R2_REGION') ?? 'auto',
+            bucket,
+            // CRITICAL: R2 does not support S3 ACLs. Setting this to false
+            // prevents the driver from sending ACL parameters that R2 rejects.
+            supportsACL: false,
+            visibility: 'public',
+            // cdnUrl makes getUrl(key) resolve to the public R2 URL via
+            // `new URL(key, publicUrl)`, never the internal S3 endpoint.
+            cdnUrl: publicUrl,
+          }),
+        );
+      }
+
       default:
         throw new Error(
-          `Unsupported STORAGE_DRIVER "${this.driver}". Only "fs" is implemented. ` +
-            `Add the driver here (e.g. flydrive/drivers/s3) — callers need no changes.`,
+          `Unsupported STORAGE_DRIVER "${this.driver}". Supported: "fs", "r2". ` +
+            `Add the driver here — callers need no changes.`,
         );
     }
   }
@@ -111,7 +151,7 @@ export class StorageService {
     return ALLOWED_IMAGE_EXTENSIONS.has(ext) ? ext : '';
   }
 
-  /** `${PUBLIC_BASE_URL}/uploads/<key>`. */
+  /** `${PUBLIC_BASE_URL}/uploads/<key>` — used by the fs driver only. */
   private publicUrl(key: string): string {
     return `${this.publicBaseUrl}/${UPLOAD_PUBLIC_PREFIX}/${key}`;
   }

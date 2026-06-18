@@ -32,6 +32,7 @@ jest.mock('../mastra/mastra.factory', () => ({ buildMastra: jest.fn() }));
 // Jest (CJS) — same pattern as products.service.spec.ts.
 jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
+jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
 
 // RequestContext is used by AgentService.handleMessage. We mock @mastra/core/di
 // so Jest doesn't load the real ESM module. The mock provides a minimal

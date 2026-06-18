@@ -48,8 +48,9 @@ export class ProductImagesController {
     summary: 'Upload one or more images for a product',
     description:
       'Accepts multipart/form-data with one or more image files (jpeg/png/webp). ' +
-      'Each file is stored via the storage layer and its public URL is appended ' +
-      "to the product's image_urls. Pass `replace=true` to overwrite instead.",
+      'Each file is stored via the storage layer and its storage key is appended ' +
+      "to the product's image_urls; the response returns the product with keys " +
+      'resolved to public URLs. Pass `replace=true` to overwrite instead.',
   })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Product UUID.' })
   @ApiConsumes('multipart/form-data')

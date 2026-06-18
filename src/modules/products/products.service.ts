@@ -48,6 +48,16 @@ export interface UploadedImage {
  * `getPublishedById`) force `isPublished: true`; admin methods (`list`,
  * `getById`, create/update/delete/publish) see drafts. The gate is enforced here,
  * safe-by-default — the repository only applies the filter it is given.
+ *
+ * Image URL strategy: `products.image_urls` stores STORAGE KEYS (not full URLs).
+ * URLs are resolved via `storage.getUrl(key)` at the outward boundaries listed
+ * below. Internal reads (repository, checkAvailability helpers) stay raw (keys).
+ * Resolution boundaries — exactly once, never double-resolved:
+ *   - getPublishedById (HTTP GET /products/:id)
+ *   - search           (HTTP GET /products)
+ *   - listPublished    (paginated customer/agent catalog)
+ *   - addImages        (HTTP POST /products/:id/images — admin response)
+ *   - getMedia         (agent tool get_product_media)
  */
 @Injectable()
 export class ProductsService {
@@ -62,28 +72,39 @@ export class ProductsService {
   /**
    * Search the published catalog. A raw `color` term is normalized to a color
    * family through color_synonyms before filtering (e.g. "نبيتي" -> "red").
+   * Outward boundary: backs HTTP GET /products (serialized as ProductDto, which
+   * includes image_urls), so image keys are resolved to public URLs here.
    */
   async search(input: ProductSearchInput): Promise<Product[]> {
     const filter = await this.toPublishedFilter(input);
-    return this.repo.list(filter);
+    const items = await this.repo.list(filter);
+    return Promise.all(items.map((p) => this.resolveImageUrls(p)));
   }
 
-  /** Paginated published catalog (agent/customer); never returns drafts. */
+  /**
+   * Paginated published catalog (agent/customer); never returns drafts.
+   * Outward boundary: image keys are resolved to public URLs on each item.
+   */
   async listPublished(
     input: ProductSearchInput = {},
     opts?: ListOptions,
   ): Promise<PaginatedResult<Product>> {
     const filter = await this.toPublishedFilter(input);
-    return this.paginate(filter, opts);
+    const page = await this.paginate(filter, opts);
+    const items = await Promise.all(
+      page.items.map((p) => this.resolveImageUrls(p)),
+    );
+    return { ...page, items };
   }
 
-  /** Fetch a single product, enforcing the publish gate for customer-facing reads. */
+  /**
+   * Fetch a single published product with image keys resolved to public URLs.
+   * This is an outward HTTP boundary — callers receive URLs, not storage keys.
+   * Internal callers that do not need URLs should call `findPublishedRaw`.
+   */
   async getPublishedById(id: string): Promise<Product> {
-    const product = await this.repo.findById(id);
-    if (!product || !product.isPublished) {
-      throw new NotFoundException(`Product ${id} not found`);
-    }
-    return product;
+    const product = await this.findPublishedRaw(id);
+    return this.resolveImageUrls(product);
   }
 
   /**
@@ -97,6 +118,7 @@ export class ProductsService {
   /**
    * Return published products linked to a Facebook ad reference slug.
    * Used by search_products to surface ad-specific products first.
+   * Returns raw products (keys, not URLs) — imageUrls are not surfaced by the tool.
    */
   findByAdRef(adRef: string): Promise<Product[]> {
     return this.repo.findByAdRef(adRef);
@@ -105,6 +127,7 @@ export class ProductsService {
   /**
    * Fuzzy-text search over the published catalog; falls back to structured
    * search when `query` is empty/absent.
+   * Returns raw products (keys, not URLs) — imageUrls are not in the tool output.
    *
    * NOTE: tool's `category` input maps to `occasion` on the product row —
    * there is no separate `category` column. This is intentional (documented
@@ -122,6 +145,7 @@ export class ProductsService {
    * Check whether a product is available and which sizes are in stock.
    * Always enforces the publish gate: an unpublished product is treated as
    * unavailable so the agent never surfaces it.
+   * Uses findPublishedRaw to avoid resolving URLs (product here is internal only).
    *
    * @param productId  UUID of the product to check.
    * @param size       Optional requested size; narrows `available` to that size.
@@ -137,7 +161,8 @@ export class ProductsService {
   }> {
     let product: Product | undefined;
     try {
-      product = await this.getPublishedById(productId);
+      // findPublishedRaw: raw keys, no URL resolution (internal consumer).
+      product = await this.findPublishedRaw(productId);
     } catch {
       return { available: false, inStockSizes: [], note: 'المنتج غير متوفر' };
     }
@@ -155,19 +180,21 @@ export class ProductsService {
   }
 
   /**
-   * Return the media (images) attached to a published product.
+   * Return the media (images) for a published product, with keys resolved to
+   * public URLs. This is an agent-facing outward boundary.
    * Returns an empty array for unpublished or missing products.
    */
-  async getMedia(
-    productId: string,
-  ): Promise<{ url: string; type: string }[]> {
+  async getMedia(productId: string): Promise<{ url: string; type: string }[]> {
     let product: Product | undefined;
     try {
-      product = await this.getPublishedById(productId);
+      // findPublishedRaw: get raw keys first, then resolve below.
+      product = await this.findPublishedRaw(productId);
     } catch {
       return [];
     }
-    return (product.imageUrls ?? []).map((url) => ({ url, type: 'image' }));
+    const keys = product.imageUrls ?? [];
+    const urls = await Promise.all(keys.map((key) => this.storage.getUrl(key)));
+    return urls.map((url) => ({ url, type: 'image' }));
   }
 
   // --- Admin read path (drafts visible) ---
@@ -216,10 +243,13 @@ export class ProductsService {
   }
 
   /**
-   * Persist uploaded image files through the storage layer and record their URLs
-   * on the product. Appends by default; `replace` overwrites image_urls. The
-   * product must exist first so files are never orphaned for a missing product;
-   * if it vanishes mid-write, the just-saved files are cleaned up.
+   * Persist uploaded image files through the storage layer and record their
+   * STORAGE KEYS on the product (not full URLs — keys are resolved to URLs on
+   * read). Appends by default; `replace` overwrites image_urls. The product
+   * must exist first so files are never orphaned for a missing product; if it
+   * vanishes mid-write, the just-saved files are cleaned up.
+   *
+   * The returned product has its keys resolved to public URLs (admin boundary).
    */
   async addImages(
     id: string,
@@ -236,11 +266,15 @@ export class ProductsService {
     const saved = await Promise.all(
       files.map((f) => this.storage.saveImage(f.buffer, f.filename)),
     );
-    const urls = saved.map((s) => s.url);
+    // Persist KEYS (not URLs) so a future storage/domain change needs no data
+    // migration. NOTE: rows created under the old `fs` driver hold absolute URLs
+    // and must be backfilled to keys separately. URLs are resolved below before
+    // returning to the caller.
+    const keys = saved.map((s) => s.key);
 
     const updated = replace
-      ? await this.repo.updateById(id, { imageUrls: urls })
-      : await this.repo.appendImageUrls(id, urls);
+      ? await this.repo.updateById(id, { imageUrls: keys })
+      : await this.repo.appendImageUrls(id, keys);
 
     if (!updated) {
       // Product was deleted between the existence check and the write — undo the
@@ -250,7 +284,8 @@ export class ProductsService {
       );
       throw new NotFoundException(`Product ${id} not found`);
     }
-    return updated;
+    // Resolve keys → URLs for the admin response (outward boundary).
+    return this.resolveImageUrls(updated);
   }
 
   async delete(id: string): Promise<Product> {
@@ -283,6 +318,33 @@ export class ProductsService {
   }
 
   // --- internals ---
+
+  /**
+   * Fetch a single published product WITHOUT resolving image keys to URLs.
+   * Used internally by checkAvailability and getMedia so they can choose
+   * independently whether to resolve (getMedia does; checkAvailability does not).
+   * Throws NotFoundException for missing or unpublished products.
+   */
+  private async findPublishedRaw(id: string): Promise<Product> {
+    const product = await this.repo.findById(id);
+    if (!product || !product.isPublished) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    return product;
+  }
+
+  /**
+   * Resolve a product's image_urls (storage keys) to public URLs in-place.
+   * Returns a new object with `imageUrls` replaced by the resolved URL strings.
+   * No-op when imageUrls is empty or null.
+   * Called exactly once, only at outward HTTP/agent boundaries.
+   */
+  private async resolveImageUrls(product: Product): Promise<Product> {
+    const keys = product.imageUrls;
+    if (!keys || keys.length === 0) return product;
+    const urls = await Promise.all(keys.map((k) => this.storage.getUrl(k)));
+    return { ...product, imageUrls: urls };
+  }
 
   private async requirePublishUpdate(
     id: string,

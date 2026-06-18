@@ -3,6 +3,7 @@
 // This spec injects a mock StorageService, so the stubs are never exercised.
 jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
+jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
 
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { ProductsService } from '../products.service';
@@ -62,9 +63,11 @@ describe('ProductsService', () => {
 
   const saveImage = jest.fn();
   const deleteImage = jest.fn();
+  const getUrl = jest.fn();
   const storage = {
     saveImage,
     deleteImage,
+    getUrl,
   } as unknown as StorageService;
 
   const service = new ProductsService(repo, colors, storage);
@@ -73,6 +76,10 @@ describe('ProductsService', () => {
     jest.clearAllMocks();
     list.mockResolvedValue([]);
     count.mockResolvedValue(0);
+    // Default: getUrl echoes key as a public URL so resolution is traceable.
+    getUrl.mockImplementation((key: string) =>
+      Promise.resolve(`https://pub.example.com/${key}`),
+    );
   });
 
   // --- existing cases (kept) ---
@@ -95,6 +102,19 @@ describe('ProductsService', () => {
     expect(list).toHaveBeenCalledWith(
       expect.objectContaining({ colorFamily: 'blue', isPublished: true }),
     );
+  });
+
+  it('search resolves image_urls keys to public URLs (GET /products boundary)', async () => {
+    list.mockResolvedValue([makeProduct({ imageUrls: ['k1.jpg', 'k2.png'] })]);
+
+    const [product] = await service.search({ colorFamily: 'blue' });
+
+    expect(product.imageUrls).toEqual([
+      'https://pub.example.com/k1.jpg',
+      'https://pub.example.com/k2.png',
+    ]);
+    expect(getUrl).toHaveBeenCalledWith('k1.jpg');
+    expect(getUrl).toHaveBeenCalledWith('k2.png');
   });
 
   it('throws when an unpublished product is requested by id', async () => {
@@ -125,13 +145,23 @@ describe('ProductsService', () => {
 
   // --- getPublishedById ---
 
-  it('getPublishedById returns the product when it is published', async () => {
-    const product = makeProduct({ id: 'pub-1', isPublished: true });
+  it('getPublishedById returns the product when it is published (resolves image URLs)', async () => {
+    const product = makeProduct({
+      id: 'pub-1',
+      isPublished: true,
+      imageUrls: ['k1.jpg', 'k2.png'],
+    });
     findById.mockResolvedValue(product);
 
     const result = await service.getPublishedById('pub-1');
 
-    expect(result).toBe(product);
+    // Keys should be replaced by resolved URLs at this boundary.
+    expect(result.imageUrls).toEqual([
+      'https://pub.example.com/k1.jpg',
+      'https://pub.example.com/k2.png',
+    ]);
+    expect(getUrl).toHaveBeenCalledWith('k1.jpg');
+    expect(getUrl).toHaveBeenCalledWith('k2.png');
   });
 
   it('getPublishedById throws NotFoundException when the product does not exist', async () => {
@@ -259,15 +289,20 @@ describe('ProductsService', () => {
     filename: name,
   });
 
-  it('addImages appends saved URLs to image_urls by default', async () => {
+  it('addImages persists KEYS (not URLs) to image_urls and returns resolved URLs', async () => {
     findById.mockResolvedValue(makeProduct({ id: 'p1' }));
     saveImage
-      .mockResolvedValueOnce({ key: 'k1.jpg', url: 'http://h/uploads/k1.jpg' })
-      .mockResolvedValueOnce({ key: 'k2.png', url: 'http://h/uploads/k2.png' });
-    const updated = makeProduct({
-      imageUrls: ['http://h/uploads/k1.jpg', 'http://h/uploads/k2.png'],
-    });
-    appendImageUrls.mockResolvedValue(updated);
+      .mockResolvedValueOnce({
+        key: 'k1.jpg',
+        url: 'https://pub.example.com/k1.jpg',
+      })
+      .mockResolvedValueOnce({
+        key: 'k2.png',
+        url: 'https://pub.example.com/k2.png',
+      });
+    // Repository persists keys; the returned product still has raw keys.
+    const persistedProduct = makeProduct({ imageUrls: ['k1.jpg', 'k2.png'] });
+    appendImageUrls.mockResolvedValue(persistedProduct);
 
     const result = await service.addImages('p1', [
       file('a.jpg'),
@@ -275,30 +310,35 @@ describe('ProductsService', () => {
     ]);
 
     expect(saveImage).toHaveBeenCalledTimes(2);
-    expect(appendImageUrls).toHaveBeenCalledWith('p1', [
-      'http://h/uploads/k1.jpg',
-      'http://h/uploads/k2.png',
-    ]);
+    // KEYS (not URLs) must be written to the database.
+    expect(appendImageUrls).toHaveBeenCalledWith('p1', ['k1.jpg', 'k2.png']);
     expect(updateById).not.toHaveBeenCalled();
-    expect(result).toBe(updated);
+    // The returned product must have resolved URLs (outward boundary).
+    expect(result.imageUrls).toEqual([
+      'https://pub.example.com/k1.jpg',
+      'https://pub.example.com/k2.png',
+    ]);
+    expect(getUrl).toHaveBeenCalledWith('k1.jpg');
+    expect(getUrl).toHaveBeenCalledWith('k2.png');
   });
 
-  it('addImages replaces image_urls when replace=true', async () => {
+  it('addImages with replace=true persists KEYS via updateById and returns resolved URLs', async () => {
     findById.mockResolvedValue(makeProduct({ id: 'p1' }));
     saveImage.mockResolvedValue({
       key: 'k.jpg',
-      url: 'http://h/uploads/k.jpg',
+      url: 'https://pub.example.com/k.jpg',
     });
-    const updated = makeProduct({ imageUrls: ['http://h/uploads/k.jpg'] });
-    updateById.mockResolvedValue(updated);
+    const persistedProduct = makeProduct({ imageUrls: ['k.jpg'] });
+    updateById.mockResolvedValue(persistedProduct);
 
     const result = await service.addImages('p1', [file()], { replace: true });
 
-    expect(updateById).toHaveBeenCalledWith('p1', {
-      imageUrls: ['http://h/uploads/k.jpg'],
-    });
+    // KEYS (not URLs) must be written to the database.
+    expect(updateById).toHaveBeenCalledWith('p1', { imageUrls: ['k.jpg'] });
     expect(appendImageUrls).not.toHaveBeenCalled();
-    expect(result).toBe(updated);
+    // The returned product must have resolved URLs.
+    expect(result.imageUrls).toEqual(['https://pub.example.com/k.jpg']);
+    expect(getUrl).toHaveBeenCalledWith('k.jpg');
   });
 
   it('addImages throws BadRequestException when no files are provided', async () => {
@@ -322,7 +362,7 @@ describe('ProductsService', () => {
     findById.mockResolvedValue(makeProduct({ id: 'p1' }));
     saveImage.mockResolvedValue({
       key: 'orphan.jpg',
-      url: 'http://h/uploads/orphan.jpg',
+      url: 'https://pub.example.com/orphan.jpg',
     });
     appendImageUrls.mockResolvedValue(undefined); // deleted between check and write
 
@@ -330,5 +370,46 @@ describe('ProductsService', () => {
       NotFoundException,
     );
     expect(deleteImage).toHaveBeenCalledWith('orphan.jpg');
+  });
+
+  // --- getMedia (agent outward boundary) ---
+
+  it('getMedia resolves each key to a URL and returns {url, type} pairs', async () => {
+    findById.mockResolvedValue(
+      makeProduct({
+        id: 'm1',
+        isPublished: true,
+        imageUrls: ['a.jpg', 'b.png'],
+      }),
+    );
+
+    const media = await service.getMedia('m1');
+
+    expect(getUrl).toHaveBeenCalledWith('a.jpg');
+    expect(getUrl).toHaveBeenCalledWith('b.png');
+    expect(media).toEqual([
+      { url: 'https://pub.example.com/a.jpg', type: 'image' },
+      { url: 'https://pub.example.com/b.png', type: 'image' },
+    ]);
+  });
+
+  it('getMedia returns [] for a missing or unpublished product', async () => {
+    findById.mockResolvedValue(undefined);
+
+    const media = await service.getMedia('ghost');
+
+    expect(media).toEqual([]);
+    expect(getUrl).not.toHaveBeenCalled();
+  });
+
+  it('getMedia returns [] when imageUrls is empty', async () => {
+    findById.mockResolvedValue(
+      makeProduct({ id: 'empty', isPublished: true, imageUrls: [] }),
+    );
+
+    const media = await service.getMedia('empty');
+
+    expect(media).toEqual([]);
+    expect(getUrl).not.toHaveBeenCalled();
   });
 });
