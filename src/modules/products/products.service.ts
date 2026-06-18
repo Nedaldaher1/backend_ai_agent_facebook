@@ -296,6 +296,80 @@ export class ProductsService {
     return product;
   }
 
+  /**
+   * List all images for a product, with storage keys resolved to public URLs.
+   * The first entry (index 0) is flagged as `isPrimary`. Returns an empty
+   * array when the product has no images.
+   * Admin boundary: does not enforce the publish gate.
+   */
+  async listImages(
+    id: string,
+  ): Promise<{ key: string; url: string; isPrimary: boolean }[]> {
+    const product = await this.repo.findById(id);
+    if (!product) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    const keys = product.imageUrls ?? [];
+    if (keys.length === 0) return [];
+    const entries = await Promise.all(
+      keys.map(async (key, i) => ({
+        key,
+        url: await this.storage.getUrl(key),
+        isPrimary: i === 0,
+      })),
+    );
+    return entries;
+  }
+
+  /**
+   * Delete a single image from a product:
+   *   1. Load the product (404 if missing).
+   *   2. Verify the key is in `imageUrls` (404 if not found).
+   *   3. Delete the object from storage.
+   *   4. Persist the shortened key array via the repository.
+   * Returns the updated product with keys resolved to public URLs.
+   */
+  async removeImage(id: string, key: string): Promise<Product> {
+    const product = await this.repo.findById(id);
+    if (!product) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    const keys = product.imageUrls ?? [];
+    if (!keys.includes(key)) {
+      throw new NotFoundException(`Image key '${key}' not found on product ${id}`);
+    }
+    // Delete the R2/storage object first; then update the DB row.
+    await this.storage.deleteImage(key);
+    const remaining = keys.filter((k) => k !== key);
+    const updated = await this.repo.updateById(id, { imageUrls: remaining });
+    if (!updated) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    return this.resolveImageUrls(updated);
+  }
+
+  /**
+   * Promote an image key to be the primary (first) image by reordering the
+   * `imageUrls` array so the given key appears at index 0. The remaining keys
+   * keep their relative order. 404 when the product or the key is missing.
+   */
+  async setPrimaryImage(id: string, key: string): Promise<Product> {
+    const product = await this.repo.findById(id);
+    if (!product) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    const keys = product.imageUrls ?? [];
+    if (!keys.includes(key)) {
+      throw new NotFoundException(`Image key '${key}' not found on product ${id}`);
+    }
+    const reordered = [key, ...keys.filter((k) => k !== key)];
+    const updated = await this.repo.updateById(id, { imageUrls: reordered });
+    if (!updated) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    return this.resolveImageUrls(updated);
+  }
+
   setPublished(id: string, isPublished: boolean): Promise<Product> {
     return this.requirePublishUpdate(id, isPublished);
   }

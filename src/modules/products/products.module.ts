@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
+import { SecurityModule } from '@/core/security/security.module';
 import { ColorSynonymsRepository } from './color-synonyms.repository';
 import { ColorSynonymsService } from './color-synonyms.service';
+import { ProductImagesAdminController } from './product-images-admin.controller';
 import { ProductImagesController } from './product-images.controller';
+import { ProductsAdminController } from './products-admin.controller';
 import { ProductsController } from './products.controller';
 import { ProductsRepository } from './products.repository';
 import { ProductsService } from './products.service';
@@ -13,9 +16,18 @@ import { ProductsService } from './products.service';
  * color_synonyms lives here because product search depends on it for color
  * normalization. Image uploads (ProductImagesController) reach storage through
  * the global StorageModule, so no extra import is needed here.
+ *
+ * SecurityModule supplies JwtAuthGuard + RolesGuard (and the JwtModule they need)
+ * for the guarded /admin/* routes, so the JWT wiring is not duplicated here.
  */
 @Module({
-  controllers: [ProductsController, ProductImagesController],
+  imports: [SecurityModule],
+  controllers: [
+    ProductsController,
+    ProductImagesController,
+    ProductsAdminController,
+    ProductImagesAdminController,
+  ],
   providers: [
     ProductsService,
     ProductsRepository,

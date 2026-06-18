@@ -8,11 +8,14 @@ import {
   Query,
   Req,
   UnsupportedMediaTypeException,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -20,11 +23,16 @@ import {
   ApiPayloadTooLargeResponse,
   ApiQuery,
   ApiTags,
+  ApiUnauthorizedResponse,
   ApiUnsupportedMediaTypeResponse,
 } from '@nestjs/swagger';
 import { type MultipartFile } from '@fastify/multipart';
 import type { FastifyRequest } from 'fastify';
+import { Roles } from '@/common/decorators/roles.decorator';
+import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
+import { RolesGuard } from '@/common/guards/roles.guard';
 import { ALLOWED_IMAGE_MIME } from '@/core/storage/storage.constants';
+import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
 import { ProductDto } from './dto/product.dto';
 import type { Product } from './entities/product.entity';
 import { ProductsService, type UploadedImage } from './products.service';
@@ -35,11 +43,13 @@ import { ProductsService, type UploadedImage } from './products.service';
  * mimetype + size, then handed to ProductsService, which persists them through
  * the storage layer and records their URLs on the product.
  *
- * NOTE: this is an admin action. Once the JWT guard (AIA-10) lands on dev,
- * protect this route with `@UseGuards(JwtAuthGuard)`.
+ * Admin action: requires a valid Bearer JWT with role `admin` or `editor`.
  */
-@ApiTags('Products')
+@ApiTags('Admin')
 @Controller('products/:id/images')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin', 'editor')
+@ApiBearerAuth(BEARER_AUTH_NAME)
 export class ProductImagesController {
   constructor(private readonly products: ProductsService) {}
 
@@ -74,6 +84,8 @@ export class ProductImagesController {
   @ApiOkResponse({ description: 'The updated product.', type: ProductDto })
   @ApiNotFoundResponse({ description: 'No product exists with that id.' })
   @ApiBadRequestResponse({ description: 'The request carried no files.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  @ApiForbiddenResponse({ description: 'Insufficient role.' })
   @ApiUnsupportedMediaTypeResponse({
     description: 'A file was not an allowed image type (jpeg/png/webp).',
   })
