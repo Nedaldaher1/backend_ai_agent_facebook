@@ -16,8 +16,13 @@ jest.mock('@huggingface/transformers', () => ({
   SiglipVisionModel: { from_pretrained: jest.fn() },
 }));
 
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  NotFoundException,
+  BadRequestException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { ProductsService } from '../products.service';
+import { ImageDecodeError } from '@/modules/embeddings/image-decode.error';
 import type { ColorSynonymsService } from '../color-synonyms.service';
 import type { ColorsService } from '../colors.service';
 import type { ProductImageColorsRepository } from '../product-image-colors.repository';
@@ -723,12 +728,38 @@ describe('ProductsService', () => {
     expect(result).toEqual({ analyzed: true, modelId: 'test-model' });
   });
 
-  it('analyzeImage propagates a model/read failure (so the UI can show failed)', async () => {
-    embedImage.mockRejectedValueOnce(new Error('unreadable image'));
-
-    await expect(service.analyzeImage(Buffer.from('bad'))).rejects.toThrow(
-      'unreadable image',
+  it('analyzeImage maps an ImageDecodeError to 422 with code IMAGE_UNREADABLE', async () => {
+    embedImage.mockRejectedValueOnce(
+      new ImageDecodeError('image could not be decoded'),
     );
+
+    expect.assertions(3);
+    try {
+      await service.analyzeImage(Buffer.from('corrupt-bytes'));
+    } catch (err) {
+      // UnprocessableEntityException is the NestJS 422 type; the stable `code`
+      // lets the frontend tell a bad image apart from a transient server error.
+      expect(err).toBeInstanceOf(UnprocessableEntityException);
+      const ex = err as UnprocessableEntityException;
+      expect(ex.getStatus()).toBe(422);
+      expect(ex.getResponse()).toMatchObject({ code: 'IMAGE_UNREADABLE' });
+    }
+  });
+
+  it('analyzeImage does NOT mask a generic (forward-pass) error — it propagates to 500', async () => {
+    embedImage.mockRejectedValueOnce(
+      new Error('onnxruntime forward pass failed'),
+    );
+
+    const err: unknown = await service
+      .analyzeImage(Buffer.from('bad'))
+      .catch((e: unknown) => e);
+
+    // A genuine server fault must stay a generic Error (Nest default 500),
+    // never be downgraded to a 422.
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(UnprocessableEntityException);
+    expect((err as Error).message).toBe('onnxruntime forward pass failed');
   });
 
   // --- setImageColors ---

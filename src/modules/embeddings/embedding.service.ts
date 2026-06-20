@@ -8,6 +8,7 @@ import {
   SiglipVisionModel,
   env,
 } from '@huggingface/transformers';
+import { ImageDecodeError } from './image-decode.error';
 
 export type EmbeddingDtype = 'fp32' | 'fp16' | 'q8' | 'int8' | 'uint8' | 'q4';
 
@@ -70,14 +71,29 @@ export class EmbeddingService {
       config.get<string>('TRANSFORMERS_CACHE_DIR') ?? './.cache/transformers';
   }
 
-  /** Embed an image (public URL or raw bytes) → L2-normalized vector. */
+  /**
+   * Embed an image (public URL or raw bytes) → L2-normalized vector.
+   *
+   * Only the decode step is guarded: bytes that can't be read/decoded
+   * (corrupt/unsupported image — sharp/libspng throws here) are a CLIENT
+   * problem, surfaced as {@link ImageDecodeError} for the HTTP layer to map to
+   * 422. The model forward pass stays OUTSIDE the guard so a genuine inference
+   * fault propagates as a real server error (500), not a masked 422.
+   */
   async embedImage(input: string | Buffer): Promise<number[]> {
     const { vision, processor } = await this.ensureLoaded();
     return this.serialize(async () => {
-      const image =
-        typeof input === 'string'
-          ? await RawImage.read(input)
-          : await RawImage.fromBlob(new Blob([new Uint8Array(input)]));
+      let image: RawImage;
+      try {
+        image =
+          typeof input === 'string'
+            ? await RawImage.read(input)
+            : await RawImage.fromBlob(new Blob([new Uint8Array(input)]));
+      } catch (err) {
+        throw new ImageDecodeError('image could not be decoded', {
+          cause: err,
+        });
+      }
       const inputs = await processor(image);
       const output = await vision(inputs);
       return this.normalize(output.image_embeds, 'image');

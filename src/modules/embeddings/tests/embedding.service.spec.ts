@@ -39,8 +39,9 @@ jest.mock('@huggingface/transformers', () => {
   };
 });
 
-import { SiglipVisionModel } from '@huggingface/transformers';
+import { RawImage, SiglipVisionModel } from '@huggingface/transformers';
 import { EmbeddingService } from '../embedding.service';
+import { ImageDecodeError } from '../image-decode.error';
 import type { ConfigService } from '@nestjs/config';
 
 const dot = (a: number[], b: number[]) =>
@@ -68,6 +69,36 @@ describe('EmbeddingService', () => {
     const v = await service.embedImage(Buffer.from([1, 2, 3, 4]));
     expect(v).toHaveLength(768);
     expect(dot(v, v)).toBeCloseTo(1.0, 5);
+  });
+
+  // --- decode-failure boundary (Part A) ---
+  // A buffer/URL that can't be decoded is BAD INPUT: embedImage must reject with
+  // the typed ImageDecodeError so the HTTP layer can map it to 422 (not 500).
+
+  it('rejects an undecodable Buffer with ImageDecodeError (decode failure)', async () => {
+    (RawImage.fromBlob as jest.Mock).mockRejectedValueOnce(
+      new Error('VipsJpeg: Premature end of input file (libspng read error)'),
+    );
+    await expect(
+      service.embedImage(Buffer.from([0xff, 0xd8, 0x00])),
+    ).rejects.toBeInstanceOf(ImageDecodeError);
+  });
+
+  it('rejects an unreadable image URL with ImageDecodeError (decode failure)', async () => {
+    (RawImage.read as jest.Mock).mockRejectedValueOnce(
+      new Error('Unable to read image from "https://x/broken.png" (404)'),
+    );
+    await expect(
+      service.embedImage('https://x/broken.png'),
+    ).rejects.toBeInstanceOf(ImageDecodeError);
+  });
+
+  it('preserves the original decode error as `cause`', async () => {
+    const cause = new Error('libspng read error');
+    (RawImage.fromBlob as jest.Mock).mockRejectedValueOnce(cause);
+    await expect(
+      service.embedImage(Buffer.from([0x89, 0x50])),
+    ).rejects.toHaveProperty('cause', cause);
   });
 
   it('loads the model once across multiple calls (lazy singleton)', async () => {

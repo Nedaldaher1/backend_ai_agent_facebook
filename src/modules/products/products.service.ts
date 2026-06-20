@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { ListOptions, PaginatedResult } from '@/common/types/query';
@@ -17,6 +18,7 @@ import {
 } from '@/common/validation';
 import { StorageService } from '@/core/storage/storage.service';
 import { EmbeddingService } from '@/modules/embeddings/embedding.service';
+import { ImageDecodeError } from '@/modules/embeddings/image-decode.error';
 import { ColorSynonymsService } from './color-synonyms.service';
 import { ColorsService } from './colors.service';
 import { ProductImageColorsRepository } from './product-image-colors.repository';
@@ -411,13 +413,28 @@ export class ProductsService {
    * Run an uploaded image through the embedding model (a real SigLIP forward
    * pass) to validate it is processable — backs the admin form's per-image
    * "analyzed" indicator. Stateless: the vector is computed and discarded (the
-   * persisted, searchable embedding is written on publish). Throws if the image
-   * cannot be read or embedded, so the UI can surface a failed state.
+   * persisted, searchable embedding is written on publish).
+   *
+   * Error mapping: an undecodable image is bad client input, so it surfaces as
+   * 422 with the stable `code: 'IMAGE_UNREADABLE'` (the frontend distinguishes
+   * it from a transient server error). Only ImageDecodeError is translated —
+   * any other failure (e.g. the model forward pass) propagates to Nest's default
+   * 500 so genuine server faults are not masked.
    */
   async analyzeImage(
     buffer: Buffer,
   ): Promise<{ analyzed: true; modelId: string }> {
-    await this.embeddingService.embedImage(buffer);
+    try {
+      await this.embeddingService.embedImage(buffer);
+    } catch (err) {
+      if (err instanceof ImageDecodeError) {
+        throw new UnprocessableEntityException({
+          code: 'IMAGE_UNREADABLE',
+          message: 'الصورة غير قابلة للقراءة',
+        });
+      }
+      throw err;
+    }
     return { analyzed: true, modelId: this.embeddingService.modelId };
   }
 
