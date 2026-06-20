@@ -61,6 +61,12 @@ export interface ImageWithColors {
   url: string;
   isPrimary: boolean;
   colors: ImageColorBrief[];
+  /**
+   * Whether this image has a CLIP embedding for the current model (i.e. it is
+   * indexed for visual search). Reported by `listImages`; other producers of
+   * this shape may omit it.
+   */
+  hasEmbedding?: boolean;
 }
 
 /**
@@ -303,6 +309,15 @@ export class ProductsService {
     return this.paginate(filter, opts);
   }
 
+  /**
+   * Per-product embedded-image counts (current model) for the admin product
+   * list's "indexed for visual search" badge. One grouped query for the whole
+   * page; products with no embeddings are omitted (treat a missing id as 0).
+   */
+  embeddingSummary(): Promise<{ productId: string; embeddedCount: number }[]> {
+    return this.embeddings.countEmbeddedByProduct(this.embeddingService.modelId);
+  }
+
   /** Admin single-product read; returns drafts too. */
   async getById(
     id: string,
@@ -428,12 +443,25 @@ export class ProductsService {
       colorsByKey.set(row.storageKey, list);
     }
 
+    // Per-image embedding status for the admin UI. Embeddings exist only for
+    // published products (they are cleared on unpublish), so skip the query for
+    // drafts — every image there is simply "not yet indexed".
+    const embeddedKeys = product.isPublished
+      ? new Set(
+          await this.embeddings.findEmbeddedKeys(
+            id,
+            this.embeddingService.modelId,
+          ),
+        )
+      : new Set<string>();
+
     return Promise.all(
       keys.map(async (key, i) => ({
         key,
         url: await this.storage.getUrl(key),
         isPrimary: i === 0,
         colors: colorsByKey.get(key) ?? [],
+        hasEmbedding: embeddedKeys.has(key),
       })),
     );
   }

@@ -23,6 +23,9 @@ export const imageWithColorsSchema = z.object({
   url: z.string(),
   isPrimary: z.boolean(),
   colors: z.array(imageColorSchema),
+  // Whether the image is indexed for visual search (current embedding model).
+  // Reported by GET .../images; omitted by the color-tagging response.
+  hasEmbedding: z.boolean().optional(),
 });
 
 export class ImageWithColorsDto extends createZodDto(imageWithColorsSchema) {}

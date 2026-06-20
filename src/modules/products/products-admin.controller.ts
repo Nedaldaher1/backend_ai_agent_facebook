@@ -186,4 +186,32 @@ export class ProductsAdminController {
       { limit, offset },
     );
   }
+
+  @Get('embedding-summary')
+  @ApiOperation({
+    summary: 'Per-product embedding counts',
+    description:
+      'Number of embedded product images per product for the current embedding ' +
+      'model, powering the admin list\'s "indexed for visual search" badge. ' +
+      'Products with no embeddings are omitted — treat a missing id as 0. ' +
+      'Embeddings exist only for published products.',
+  })
+  @ApiOkResponse({
+    description: 'Array of per-product embedded-image counts.',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          productId: { type: 'string', format: 'uuid' },
+          embeddedCount: { type: 'integer', example: 3 },
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  @ApiForbiddenResponse({ description: 'Insufficient role.' })
+  embeddingSummary(): Promise<{ productId: string; embeddedCount: number }[]> {
+    return this.products.embeddingSummary();
+  }
 }

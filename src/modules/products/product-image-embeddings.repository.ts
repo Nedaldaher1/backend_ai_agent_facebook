@@ -106,6 +106,25 @@ export class ProductImageEmbeddingsRepository {
   }
 
   /**
+   * Embedded-image count per product for the given model. Powers the admin
+   * product list's "indexed for visual search" badge in one grouped query.
+   * Products with no embeddings are simply absent from the result — callers
+   * treat a missing product id as a count of 0.
+   */
+  async countEmbeddedByProduct(
+    modelId: string,
+  ): Promise<{ productId: string; embeddedCount: number }[]> {
+    return this.db
+      .select({
+        productId: productImageEmbeddings.productId,
+        embeddedCount: sql<number>`count(*)::int`,
+      })
+      .from(productImageEmbeddings)
+      .where(eq(productImageEmbeddings.modelId, modelId))
+      .groupBy(productImageEmbeddings.productId);
+  }
+
+  /**
    * Approximate-nearest-neighbour search over the HNSW cosine index, reduced to
    * distinct published products.
    *

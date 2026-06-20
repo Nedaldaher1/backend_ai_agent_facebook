@@ -115,11 +115,13 @@ describe('ProductsService', () => {
   const upsertEmbedding = jest.fn();
   const deleteMissingKeys = jest.fn();
   const findEmbeddedKeys = jest.fn();
+  const countEmbeddedByProduct = jest.fn();
   const searchSimilarByEmbedding = jest.fn();
   const embeddings = {
     upsert: upsertEmbedding,
     deleteMissingKeys,
     findEmbeddedKeys,
+    countEmbeddedByProduct,
     searchSimilarByEmbedding,
     count: jest.fn(),
   } as unknown as ProductImageEmbeddingsRepository;
@@ -156,6 +158,7 @@ describe('ProductsService', () => {
     upsertEmbedding.mockResolvedValue(undefined);
     deleteMissingKeys.mockResolvedValue(0);
     findEmbeddedKeys.mockResolvedValue([]);
+    countEmbeddedByProduct.mockResolvedValue([]);
     searchSimilarByEmbedding.mockResolvedValue([]);
     configGet.mockReturnValue(undefined);
   });
@@ -667,6 +670,46 @@ describe('ProductsService', () => {
       isPrimary: false,
       colors: [],
     });
+  });
+
+  // --- listImages: per-image embedding status ---
+
+  it('listImages flags hasEmbedding per image from findEmbeddedKeys (published)', async () => {
+    findById.mockResolvedValue(
+      makeProduct({ id: 'p1', isPublished: true, imageUrls: ['a.jpg', 'b.png'] }),
+    );
+    findEmbeddedKeys.mockResolvedValue(['a.jpg']);
+
+    const images = await service.listImages('p1');
+
+    expect(findEmbeddedKeys).toHaveBeenCalledWith('p1', 'test-model');
+    expect(images[0]).toMatchObject({ key: 'a.jpg', hasEmbedding: true });
+    expect(images[1]).toMatchObject({ key: 'b.png', hasEmbedding: false });
+  });
+
+  it('listImages skips the embedding query for a draft (all hasEmbedding false)', async () => {
+    findById.mockResolvedValue(
+      makeProduct({ id: 'p1', isPublished: false, imageUrls: ['a.jpg', 'b.png'] }),
+    );
+
+    const images = await service.listImages('p1');
+
+    expect(findEmbeddedKeys).not.toHaveBeenCalled();
+    expect(images[0]).toMatchObject({ key: 'a.jpg', hasEmbedding: false });
+    expect(images[1]).toMatchObject({ key: 'b.png', hasEmbedding: false });
+  });
+
+  // --- embeddingSummary ---
+
+  it('embeddingSummary delegates to countEmbeddedByProduct with the current model', async () => {
+    countEmbeddedByProduct.mockResolvedValue([
+      { productId: 'p1', embeddedCount: 3 },
+    ]);
+
+    const summary = await service.embeddingSummary();
+
+    expect(countEmbeddedByProduct).toHaveBeenCalledWith('test-model');
+    expect(summary).toEqual([{ productId: 'p1', embeddedCount: 3 }]);
   });
 
   // --- setImageColors ---
