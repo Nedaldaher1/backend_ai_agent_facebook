@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
@@ -6,10 +7,13 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiBody,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -21,9 +25,18 @@ import {
 import { Roles } from '@/common/decorators/roles.decorator';
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 import { RolesGuard } from '@/common/guards/roles.guard';
+import { ZodValidationPipe } from '@/common/pipes/zod-validation.pipe';
+import {
+  setImageColorsSchema,
+  type SetImageColorsInput,
+} from '@/common/validation';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
+import {
+  ImageWithColorsDto,
+  SetImageColorsDto,
+} from './dto/product-image-color.dto';
 import type { Product } from './entities/product.entity';
-import { ProductsService } from './products.service';
+import { ProductsService, type ImageWithColors } from './products.service';
 
 /**
  * Admin image management routes for a product. Image keys (the `:imageId`
@@ -31,9 +44,10 @@ import { ProductsService } from './products.service';
  * UUIDs, so ParseUUIDPipe is intentionally not used for that parameter.
  *
  * Routes:
- *   GET    /admin/products/:id/images                 → list (key + url + isPrimary)
- *   DELETE /admin/products/:id/images/:imageId        → delete one image
+ *   GET    /admin/products/:id/images                  → list (key + url + isPrimary + colors)
+ *   DELETE /admin/products/:id/images/:imageId         → delete one image
  *   PATCH  /admin/products/:id/images/:imageId/primary → promote to primary (index 0)
+ *   PUT    /admin/products/:id/images/:imageId/colors  → set the image's colors
  */
 @ApiTags('Admin')
 @Controller('admin/products/:id/images')
@@ -47,9 +61,10 @@ export class ProductImagesAdminController {
   @ApiOperation({
     summary: 'List product images',
     description:
-      'Returns all images for the product as `{ key, url, isPrimary }` objects. ' +
-      '`url` is the public access URL resolved from the storage key. ' +
-      '`isPrimary` is `true` only for the first entry (index 0).',
+      'Returns all images for the product as `{ key, url, isPrimary, colors }` ' +
+      'objects. `url` is the public access URL resolved from the storage key. ' +
+      '`isPrimary` is `true` only for the first entry (index 0). `colors` is the ' +
+      'list of canonical colors attached to that image.',
   })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Product UUID.' })
   @ApiOkResponse({
@@ -62,6 +77,18 @@ export class ProductImagesAdminController {
           key: { type: 'string', example: 'abc123.jpg' },
           url: { type: 'string', format: 'uri' },
           isPrimary: { type: 'boolean' },
+          colors: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', format: 'uuid' },
+                name: { type: 'string', example: 'أحمر' },
+                family: { type: 'string', example: 'red' },
+                hex: { type: 'string', nullable: true, example: '#B0212F' },
+              },
+            },
+          },
         },
       },
     },
@@ -71,7 +98,7 @@ export class ProductImagesAdminController {
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   listImages(
     @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<{ key: string; url: string; isPrimary: boolean }[]> {
+  ): Promise<ImageWithColors[]> {
     return this.products.listImages(id);
   }
 
@@ -125,5 +152,40 @@ export class ProductImagesAdminController {
     @Param('imageId') imageId: string,
   ): Promise<Product> {
     return this.products.setPrimaryImage(id, imageId);
+  }
+
+  @Put(':imageId/colors')
+  @ApiOperation({
+    summary: "Set a product image's colors",
+    description:
+      'Replaces the full set of canonical colors attached to one image. Every ' +
+      'color id must reference an existing color (created via the colors / ' +
+      'color-synonyms system) — an admin cannot attach a free-form color. ' +
+      'Returns the image descriptor with the storage key resolved to a public URL.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Product UUID.' })
+  @ApiParam({
+    name: 'imageId',
+    description: 'Storage key of the image (e.g. `abc123.jpg`).',
+  })
+  @ApiBody({ type: SetImageColorsDto })
+  @ApiOkResponse({
+    description: 'Image colors updated.',
+    type: ImageWithColorsDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'The product, the image key, or a given color id was not found.',
+  })
+  @ApiBadRequestResponse({
+    description: 'The payload was invalid (e.g. empty `colorIds`).',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  @ApiForbiddenResponse({ description: 'Insufficient role.' })
+  setImageColors(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('imageId') imageId: string,
+    @Body(new ZodValidationPipe(setImageColorsSchema)) dto: SetImageColorsInput,
+  ): Promise<ImageWithColors> {
+    return this.products.setImageColors(id, imageId, dto);
   }
 }

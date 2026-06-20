@@ -69,8 +69,9 @@ export class ColorSynonymsAdminController {
   @ApiOperation({
     summary: 'Create a color synonym',
     description:
-      'Maps a dialect color term (e.g. "نبيتي") to a canonical color family ' +
-      '(e.g. "red") so the agent can normalize customer language during product search.',
+      'Attaches a dialect color term (e.g. "نبيتي") to an existing canonical ' +
+      'color by `colorId`, so the agent can normalize customer language to that ' +
+      "color's family during product search. The color must already exist.",
   })
   @ApiCreatedResponse({ description: 'Synonym created.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })

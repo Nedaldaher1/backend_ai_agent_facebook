@@ -1,5 +1,12 @@
 import { relations } from 'drizzle-orm';
-import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  index,
+  numeric,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
 import { conversations } from '@/modules/conversations/entities/conversation.entity';
@@ -14,9 +21,25 @@ export const ORDER_STATUSES = [
 ] as const;
 
 /**
+ * Inbound channel the order was captured on. Set SERVER-SIDE from the request
+ * channel (never from LLM input). Today the temp endpoint is messenger;
+ * whatsapp is wired ahead of the integration.
+ */
+export const ORDER_SOURCES = ['messenger', 'whatsapp'] as const;
+
+/**
  * Runtime table: written by the agent on COD order capture. Linked to the
  * conversation it came from; if that conversation is deleted the link is
  * nulled (the order record is kept).
+ *
+ * Money columns are numeric(10,3) JOD (string end-to-end; never float) and are
+ * derived SERVER-SIDE from the catalog + delivery-fee config at capture time —
+ * the LLM cannot set prices or totals. `subtotal`/`delivery_fee`/`total` are
+ * snapshots: they do not change if the catalog price changes later.
+ *
+ * PII / TODO: `phone` (normalized) and `address` are personal data. Stored in
+ * cleartext for now; an encryption-at-rest + retention decision is tracked
+ * separately (do not block order capture on it).
  */
 export const orders = pgTable(
   'orders',
@@ -25,9 +48,24 @@ export const orders = pgTable(
     conversationId: uuid('conversation_id').references(() => conversations.id, {
       onDelete: 'set null',
     }),
-    customerName: text('customer_name'),
+    // Channel the order came in on (enum enforced in zod). Server-set.
+    source: text('source').notNull().default('messenger'),
+    // Canonical Jordanian mobile (+9627XXXXXXXX); normalized at capture time.
     phone: text('phone'),
+    // Free-text delivery address — the whole destination as the customer gave it.
+    // Required at capture; the column stays nullable for migration safety.
     address: text('address'),
+    // Order-level fallback size applied to any item that has no explicit size.
+    unifiedSize: text('unified_size'),
+    // Money (JOD, numeric(10,3), string end-to-end). Server-derived snapshots.
+    subtotal: numeric('subtotal', { precision: 10, scale: 3 })
+      .notNull()
+      .default('0'),
+    deliveryFee: numeric('delivery_fee', { precision: 10, scale: 3 })
+      .notNull()
+      .default('0'),
+    total: numeric('total', { precision: 10, scale: 3 }).notNull().default('0'),
+    currency: text('currency').notNull().default('JOD'),
     status: text('status').notNull().default('draft'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -46,14 +84,16 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
 }));
 
 export const insertOrderSchema = createInsertSchema(orders, {
-  // `status` is `.notNull().default('draft')`, so it is optional on insert;
-  // overriding the column drops drizzle-zod's default handling, so restore
-  // optionality to keep the insert schema in sync with the table.
+  // `status`/`source` are `.notNull().default(...)`, so they are optional on
+  // insert; overriding the column drops drizzle-zod's default handling, so
+  // restore optionality to keep the insert schema in sync with the table.
   status: z.enum(ORDER_STATUSES).optional(),
+  source: z.enum(ORDER_SOURCES).optional(),
 });
 
 export const selectOrderSchema = createSelectSchema(orders, {
   status: z.enum(ORDER_STATUSES),
+  source: z.enum(ORDER_SOURCES),
 });
 
 export type Order = typeof orders.$inferSelect;

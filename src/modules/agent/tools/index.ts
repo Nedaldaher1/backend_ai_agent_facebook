@@ -44,7 +44,7 @@ export function buildSalesTools(deps: SalesToolsDeps) {
     check_availability: buildCheckAvailabilityTool(products),
     get_product_media: buildGetProductMediaTool(products),
     get_knowledge: buildGetKnowledgeTool(knowledge),
-    capture_order: buildCaptureOrderTool(products, orders),
+    capture_order: buildCaptureOrderTool(orders),
     escalate_to_human: buildEscalateToHumanTool(conversations),
     find_similar_by_image: findSimilarByImageTool,
   } as const;

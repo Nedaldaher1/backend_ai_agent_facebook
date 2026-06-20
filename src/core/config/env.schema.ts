@@ -10,6 +10,10 @@ export const envSchema = z
       .enum(['development', 'test', 'production'])
       .default('development'),
     PORT: z.coerce.number().int().positive().default(3000),
+    // Comma-separated browser origins allowed to call the API (CORS). Optional in
+    // local dev (any localhost port is auto-allowed); set it in production to the
+    // admin panel origin(s), e.g. 'https://admin.masafashion.com'.
+    CORS_ORIGINS: z.string().optional(),
     DATABASE_URL: z.string().url(),
     ANTHROPIC_API_KEY: z.string().min(1),
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
