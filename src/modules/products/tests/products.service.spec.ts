@@ -712,6 +712,25 @@ describe('ProductsService', () => {
     expect(summary).toEqual([{ productId: 'p1', embeddedCount: 3 }]);
   });
 
+  // --- analyzeImage ---
+
+  it('analyzeImage runs the buffer through embedImage and returns the model id', async () => {
+    const buffer = Buffer.from('image-bytes');
+
+    const result = await service.analyzeImage(buffer);
+
+    expect(embedImage).toHaveBeenCalledWith(buffer);
+    expect(result).toEqual({ analyzed: true, modelId: 'test-model' });
+  });
+
+  it('analyzeImage propagates a model/read failure (so the UI can show failed)', async () => {
+    embedImage.mockRejectedValueOnce(new Error('unreadable image'));
+
+    await expect(service.analyzeImage(Buffer.from('bad'))).rejects.toThrow(
+      'unreadable image',
+    );
+  });
+
   // --- setImageColors ---
 
   it('setImageColors validates colors, replaces the set, returns the descriptor', async () => {

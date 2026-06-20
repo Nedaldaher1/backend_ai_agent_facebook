@@ -407,6 +407,20 @@ export class ProductsService {
     return this.resolveImageUrls(updated);
   }
 
+  /**
+   * Run an uploaded image through the embedding model (a real SigLIP forward
+   * pass) to validate it is processable — backs the admin form's per-image
+   * "analyzed" indicator. Stateless: the vector is computed and discarded (the
+   * persisted, searchable embedding is written on publish). Throws if the image
+   * cannot be read or embedded, so the UI can surface a failed state.
+   */
+  async analyzeImage(
+    buffer: Buffer,
+  ): Promise<{ analyzed: true; modelId: string }> {
+    await this.embeddingService.embedImage(buffer);
+    return { analyzed: true, modelId: this.embeddingService.modelId };
+  }
+
   async delete(id: string): Promise<Product> {
     const product = await this.repo.deleteById(id);
     if (!product) {

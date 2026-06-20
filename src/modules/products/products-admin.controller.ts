@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,23 +8,31 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  PayloadTooLargeException,
   Post,
   Query,
+  Req,
+  UnsupportedMediaTypeException,
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiBody,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiPayloadTooLargeResponse,
   ApiQuery,
   ApiTags,
   ApiUnauthorizedResponse,
+  ApiUnsupportedMediaTypeResponse,
 } from '@nestjs/swagger';
+import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
@@ -37,6 +46,7 @@ import {
   type UpdateProductInput,
 } from '@/common/validation';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
+import { ALLOWED_IMAGE_MIME } from '@/core/storage/storage.constants';
 import { ProductDto } from './dto/product.dto';
 import type { Product } from './entities/product.entity';
 import { ProductsService } from './products.service';
@@ -213,5 +223,79 @@ export class ProductsAdminController {
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   embeddingSummary(): Promise<{ productId: string; embeddedCount: number }[]> {
     return this.products.embeddingSummary();
+  }
+
+  @Post('analyze-image')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Analyze a product image with the embedding model',
+    description:
+      'Runs a single uploaded image through the embedding model (Marqo-FashionSigLIP) ' +
+      "as a real forward pass to validate it is processable — backs the admin form's " +
+      'per-image "analyzed" indicator. The image is NOT stored; the searchable embedding ' +
+      'is written on publish. Accepts multipart/form-data with one image file (jpeg/png/webp).',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOkResponse({
+    description: 'The image was analyzed by the model.',
+    schema: {
+      type: 'object',
+      properties: {
+        analyzed: { type: 'boolean', example: true },
+        modelId: { type: 'string', example: 'Marqo/marqo-fashionSigLIP' },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'No image file was provided.' })
+  @ApiUnsupportedMediaTypeResponse({
+    description: 'The file was not an allowed image type (jpeg/png/webp).',
+  })
+  @ApiPayloadTooLargeResponse({
+    description: 'The file exceeded the maximum allowed size.',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  @ApiForbiddenResponse({ description: 'Insufficient role.' })
+  async analyzeImage(
+    @Req() req: FastifyRequest,
+  ): Promise<{ analyzed: true; modelId: string }> {
+    const buffer = await this.readUploadedImage(req);
+    return this.products.analyzeImage(buffer);
+  }
+
+  /**
+   * Read and validate a single uploaded image from a multipart request, returning
+   * its in-memory buffer (no persistence). Mirrors the upload controller's checks
+   * (mimetype + the @fastify/multipart size cap) but for exactly one file.
+   */
+  private async readUploadedImage(req: FastifyRequest): Promise<Buffer> {
+    if (!req.isMultipart()) {
+      throw new BadRequestException(
+        'Expected a multipart/form-data request with an image file.',
+      );
+    }
+    const part = await req.file();
+    if (!part) {
+      throw new BadRequestException('No image file was provided.');
+    }
+    if (!ALLOWED_IMAGE_MIME.has(part.mimetype)) {
+      throw new UnsupportedMediaTypeException(
+        `Unsupported file type "${part.mimetype}". Allowed: ${[
+          ...ALLOWED_IMAGE_MIME,
+        ].join(', ')}.`,
+      );
+    }
+    try {
+      return await part.toBuffer();
+    } catch {
+      throw new PayloadTooLargeException(
+        'The image exceeds the maximum allowed size.',
+      );
+    }
   }
 }
