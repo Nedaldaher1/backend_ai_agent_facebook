@@ -31,6 +31,8 @@ const incomingMessageSchema = z.object({
   lastImageUrl: z.string().url().optional(),
   adRef: z.string().optional(),
   name: z.string().optional(),
+  // Inbound channel → order `source` (server-side). Defaults to messenger.
+  channel: z.enum(['messenger', 'whatsapp']).optional(),
 });
 
 // ---------------------------------------------------------------------------

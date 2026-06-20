@@ -29,6 +29,41 @@
       "when": 1781731302161,
       "tag": "0003_even_doctor_strange",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781827118699,
+      "tag": "0004_add_colors_and_image_colors",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781827156699,
+      "tag": "0005_finalize_color_synonym_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781877689588,
+      "tag": "0006_add_color_is_system_and_unassigned_seed",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781906313284,
+      "tag": "0007_order_capture_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781906329798,
+      "tag": "0008_drop_order_customer_name",
+      "breakpoints": true
     }
   ]
 }

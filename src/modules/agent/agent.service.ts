@@ -35,6 +35,12 @@ export interface IncomingMessage {
   adRef?: string;
   /** ManyChat FB profile name — optional best-effort seed for working memory. */
   name?: string;
+  /**
+   * Inbound channel — sets the order `source` server-side (write tools read it
+   * from requestContext, never from LLM input). Defaults to 'messenger' (the
+   * current temp endpoint); 'whatsapp' is wired ahead of that integration.
+   */
+  channel?: 'messenger' | 'whatsapp';
 }
 
 /**
@@ -198,6 +204,8 @@ export class AgentService implements OnModuleInit {
     requestContext.set('contactId', resourceId);
     requestContext.set('conversationId', convo.id);
     requestContext.set('threadId', threadId);
+    // `source` for captured orders is derived from this channel, server-side.
+    requestContext.set('channel', input.channel ?? 'messenger');
     if (input.adRef) {
       requestContext.set('adRef', input.adRef);
     }
