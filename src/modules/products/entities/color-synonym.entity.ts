@@ -1,4 +1,6 @@
+import { relations } from 'drizzle-orm';
 import {
+  index,
   pgTable,
   text,
   timestamp,
@@ -6,23 +8,42 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
+import { colors } from './color.entity';
 
 /**
- * Maps dialect color terms to a canonical color family so search can normalize
- * customer language — e.g. "نبيتي" -> "أحمر" (red). Written by the admin side.
+ * Maps a dialect color term to a canonical color (color_synonyms N—1 colors), so
+ * search can normalize customer language — e.g. "نبيتي" -> the "red" color. A
+ * single color owns many terms; `term` is globally unique (one term resolves to
+ * exactly one color). Written by the admin side, read by the agent.
  */
 export const colorSynonyms = pgTable(
   'color_synonyms',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     term: text('term').notNull(),
-    canonicalFamily: text('canonical_family').notNull(),
+    colorId: uuid('color_id')
+      .notNull()
+      .references(() => colors.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
-  (t) => [uniqueIndex('color_synonyms_term_idx').on(t.term)],
+  (t) => [
+    uniqueIndex('color_synonyms_term_idx').on(t.term),
+    // FK index: speeds up "all terms of this color" lookups and cascading deletes.
+    index('color_synonyms_color_id_idx').on(t.colorId),
+  ],
 );
+
+/**
+ * colorSynonyms N—1 colors: each term belongs to exactly one canonical color.
+ */
+export const colorSynonymsRelations = relations(colorSynonyms, ({ one }) => ({
+  color: one(colors, {
+    fields: [colorSynonyms.colorId],
+    references: [colors.id],
+  }),
+}));
 
 export const insertColorSynonymSchema = createInsertSchema(colorSynonyms);
 export const selectColorSynonymSchema = createSelectSchema(colorSynonyms);

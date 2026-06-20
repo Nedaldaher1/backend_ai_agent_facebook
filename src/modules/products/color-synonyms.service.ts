@@ -8,6 +8,7 @@ import {
   type UpdateColorSynonymInput,
 } from '@/common/validation';
 import { ColorSynonymsRepository } from './color-synonyms.repository';
+import { ColorsService } from './colors.service';
 import type { ColorSynonym } from './entities/color-synonym.entity';
 
 /**
@@ -18,10 +19,18 @@ import type { ColorSynonym } from './entities/color-synonym.entity';
  */
 @Injectable()
 export class ColorSynonymsService {
-  constructor(private readonly repo: ColorSynonymsRepository) {}
+  constructor(
+    private readonly repo: ColorSynonymsRepository,
+    private readonly colorsService: ColorsService,
+  ) {}
 
   list(opts?: ListOptions): Promise<ColorSynonym[]> {
     return this.repo.list(opts);
+  }
+
+  /** All dialect terms that resolve to a given color. */
+  listByColor(colorId: string): Promise<ColorSynonym[]> {
+    return this.repo.findByColorId(colorId);
   }
 
   async getById(id: string): Promise<ColorSynonym> {
@@ -63,8 +72,11 @@ export class ColorSynonymsService {
     return term;
   }
 
-  create(input: CreateColorSynonymInput): Promise<ColorSynonym> {
+  async create(input: CreateColorSynonymInput): Promise<ColorSynonym> {
     const data = parseOrThrow(createColorSynonymSchema, input);
+    // Verify the color exists so the caller gets a clean 404 instead of an
+    // opaque FK violation when the synonym is inserted.
+    await this.colorsService.getById(data.colorId);
     return this.repo.insert(data);
   }
 
@@ -73,6 +85,13 @@ export class ColorSynonymsService {
     patch: UpdateColorSynonymInput,
   ): Promise<ColorSynonym> {
     const data = parseOrThrow(updateColorSynonymSchema, patch);
+    // Confirm the synonym exists first, so a missing synonym is reported as the
+    // 404 rather than masking it behind a "color not found" from the check below.
+    await this.getById(id);
+    if (data.colorId !== undefined) {
+      // Verify the replacement color exists before persisting.
+      await this.colorsService.getById(data.colorId);
+    }
     const row = await this.repo.updateById(id, data);
     if (!row) {
       throw new NotFoundException(`Color synonym ${id} not found`);

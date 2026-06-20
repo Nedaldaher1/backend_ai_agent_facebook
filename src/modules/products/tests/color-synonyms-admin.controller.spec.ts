@@ -18,7 +18,7 @@ import type { ColorSynonym } from '../entities/color-synonym.entity';
 const makeSynonym = (overrides: Partial<ColorSynonym> = {}): ColorSynonym => ({
   id: 'cs-1',
   term: 'نبيتي',
-  canonicalFamily: 'red',
+  colorId: 'C-red',
   createdAt: new Date(),
   ...overrides,
 });
@@ -45,7 +45,7 @@ describe('ColorSynonymsAdminController', () => {
   // --- POST /admin/color-synonyms ---
 
   it('create delegates to service.create with the parsed dto', async () => {
-    const dto = { term: 'نبيتي', canonicalFamily: 'red' };
+    const dto = { term: 'نبيتي', colorId: 'C-red' };
     const synonym = makeSynonym(dto);
     create.mockResolvedValue(synonym);
 
@@ -59,7 +59,7 @@ describe('ColorSynonymsAdminController', () => {
     create.mockRejectedValue(new Error('DB unique constraint'));
 
     await expect(
-      controller.create({ term: 'نبيتي', canonicalFamily: 'red' }),
+      controller.create({ term: 'نبيتي', colorId: 'C-red' }),
     ).rejects.toThrow('DB unique constraint');
   });
 
@@ -86,8 +86,8 @@ describe('ColorSynonymsAdminController', () => {
   // --- PATCH /admin/color-synonyms/:id ---
 
   it('update delegates to service.update with id and patch', async () => {
-    const patch = { canonicalFamily: 'burgundy' };
-    const updated = makeSynonym({ canonicalFamily: 'burgundy' });
+    const patch = { colorId: 'C-burgundy' };
+    const updated = makeSynonym({ colorId: 'C-burgundy' });
     update.mockResolvedValue(updated);
 
     const result = await controller.update('cs-1', patch);
@@ -102,7 +102,7 @@ describe('ColorSynonymsAdminController', () => {
     );
 
     await expect(
-      controller.update('cs-ghost', { canonicalFamily: 'blue' }),
+      controller.update('cs-ghost', { colorId: 'C-blue' }),
     ).rejects.toThrow(NotFoundException);
   });
 

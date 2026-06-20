@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { asc, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
+import { colors } from './entities/color.entity';
 import {
   colorSynonyms,
   type ColorSynonym,
@@ -46,14 +47,28 @@ export class ColorSynonymsRepository {
     return row;
   }
 
-  /** Resolve a dialect color term to its canonical family, or null if unknown. */
+  /** All dialect terms that resolve to a given color, alphabetically by term. */
+  async findByColorId(colorId: string): Promise<ColorSynonym[]> {
+    return this.db
+      .select()
+      .from(colorSynonyms)
+      .where(eq(colorSynonyms.colorId, colorId))
+      .orderBy(asc(colorSynonyms.term));
+  }
+
+  /**
+   * Resolve a dialect color term to its canonical family, or null if unknown.
+   * Joins onto `colors` since the family now lives there (color_synonyms only
+   * holds the FK).
+   */
   async resolveColorFamily(term: string): Promise<string | null> {
     const [row] = await this.db
-      .select({ canonicalFamily: colorSynonyms.canonicalFamily })
+      .select({ family: colors.family })
       .from(colorSynonyms)
+      .innerJoin(colors, eq(colors.id, colorSynonyms.colorId))
       .where(eq(colorSynonyms.term, term))
       .limit(1);
-    return row?.canonicalFamily ?? null;
+    return row?.family ?? null;
   }
 
   /**
@@ -69,8 +84,9 @@ export class ColorSynonymsRepository {
     threshold = 0.3,
   ): Promise<string | null> {
     const [row] = await this.db
-      .select({ canonicalFamily: colorSynonyms.canonicalFamily })
+      .select({ family: colors.family })
       .from(colorSynonyms)
+      .innerJoin(colors, eq(colors.id, colorSynonyms.colorId))
       .where(
         sql`similarity(${colorSynonyms.term}, ${term}) >= ${threshold}`,
       )
@@ -78,7 +94,7 @@ export class ColorSynonymsRepository {
         sql`similarity(${colorSynonyms.term}, ${term}) DESC`,
       )
       .limit(1);
-    return row?.canonicalFamily ?? null;
+    return row?.family ?? null;
   }
 
   async insert(input: NewColorSynonym): Promise<ColorSynonym> {

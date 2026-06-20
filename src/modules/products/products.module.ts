@@ -6,6 +6,10 @@ import { AdProductLinksService } from './ad-product-links.service';
 import { ColorSynonymsAdminController } from './color-synonyms-admin.controller';
 import { ColorSynonymsRepository } from './color-synonyms.repository';
 import { ColorSynonymsService } from './color-synonyms.service';
+import { ColorsAdminController } from './colors-admin.controller';
+import { ColorsRepository } from './colors.repository';
+import { ColorsService } from './colors.service';
+import { ProductImageColorsRepository } from './product-image-colors.repository';
 import { ProductImagesAdminController } from './product-images-admin.controller';
 import { ProductImagesController } from './product-images.controller';
 import { ProductsAdminController } from './products-admin.controller';
@@ -33,15 +37,19 @@ import { ProductsService } from './products.service';
     ProductImagesAdminController,
     AdProductLinksAdminController,
     ColorSynonymsAdminController,
+    ColorsAdminController,
   ],
   providers: [
     ProductsService,
     ProductsRepository,
     ColorSynonymsService,
     ColorSynonymsRepository,
+    ColorsService,
+    ColorsRepository,
+    ProductImageColorsRepository,
     AdProductLinksRepository,
     AdProductLinksService,
   ],
-  exports: [ProductsService, ColorSynonymsService],
+  exports: [ProductsService, ColorSynonymsService, ColorsService],
 })
 export class ProductsModule {}

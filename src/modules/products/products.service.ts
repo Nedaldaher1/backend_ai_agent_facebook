@@ -8,12 +8,15 @@ import { normalizeListOptions } from '@/common/types/query';
 import {
   createProductSchema,
   parseOrThrow,
+  setImageColorsSchema,
   updateProductSchema,
   type CreateProductInput,
   type UpdateProductInput,
 } from '@/common/validation';
 import { StorageService } from '@/core/storage/storage.service';
 import { ColorSynonymsService } from './color-synonyms.service';
+import { ColorsService } from './colors.service';
+import { ProductImageColorsRepository } from './product-image-colors.repository';
 import { ProductsRepository, type ProductFilter } from './products.repository';
 import type { Product } from './entities/product.entity';
 
@@ -40,6 +43,22 @@ export interface UploadedImage {
   filename: string;
 }
 
+/** A canonical color as attached to a product image. */
+export interface ImageColorBrief {
+  id: string;
+  name: string;
+  family: string;
+  hex: string | null;
+}
+
+/** One product image: storage key, resolved public URL, primary flag, colors. */
+export interface ImageWithColors {
+  key: string;
+  url: string;
+  isPrimary: boolean;
+  colors: ImageColorBrief[];
+}
+
 /**
  * Product business logic and the single cross-module surface (the agent and the
  * admin UI both call this, never the repository).
@@ -63,8 +82,12 @@ export interface UploadedImage {
 export class ProductsService {
   constructor(
     private readonly repo: ProductsRepository,
+    // `colors` is the synonym/normalization service (dialect term -> family);
+    // `colorsService` is the canonical-color registry (the `colors` table).
     private readonly colors: ColorSynonymsService,
     private readonly storage: StorageService,
+    private readonly colorsService: ColorsService,
+    private readonly imageColors: ProductImageColorsRepository,
   ) {}
 
   // --- Agent / customer read path (publish gate forced on) ---
@@ -197,6 +220,21 @@ export class ProductsService {
     return urls.map((url) => ({ url, type: 'image' }));
   }
 
+  /**
+   * Resolve the canonical color name(s) attached to one product image
+   * (productId + storageKey), joined for a clean snapshot. Returns null when the
+   * image carries no color tag. Used by order capture to snapshot color_name —
+   * the chosen image identifies the model's color via product_image_colors.
+   */
+  async getImageColorName(
+    productId: string,
+    storageKey: string,
+  ): Promise<string | null> {
+    const rows = await this.imageColors.findColorsByImage(productId, storageKey);
+    if (rows.length === 0) return null;
+    return rows.map((r) => r.name).join('، ');
+  }
+
   // --- Admin read path (drafts visible) ---
 
   /** Admin listing. Pass `filter.isPublished` to narrow; omit to see all. */
@@ -297,28 +335,86 @@ export class ProductsService {
   }
 
   /**
-   * List all images for a product, with storage keys resolved to public URLs.
-   * The first entry (index 0) is flagged as `isPrimary`. Returns an empty
-   * array when the product has no images.
+   * List all images for a product, with storage keys resolved to public URLs and
+   * each image's attached canonical colors. The first entry (index 0) is flagged
+   * as `isPrimary`. Returns an empty array when the product has no images.
    * Admin boundary: does not enforce the publish gate.
    */
-  async listImages(
-    id: string,
-  ): Promise<{ key: string; url: string; isPrimary: boolean }[]> {
+  async listImages(id: string): Promise<ImageWithColors[]> {
     const product = await this.repo.findById(id);
     if (!product) {
       throw new NotFoundException(`Product ${id} not found`);
     }
     const keys = product.imageUrls ?? [];
     if (keys.length === 0) return [];
-    const entries = await Promise.all(
+
+    // One query for all image-color tags, then group by storage key.
+    const colorRows = await this.imageColors.findColorsByProduct(id);
+    const colorsByKey = new Map<string, ImageColorBrief[]>();
+    for (const row of colorRows) {
+      const list = colorsByKey.get(row.storageKey) ?? [];
+      list.push({
+        id: row.id,
+        name: row.name,
+        family: row.family,
+        hex: row.hex,
+      });
+      colorsByKey.set(row.storageKey, list);
+    }
+
+    return Promise.all(
       keys.map(async (key, i) => ({
         key,
         url: await this.storage.getUrl(key),
         isPrimary: i === 0,
+        colors: colorsByKey.get(key) ?? [],
       })),
     );
-    return entries;
+  }
+
+  /**
+   * Replace the full set of canonical colors attached to one product image.
+   * Validates the payload, that the image (storage key) belongs to the product,
+   * and that every color id exists (clean 404, never an opaque FK error), then
+   * swaps the image's color set atomically. Returns the image descriptor with the
+   * storage key resolved to a public URL.
+   *
+   * Admin boundary: does not enforce the publish gate (drafts are editable).
+   */
+  async setImageColors(
+    id: string,
+    storageKey: string,
+    input: { colorIds: string[] },
+  ): Promise<ImageWithColors> {
+    const { colorIds } = parseOrThrow(setImageColorsSchema, input);
+    const product = await this.repo.findById(id);
+    if (!product) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    const keys = product.imageUrls ?? [];
+    if (!keys.includes(storageKey)) {
+      throw new NotFoundException(
+        `Image key '${storageKey}' not found on product ${id}`,
+      );
+    }
+
+    // De-duplicate (the composite PK forbids the same color twice on one image)
+    // and assert every color exists before touching the join table.
+    const uniqueIds = [...new Set(colorIds)];
+    const colorRows = await this.colorsService.getManyByIds(uniqueIds);
+    await this.imageColors.replaceForImage(id, storageKey, uniqueIds);
+
+    return {
+      key: storageKey,
+      url: await this.storage.getUrl(storageKey),
+      isPrimary: keys[0] === storageKey,
+      colors: colorRows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        family: c.family,
+        hex: c.hex,
+      })),
+    };
   }
 
   /**
@@ -338,8 +434,11 @@ export class ProductsService {
     if (!keys.includes(key)) {
       throw new NotFoundException(`Image key '${key}' not found on product ${id}`);
     }
-    // Delete the R2/storage object first; then update the DB row.
+    // Delete the R2/storage object first; then drop the image's color tags so no
+    // orphan rows linger (they would also RESTRICT-block deleting those colors);
+    // finally update the DB row.
     await this.storage.deleteImage(key);
+    await this.imageColors.deleteForImage(id, key);
     const remaining = keys.filter((k) => k !== key);
     const updated = await this.repo.updateById(id, { imageUrls: remaining });
     if (!updated) {

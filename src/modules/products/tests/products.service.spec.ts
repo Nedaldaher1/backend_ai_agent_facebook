@@ -8,8 +8,14 @@ jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { ProductsService } from '../products.service';
 import type { ColorSynonymsService } from '../color-synonyms.service';
+import type { ColorsService } from '../colors.service';
+import type { ProductImageColorsRepository } from '../product-image-colors.repository';
 import type { ProductsRepository } from '../products.repository';
 import type { StorageService } from '@/core/storage/storage.service';
+
+// Real uuids — setImageColorsSchema validates colorIds with z.uuid().
+const RED = '11111111-1111-4111-8111-111111111111';
+const GHOST = '99999999-9999-4999-8999-999999999999';
 
 const makeProduct = (overrides: Record<string, unknown> = {}) => ({
   id: 'p1',
@@ -70,7 +76,29 @@ describe('ProductsService', () => {
     getUrl,
   } as unknown as StorageService;
 
-  const service = new ProductsService(repo, colors, storage);
+  const getColorById = jest.fn();
+  const getManyByIds = jest.fn();
+  const colorsService = {
+    getById: getColorById,
+    getManyByIds,
+  } as unknown as ColorsService;
+
+  const findColorsByProduct = jest.fn();
+  const replaceForImage = jest.fn();
+  const deleteForImage = jest.fn();
+  const imageColors = {
+    findColorsByProduct,
+    replaceForImage,
+    deleteForImage,
+  } as unknown as ProductImageColorsRepository;
+
+  const service = new ProductsService(
+    repo,
+    colors,
+    storage,
+    colorsService,
+    imageColors,
+  );
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -80,6 +108,10 @@ describe('ProductsService', () => {
     getUrl.mockImplementation((key: string) =>
       Promise.resolve(`https://pub.example.com/${key}`),
     );
+    // Default: no image-color tags / writes succeed unless a test overrides.
+    findColorsByProduct.mockResolvedValue([]);
+    replaceForImage.mockResolvedValue(undefined);
+    deleteForImage.mockResolvedValue(undefined);
   });
 
   // --- existing cases (kept) ---
@@ -559,5 +591,114 @@ describe('ProductsService', () => {
       NotFoundException,
     );
     expect(updateById).not.toHaveBeenCalled();
+  });
+
+  // --- listImages: colors per image ---
+
+  it('listImages attaches each image its grouped colors (empty when untagged)', async () => {
+    findById.mockResolvedValue(
+      makeProduct({ id: 'p1', imageUrls: ['a.jpg', 'b.png'] }),
+    );
+    findColorsByProduct.mockResolvedValue([
+      { storageKey: 'a.jpg', id: 'C-red', name: 'أحمر', family: 'red', hex: '#B0212F' },
+      { storageKey: 'a.jpg', id: 'C-black', name: 'أسود', family: 'black', hex: null },
+    ]);
+
+    const images = await service.listImages('p1');
+
+    expect(findColorsByProduct).toHaveBeenCalledWith('p1');
+    expect(images[0]).toMatchObject({
+      key: 'a.jpg',
+      isPrimary: true,
+      colors: [
+        { id: 'C-red', name: 'أحمر', family: 'red', hex: '#B0212F' },
+        { id: 'C-black', name: 'أسود', family: 'black', hex: null },
+      ],
+    });
+    // b.png has no tags -> empty colors array.
+    expect(images[1]).toMatchObject({
+      key: 'b.png',
+      isPrimary: false,
+      colors: [],
+    });
+  });
+
+  // --- setImageColors ---
+
+  it('setImageColors validates colors, replaces the set, returns the descriptor', async () => {
+    findById.mockResolvedValue(
+      makeProduct({ id: 'p1', imageUrls: ['a.jpg', 'b.png'] }),
+    );
+    getManyByIds.mockResolvedValue([
+      { id: RED, name: 'أحمر', family: 'red', hex: '#B0212F' },
+    ]);
+
+    const result = await service.setImageColors('p1', 'b.png', {
+      colorIds: [RED],
+    });
+
+    expect(getManyByIds).toHaveBeenCalledWith([RED]);
+    expect(replaceForImage).toHaveBeenCalledWith('p1', 'b.png', [RED]);
+    expect(result).toEqual({
+      key: 'b.png',
+      url: 'https://pub.example.com/b.png',
+      isPrimary: false,
+      colors: [{ id: RED, name: 'أحمر', family: 'red', hex: '#B0212F' }],
+    });
+  });
+
+  it('setImageColors de-duplicates color ids before validating and writing', async () => {
+    findById.mockResolvedValue(makeProduct({ id: 'p1', imageUrls: ['a.jpg'] }));
+    getManyByIds.mockResolvedValue([
+      { id: RED, name: 'أحمر', family: 'red', hex: null },
+    ]);
+
+    await service.setImageColors('p1', 'a.jpg', {
+      colorIds: [RED, RED],
+    });
+
+    expect(getManyByIds).toHaveBeenCalledWith([RED]);
+    expect(replaceForImage).toHaveBeenCalledWith('p1', 'a.jpg', [RED]);
+  });
+
+  it('setImageColors rejects an empty colorIds payload before any DB work', async () => {
+    await expect(
+      service.setImageColors('p1', 'a.jpg', { colorIds: [] }),
+    ).rejects.toThrow(BadRequestException);
+    expect(findById).not.toHaveBeenCalled();
+    expect(replaceForImage).not.toHaveBeenCalled();
+  });
+
+  it('setImageColors throws NotFoundException when the image key is absent', async () => {
+    findById.mockResolvedValue(makeProduct({ id: 'p1', imageUrls: ['a.jpg'] }));
+
+    await expect(
+      service.setImageColors('p1', 'missing.jpg', { colorIds: [RED] }),
+    ).rejects.toThrow(NotFoundException);
+    expect(getManyByIds).not.toHaveBeenCalled();
+    expect(replaceForImage).not.toHaveBeenCalled();
+  });
+
+  it('setImageColors propagates an unknown color id and never writes', async () => {
+    findById.mockResolvedValue(makeProduct({ id: 'p1', imageUrls: ['a.jpg'] }));
+    getManyByIds.mockRejectedValue(
+      new NotFoundException(`Unknown color id(s): ${GHOST}`),
+    );
+
+    await expect(
+      service.setImageColors('p1', 'a.jpg', { colorIds: [GHOST] }),
+    ).rejects.toThrow(NotFoundException);
+    expect(replaceForImage).not.toHaveBeenCalled();
+  });
+
+  it('removeImage clears the image color tags as part of deletion', async () => {
+    findById.mockResolvedValue(
+      makeProduct({ id: 'p1', imageUrls: ['a.jpg', 'b.png'] }),
+    );
+    updateById.mockResolvedValue(makeProduct({ id: 'p1', imageUrls: ['b.png'] }));
+
+    await service.removeImage('p1', 'a.jpg');
+
+    expect(deleteForImage).toHaveBeenCalledWith('p1', 'a.jpg');
   });
 });

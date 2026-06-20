@@ -7,6 +7,7 @@ import { insertKnowledgeEntrySchema } from '@/modules/knowledge/entities/knowled
 import { insertOrderSchema } from '@/modules/orders/entities/order.entity';
 import { insertOrderItemSchema } from '@/modules/orders/entities/order-item.entity';
 import { insertAdProductLinkSchema } from '@/modules/products/entities/ad-product-link.entity';
+import { insertColorSchema } from '@/modules/products/entities/color.entity';
 import { insertColorSynonymSchema } from '@/modules/products/entities/color-synonym.entity';
 import { insertProductSchema } from '@/modules/products/entities/product.entity';
 
@@ -52,15 +53,37 @@ export const updateAdProductLinkSchema = createAdProductLinkSchema
 export type CreateAdProductLinkInput = z.infer<typeof createAdProductLinkSchema>;
 export type UpdateAdProductLinkInput = z.infer<typeof updateAdProductLinkSchema>;
 
+// --- colors (control-plane: the canonical color entity) ---
+// is_system is reserved for the seeded system colors (e.g. "__unassigned__") and
+// must never be settable through the admin API, or an admin could mint or toggle
+// non-deletable system rows. Omit it from both create and update.
+export const createColorSchema = insertColorSchema
+  .omit({ id: true, createdAt: true, updatedAt: true, isSystem: true })
+  .strict();
+export const updateColorSchema = createColorSchema.partial().strict();
+export type CreateColorInput = z.infer<typeof createColorSchema>;
+export type UpdateColorInput = z.infer<typeof updateColorSchema>;
+
 // --- color_synonyms (control-plane) ---
+// color_id is a uuid FK to colors; refine it to z.uuid() so a malformed id is
+// rejected at the validation boundary (400) instead of reaching SQL as an
+// invalid uuid. Existence is then checked in the service for a clean 404.
 export const createColorSynonymSchema = insertColorSynonymSchema
   .omit({ id: true, createdAt: true })
+  .extend({ colorId: z.uuid() })
   .strict();
 export const updateColorSynonymSchema = createColorSynonymSchema
   .partial()
   .strict();
 export type CreateColorSynonymInput = z.infer<typeof createColorSynonymSchema>;
 export type UpdateColorSynonymInput = z.infer<typeof updateColorSynonymSchema>;
+
+// --- product_image_colors (write payload: set the colors of one product image) ---
+// Replaces an image's whole color set; at least one managed color id is required.
+export const setImageColorsSchema = z
+  .object({ colorIds: z.array(z.uuid()).min(1) })
+  .strict();
+export type SetImageColorsInput = z.infer<typeof setImageColorsSchema>;
 
 // --- knowledge_entries (control-plane) ---
 export const createKnowledgeEntrySchema = insertKnowledgeEntrySchema
