@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { SecurityModule } from '@/core/security/security.module';
+import { EmbeddingsModule } from '@/modules/embeddings/embeddings.module';
 import { AdProductLinksAdminController } from './ad-product-links-admin.controller';
 import { AdProductLinksRepository } from './ad-product-links.repository';
 import { AdProductLinksService } from './ad-product-links.service';
@@ -10,6 +11,7 @@ import { ColorsAdminController } from './colors-admin.controller';
 import { ColorsRepository } from './colors.repository';
 import { ColorsService } from './colors.service';
 import { ProductImageColorsRepository } from './product-image-colors.repository';
+import { ProductImageEmbeddingsRepository } from './product-image-embeddings.repository';
 import { ProductImagesAdminController } from './product-images-admin.controller';
 import { ProductImagesController } from './product-images.controller';
 import { ProductsAdminController } from './products-admin.controller';
@@ -29,7 +31,7 @@ import { ProductsService } from './products.service';
  * for the guarded /admin/* routes, so the JWT wiring is not duplicated here.
  */
 @Module({
-  imports: [SecurityModule],
+  imports: [SecurityModule, EmbeddingsModule],
   controllers: [
     ProductsController,
     ProductImagesController,
@@ -47,6 +49,7 @@ import { ProductsService } from './products.service';
     ColorsService,
     ColorsRepository,
     ProductImageColorsRepository,
+    ProductImageEmbeddingsRepository,
     AdProductLinksRepository,
     AdProductLinksService,
   ],

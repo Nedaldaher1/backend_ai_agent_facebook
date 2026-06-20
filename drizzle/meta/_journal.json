@@ -64,6 +64,13 @@
       "when": 1781906329798,
       "tag": "0008_drop_order_customer_name",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781967103221,
+      "tag": "0009_add_product_image_embeddings",
+      "breakpoints": true
     }
   ]
 }

@@ -17,7 +17,7 @@ import type { OrdersService } from '@/modules/orders/orders.service';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import { buildSearchProductsTool } from './search-products.tool';
-import { findSimilarByImageTool } from './find-similar-by-image.tool';
+import { buildFindSimilarByImageTool } from './find-similar-by-image.tool';
 import { buildCheckAvailabilityTool } from './check-availability.tool';
 import { buildGetProductMediaTool } from './get-product-media.tool';
 import { buildGetKnowledgeTool } from './get-knowledge.tool';
@@ -46,6 +46,6 @@ export function buildSalesTools(deps: SalesToolsDeps) {
     get_knowledge: buildGetKnowledgeTool(knowledge),
     capture_order: buildCaptureOrderTool(orders),
     escalate_to_human: buildEscalateToHumanTool(conversations),
-    find_similar_by_image: findSimilarByImageTool,
+    find_similar_by_image: buildFindSimilarByImageTool(products),
   } as const;
 }

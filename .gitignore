@@ -49,6 +49,9 @@ lerna-debug.log*
 # Uploaded product images (local fs storage driver)
 /uploads
 
+# Downloaded ML model files (Transformers.js embeddings cache)
+/.cache
+
 # Runtime data
 pids
 *.pid

@@ -1,8 +1,10 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { ListOptions, PaginatedResult } from '@/common/types/query';
 import { normalizeListOptions } from '@/common/types/query';
 import {
@@ -14,9 +16,11 @@ import {
   type UpdateProductInput,
 } from '@/common/validation';
 import { StorageService } from '@/core/storage/storage.service';
+import { EmbeddingService } from '@/modules/embeddings/embedding.service';
 import { ColorSynonymsService } from './color-synonyms.service';
 import { ColorsService } from './colors.service';
 import { ProductImageColorsRepository } from './product-image-colors.repository';
+import { ProductImageEmbeddingsRepository } from './product-image-embeddings.repository';
 import { ProductsRepository, type ProductFilter } from './products.repository';
 import type { Product } from './entities/product.entity';
 
@@ -60,6 +64,22 @@ export interface ImageWithColors {
 }
 
 /**
+ * One visual-search hit: the product fields the agent needs, the primary image
+ * resolved to a public URL, and the cosine similarity [0..1] of the best
+ * matching image. `priceJod` stays a string (money-as-string end-to-end).
+ */
+export interface SimilarProduct {
+  id: string;
+  name: string;
+  priceJod: string;
+  colorFamily: string | null;
+  occasion: string | null;
+  stockStatus: string;
+  imageUrl: string;
+  similarity: number;
+}
+
+/**
  * Product business logic and the single cross-module surface (the agent and the
  * admin UI both call this, never the repository).
  *
@@ -80,6 +100,8 @@ export interface ImageWithColors {
  */
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
+
   constructor(
     private readonly repo: ProductsRepository,
     // `colors` is the synonym/normalization service (dialect term -> family);
@@ -88,6 +110,9 @@ export class ProductsService {
     private readonly storage: StorageService,
     private readonly colorsService: ColorsService,
     private readonly imageColors: ProductImageColorsRepository,
+    private readonly embeddingService: EmbeddingService,
+    private readonly embeddings: ProductImageEmbeddingsRepository,
+    private readonly config: ConfigService,
   ) {}
 
   // --- Agent / customer read path (publish gate forced on) ---
@@ -235,6 +260,39 @@ export class ProductsService {
     return rows.map((r) => r.name).join('، ');
   }
 
+  /**
+   * Visual search: embed the customer's image and return the closest PUBLISHED
+   * products (one row per product, ranked by its best matching image). Matches
+   * below SIMILARITY_MIN_SCORE are dropped so the agent never surfaces a weak
+   * guess — an empty array is a valid, expected result. Outward boundary: the
+   * primary image key is resolved to a public URL.
+   */
+  async findSimilarByImage(
+    imageUrl: string,
+    limit?: number,
+  ): Promise<SimilarProduct[]> {
+    const k = limit ?? this.config.get<number>('SIMILARITY_TOP_K') ?? 6;
+    const minScore = this.config.get<number>('SIMILARITY_MIN_SCORE') ?? 0;
+
+    const vector = await this.embeddingService.embedImage(imageUrl);
+    const rows = await this.embeddings.searchSimilarByEmbedding(vector, k);
+
+    const hits = rows.filter((r) => r.similarity >= minScore);
+    return Promise.all(
+      hits.map(async (r) => ({
+        id: r.productId,
+        name: r.name,
+        priceJod: r.priceJod,
+        colorFamily: r.colorFamily,
+        occasion: r.occasion,
+        stockStatus: r.stockStatus,
+        // Prefer the product's primary image (index 0); fall back to the matched one.
+        imageUrl: await this.storage.getUrl(r.imageUrls?.[0] ?? r.imageKey),
+        similarity: r.similarity,
+      })),
+    );
+  }
+
   // --- Admin read path (drafts visible) ---
 
   /** Admin listing. Pass `filter.isPublished` to narrow; omit to see all. */
@@ -261,8 +319,14 @@ export class ProductsService {
 
   /** Create a product. Defaults to a draft unless `isPublished` is set. */
   create(input: CreateProductInput): Promise<Product> {
+    // Validate synchronously (callers/tests rely on a sync throw on bad input),
+    // then persist and best-effort embed.
     const data = parseOrThrow(createProductSchema, input);
-    return this.repo.insert({ isPublished: false, ...data });
+    return this.repo.insert({ isPublished: false, ...data }).then((product) => {
+      // Covers the rare create-as-published-with-images path (no-op for drafts).
+      this.scheduleEmbeddingSync(product);
+      return product;
+    });
   }
 
   /** Back-compat alias for the original draft-creation entry point. */
@@ -322,6 +386,8 @@ export class ProductsService {
       );
       throw new NotFoundException(`Product ${id} not found`);
     }
+    // Image set changed — refresh embeddings best-effort (non-blocking).
+    this.scheduleEmbeddingSync(updated);
     // Resolve keys → URLs for the admin response (outward boundary).
     return this.resolveImageUrls(updated);
   }
@@ -444,6 +510,8 @@ export class ProductsService {
     if (!updated) {
       throw new NotFoundException(`Product ${id} not found`);
     }
+    // Image set changed — refresh embeddings best-effort (non-blocking).
+    this.scheduleEmbeddingSync(updated);
     return this.resolveImageUrls(updated);
   }
 
@@ -519,6 +587,136 @@ export class ProductsService {
     return { ...product, imageUrls: urls };
   }
 
+  /**
+   * Fire-and-forget embedding sync. Embeddings are a best-effort enhancement, not
+   * a publish gate — this never blocks the admin response and never throws (a
+   * failure, including the first-call model download, is logged and swallowed).
+   * The product MUST carry RAW storage keys in `imageUrls` (not resolved URLs).
+   */
+  private scheduleEmbeddingSync(product: Product): void {
+    void this.syncProductEmbeddings(product).catch((err: unknown) => {
+      this.logger.warn(
+        `embedding sync failed for product ${product.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+  }
+
+  /**
+   * (Re)embed a published product's images and prune embeddings for images it no
+   * longer has. Drafts are never embedded (they can't surface in search) — their
+   * embeddings are cleared instead. Per-image failures are logged and skipped so
+   * one bad image can't abort the rest. Public so the backfill script reuses it.
+   */
+  async syncProductEmbeddings(product: Product): Promise<void> {
+    const keys = product.imageUrls ?? [];
+
+    if (!product.isPublished) {
+      await this.embeddings.deleteMissingKeys(product.id, []);
+      return;
+    }
+
+    for (const key of keys) {
+      try {
+        const url = await this.storage.getUrl(key);
+        const vector = await this.embeddingService.embedImage(url);
+        await this.embeddings.upsert(
+          product.id,
+          key,
+          vector,
+          this.embeddingService.modelId,
+        );
+      } catch (err: unknown) {
+        this.logger.warn(
+          `embed image ${key} (product ${product.id}) failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    // Drop embeddings for images no longer present on the product.
+    await this.embeddings.deleteMissingKeys(product.id, keys);
+  }
+
+  /**
+   * Idempotent embedding backfill for every PUBLISHED product image (used by the
+   * `embeddings:backfill` script). Walks published products in batches; for each
+   * image NOT already embedded with the current model it embeds + upserts, and it
+   * continues past per-image failures. Re-running is a no-op (already-embedded
+   * keys are skipped). `log` reports {done}/{total} progress.
+   */
+  async backfillEmbeddings(
+    log: (msg: string) => void = () => undefined,
+    batchSize = 100,
+  ): Promise<{
+    total: number;
+    embedded: number;
+    skipped: number;
+    failed: number;
+  }> {
+    const modelId = this.embeddingService.modelId;
+
+    // Collect all published products (raw keys) in batches so a large catalog
+    // doesn't load in one query.
+    const published: Product[] = [];
+    for (let offset = 0; ; offset += batchSize) {
+      const batch = await this.repo.list(
+        { isPublished: true },
+        { limit: batchSize, offset },
+      );
+      published.push(...batch);
+      if (batch.length < batchSize) break;
+    }
+
+    const total = published.reduce((n, p) => n + (p.imageUrls?.length ?? 0), 0);
+    log(
+      `backfill: ${published.length} published products, ${total} images, model ${modelId}`,
+    );
+
+    let done = 0;
+    let embedded = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const product of published) {
+      const keys = product.imageUrls ?? [];
+      if (keys.length === 0) continue;
+      const already = new Set(
+        await this.embeddings.findEmbeddedKeys(product.id, modelId),
+      );
+      for (const key of keys) {
+        done++;
+        if (already.has(key)) {
+          skipped++;
+          continue;
+        }
+        try {
+          const url = await this.storage.getUrl(key);
+          const vector = await this.embeddingService.embedImage(url);
+          await this.embeddings.upsert(product.id, key, vector, modelId);
+          embedded++;
+        } catch (err: unknown) {
+          failed++;
+          log(
+            `  ✗ ${product.id}/${key}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        log(
+          `  [${done}/${total}] embedded=${embedded} skipped=${skipped} failed=${failed}`,
+        );
+      }
+    }
+
+    log(
+      embedded === 0 && failed === 0
+        ? `backfill: nothing to do — all ${total} images already embedded`
+        : `backfill done: embedded=${embedded} skipped=${skipped} failed=${failed} (of ${total})`,
+    );
+    return { total, embedded, skipped, failed };
+  }
+
   private async requirePublishUpdate(
     id: string,
     isPublished: boolean,
@@ -527,6 +725,8 @@ export class ProductsService {
     if (!product) {
       throw new NotFoundException(`Product ${id} not found`);
     }
+    // Publish → (re)embed images; unpublish → clear embeddings. Best-effort.
+    this.scheduleEmbeddingSync(product);
     return product;
   }
 

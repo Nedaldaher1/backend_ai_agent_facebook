@@ -4,6 +4,17 @@
 jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
+// EmbeddingService is pulled in (for DI metadata) via ProductsService and imports
+// @huggingface/transformers, which is ESM-only; stub it so the chain loads under
+// Jest (CJS). A mock EmbeddingService is injected, so the real one never runs.
+jest.mock('@huggingface/transformers', () => ({
+  env: {},
+  AutoProcessor: { from_pretrained: jest.fn() },
+  AutoTokenizer: { from_pretrained: jest.fn() },
+  RawImage: { read: jest.fn(), fromBlob: jest.fn() },
+  SiglipTextModel: { from_pretrained: jest.fn() },
+  SiglipVisionModel: { from_pretrained: jest.fn() },
+}));
 
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { ProductsService } from '../products.service';
@@ -11,7 +22,10 @@ import type { ColorSynonymsService } from '../color-synonyms.service';
 import type { ColorsService } from '../colors.service';
 import type { ProductImageColorsRepository } from '../product-image-colors.repository';
 import type { ProductsRepository } from '../products.repository';
+import type { ProductImageEmbeddingsRepository } from '../product-image-embeddings.repository';
 import type { StorageService } from '@/core/storage/storage.service';
+import type { EmbeddingService } from '@/modules/embeddings/embedding.service';
+import type { ConfigService } from '@nestjs/config';
 
 // Real uuids — setImageColorsSchema validates colorIds with z.uuid().
 const RED = '11111111-1111-4111-8111-111111111111';
@@ -92,12 +106,36 @@ describe('ProductsService', () => {
     deleteForImage,
   } as unknown as ProductImageColorsRepository;
 
+  const embedImage = jest.fn();
+  const embeddingService = {
+    modelId: 'test-model',
+    embedImage,
+  } as unknown as EmbeddingService;
+
+  const upsertEmbedding = jest.fn();
+  const deleteMissingKeys = jest.fn();
+  const findEmbeddedKeys = jest.fn();
+  const searchSimilarByEmbedding = jest.fn();
+  const embeddings = {
+    upsert: upsertEmbedding,
+    deleteMissingKeys,
+    findEmbeddedKeys,
+    searchSimilarByEmbedding,
+    count: jest.fn(),
+  } as unknown as ProductImageEmbeddingsRepository;
+
+  const configGet = jest.fn();
+  const config = { get: configGet } as unknown as ConfigService;
+
   const service = new ProductsService(
     repo,
     colors,
     storage,
     colorsService,
     imageColors,
+    embeddingService,
+    embeddings,
+    config,
   );
 
   beforeEach(() => {
@@ -112,6 +150,14 @@ describe('ProductsService', () => {
     findColorsByProduct.mockResolvedValue([]);
     replaceForImage.mockResolvedValue(undefined);
     deleteForImage.mockResolvedValue(undefined);
+    // Embedding write-path/search: clean no-op defaults so the fire-and-forget
+    // sync fired by create/publish/image changes never rejects during a test.
+    embedImage.mockResolvedValue(new Array(768).fill(0));
+    upsertEmbedding.mockResolvedValue(undefined);
+    deleteMissingKeys.mockResolvedValue(0);
+    findEmbeddedKeys.mockResolvedValue([]);
+    searchSimilarByEmbedding.mockResolvedValue([]);
+    configGet.mockReturnValue(undefined);
   });
 
   // --- existing cases (kept) ---

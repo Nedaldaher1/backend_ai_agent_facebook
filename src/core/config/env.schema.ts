@@ -34,6 +34,26 @@ export const envSchema = z
     JWT_SECRET: z.string().min(16),
     JWT_EXPIRES_IN: z.string().default('7d'),
 
+    // --- Visual search embeddings (Marqo-FashionSigLIP via Transformers.js) ---
+    // Multimodal model id; images and text embed into one 768-d space. A model
+    // swap is a config change + re-backfill, never a code edit.
+    EMBEDDING_MODEL_ID: z.string().default('Marqo/marqo-fashionSigLIP'),
+    // Embedding dimension. MUST equal the model output, the pgvector column, and
+    // the HNSW index — all 768 for fashionSigLIP. Asserted at runtime.
+    EMBEDDING_DIM: z.coerce.number().int().positive().default(768),
+    // ONNX weight dtype. fp32 = best retrieval quality; q8 = smaller/faster. The
+    // SAME dtype must be used for catalog and query embeddings, so it is one knob.
+    EMBEDDING_DTYPE: z
+      .enum(['fp32', 'fp16', 'q8', 'int8', 'uint8', 'q4'])
+      .default('fp32'),
+    // Writable, persistent dir for downloaded model files (Transformers.js cache).
+    TRANSFORMERS_CACHE_DIR: z.string().default('./.cache/transformers'),
+    // Default number of distinct products visual search returns.
+    SIMILARITY_TOP_K: z.coerce.number().int().positive().default(6),
+    // Minimum cosine similarity [0..1] a match must clear to be surfaced; below
+    // it the agent gets an empty result and must not invent products.
+    SIMILARITY_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.6),
+
     // --- Cloudflare R2 (required when STORAGE_DRIVER='r2') ---
     // Account ID (encoded in the endpoint; included here for documentation).
     R2_ACCOUNT_ID: z.string().optional(),
