@@ -28,7 +28,25 @@ async function bootstrap() {
   // Security & transport plugins (Fastify-native).
   await app.register(helmet);
   await app.register(compress);
-  app.enableCors({ origin: true, credentials: true });
+
+  // CORS — let the admin panel call the API from its browser origin.
+  // Allowed origins come from CORS_ORIGINS (comma-separated). In non-production we
+  // also accept any localhost / 127.0.0.1 port, so the Vite dev server (5173, 5174,
+  // …) works without extra config. `methods` MUST be set explicitly: @fastify/cors
+  // (what NestJS registers under the hood) defaults to `GET,HEAD,POST`, which would
+  // block the admin PATCH/PUT/DELETE routes with a CORS error.
+  const corsOrigins: (string | RegExp)[] = (config.get<string>('CORS_ORIGINS') ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (config.get<string>('NODE_ENV') !== 'production') {
+    corsOrigins.push(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/);
+  }
+  app.enableCors({
+    origin: corsOrigins.length > 0 ? corsOrigins : true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
 
   // File uploads: parsed in-memory (no temp files) and capped by env. The buffer
   // is handed to StorageService, which owns the storage driver (flydrive).
