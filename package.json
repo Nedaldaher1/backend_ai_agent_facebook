@@ -13,6 +13,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "embeddings:backfill": "nest build && node dist/scripts/backfill-embeddings.js",
+    "embeddings:probe": "nest build && node dist/scripts/embeddings-probe.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
