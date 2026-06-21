@@ -149,9 +149,12 @@ export class ConversationControlService {
 
     const updated = await this.conversations.setAiState(id, {
       aiState: 'paused',
-      handoffReason: input.reason ?? null,
+      // Only overwrite handoffReason when a reason is supplied — a bare pause
+      // must not wipe an existing escalation reason.
+      ...(input.reason ? { handoffReason: input.reason } : {}),
       pausedUntil,
     });
+    if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
 
     await this.conversations.recordEvent({
       conversationId: id,
@@ -172,7 +175,6 @@ export class ConversationControlService {
       );
     });
 
-    if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
     return updated;
   }
 
@@ -194,6 +196,7 @@ export class ConversationControlService {
       pausedUntil: null,
       ...(input.summary ? { humanSummary: input.summary } : {}),
     });
+    if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
 
     await this.conversations.recordEvent({
       conversationId: id,
@@ -210,7 +213,6 @@ export class ConversationControlService {
       );
     });
 
-    if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
     return updated;
   }
 
@@ -238,6 +240,7 @@ export class ConversationControlService {
         aiState: 'human',
         assignedTo: input.assignedTo,
       });
+      if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
 
       await this.conversations.recordEvent({
         conversationId: id,
@@ -258,6 +261,7 @@ export class ConversationControlService {
       updated = await this.conversations.setAiState(id, {
         assignedTo: null,
       });
+      if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
 
       await this.conversations.recordEvent({
         conversationId: id,
@@ -271,7 +275,6 @@ export class ConversationControlService {
       // No ManyChat call on unassign-only.
     }
 
-    if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
     return updated;
   }
 
@@ -292,6 +295,7 @@ export class ConversationControlService {
       aiState: 'human',
       handoffReason: input.reason ?? null,
     });
+    if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
 
     await this.conversations.recordEvent({
       conversationId: id,
@@ -309,7 +313,6 @@ export class ConversationControlService {
       );
     });
 
-    if (!updated) throw new NotFoundException(`Conversation ${id} not found`);
     return updated;
   }
 

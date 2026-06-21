@@ -1,5 +1,6 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
+  check,
   index,
   jsonb,
   pgTable,
@@ -47,6 +48,10 @@ export const conversations = pgTable(
   (t) => [
     index('conversations_psid_idx').on(t.psid),
     index('conversations_ai_state_idx').on(t.aiState),
+    check(
+      'conversations_ai_state_check',
+      sql`${t.aiState} in ('bot', 'human', 'paused')`,
+    ),
   ],
 );
 

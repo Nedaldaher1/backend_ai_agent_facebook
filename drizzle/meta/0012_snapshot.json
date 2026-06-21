@@ -1,5 +1,5 @@
 {
-  "id": "2e43da6c-f3d1-45c4-898e-72e85f5127fd",
+  "id": "a3865472-08be-4727-9c57-c575e62eafbf",
   "prevId": "7a62477f-6557-4bd3-b443-99434d43922f",
   "version": "7",
   "dialect": "postgresql",
@@ -372,7 +372,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "conversations_ai_state_check": {
+          "name": "conversations_ai_state_check",
+          "value": "\"conversations\".\"ai_state\" in ('bot', 'human', 'paused')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.messages": {

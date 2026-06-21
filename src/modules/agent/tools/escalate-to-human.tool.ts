@@ -1,8 +1,10 @@
 /**
  * escalate_to_human — تحويل المحادثة إلى موظف بشري.
  *
- * WRITE tool. Marks the conversation with stage: 'needs_human' in the state
- * jsonb so the admin panel and ManyChat webhook can route it to a human agent.
+ * WRITE tool. Sets the conversation's ai_state column to 'human' (with the
+ * escalation reason) and records a handoff event, so the admin panel and the
+ * code gate route it to a human agent. AgentService mirrors the state into
+ * ManyChat after the turn completes.
  *
  * Customer identity (conversationId) comes ONLY from requestContext — never
  * from the tool input.

@@ -19,8 +19,7 @@ ALTER TABLE "conversations" ADD COLUMN "paused_until" timestamp with time zone;-
 ALTER TABLE "conversations" ADD COLUMN "ai_state_updated_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_events" ADD CONSTRAINT "conversation_events_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "conversation_events_conversation_id_idx" ON "conversation_events" USING btree ("conversation_id");--> statement-breakpoint
-CREATE INDEX "conversations_ai_state_idx" ON "conversations" USING btree ("ai_state");
---> statement-breakpoint
-ALTER TABLE "conversations" ADD CONSTRAINT "conversations_ai_state_check" CHECK ("ai_state" IN ('bot','human','paused'));
+CREATE INDEX "conversations_ai_state_idx" ON "conversations" USING btree ("ai_state");--> statement-breakpoint
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_ai_state_check" CHECK ("conversations"."ai_state" in ('bot', 'human', 'paused'));
 --> statement-breakpoint
 UPDATE "conversations" SET "ai_state" = 'human' WHERE "state"->>'stage' = 'needs_human';
