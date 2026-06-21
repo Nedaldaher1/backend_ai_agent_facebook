@@ -21,8 +21,12 @@ export const envSchema = z
     STORAGE_DRIVER: z.enum(['fs', 'r2']).default('r2'),
     // Local directory the `fs` driver writes to (created on boot, gitignored).
     UPLOAD_DIR: z.string().default('./uploads'),
-    // Base URL that stored image URLs are built from (must reach this server).
-    // Used only by the `fs` driver.
+    // Public base URL for this server. Serves two purposes:
+    //  1. `fs` storage driver: image URLs sent to the admin panel and to ManyChat
+    //     are built as `${PUBLIC_BASE_URL}/uploads/<filename>`.
+    //  2. ManyChat webhook URL in dev: copy the cloudflared tunnel HTTPS URL here
+    //     and paste the same URL into the ManyChat External Request block, e.g.
+    //     https://<tunnel-id>.trycloudflare.com/webhook/manychat
     PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
     // Max upload size per file, in bytes (default 5 MiB).
     UPLOAD_MAX_BYTES: z.coerce
@@ -53,6 +57,31 @@ export const envSchema = z
     // Minimum cosine similarity [0..1] a match must clear to be surfaced; below
     // it the agent gets an empty result and must not invent products.
     SIMILARITY_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.6),
+
+    // --- ManyChat integration ---
+    // API token for the Send API (async path: POST /fb/sending/sendContent).
+    // Generate in ManyChat → Settings → API → Create API Key.
+    MANYCHAT_API_TOKEN: z.string().optional(),
+    // Send API endpoint. Override only if ManyChat changes the URL; the default
+    // is the documented production endpoint.
+    MANYCHAT_SEND_URL: z
+      .string()
+      .url()
+      .default('https://api.manychat.com/fb/sending/sendContent'),
+    // Set to 'false' to disable all outgoing ManyChat Send API calls (e.g.
+    // during testing). Any other value (or omitting the var) means enabled.
+    MANYCHAT_ENABLED: z.string().optional(),
+    // Shared secret checked on every inbound webhook request via the
+    // x-manychat-secret header. Set in ManyChat → Flow → External Request →
+    // Custom Headers. When unset, the guard logs a warning and allows the
+    // request (dev-friendly). Required in production.
+    WEBHOOK_SHARED_SECRET: z.string().optional(),
+    // Debounce window: how long to wait for additional messages from the same
+    // subscriber before flushing the batch to the agent (milliseconds).
+    DEBOUNCE_WINDOW_MS: z.coerce.number().int().positive().default(2000),
+    // Hard maximum wait time for the debounce regardless of new messages
+    // arriving (milliseconds). Must be < ManyChat's 10-second timeout.
+    DEBOUNCE_MAX_MS: z.coerce.number().int().positive().default(8000),
 
     // --- Cloudflare R2 (required when STORAGE_DRIVER='r2') ---
     // Account ID (encoded in the endpoint; included here for documentation).

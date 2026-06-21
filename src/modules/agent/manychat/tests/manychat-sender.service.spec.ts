@@ -4,7 +4,7 @@ import type { ManyChatDynamicBlock } from '../manychat.types';
 
 const block: ManyChatDynamicBlock = {
   version: 'v2',
-  content: { messages: [{ type: 'text', text: 'hi' }] },
+  content: { messages: [{ type: 'text', text: 'hi' }], actions: [], quick_replies: [] },
 };
 
 function makeSender(cfg: Record<string, string>): ManyChatSenderService {

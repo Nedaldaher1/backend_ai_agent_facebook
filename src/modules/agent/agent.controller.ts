@@ -1,55 +1,27 @@
 // TEMPORARY: This endpoint mirrors the ManyChat External Request body exactly.
 // It is the dev/integration entry point for the Masa sales agent until the real
-// ManyChat webhook + Dynamic Block formatting is built (AIA-32, Phase 4).
+// ManyChat webhook + Dynamic Block formatting is the primary path.
+//
+// The inbound schema is shared with ManyChatWebhookController (manychat-webhook.dto.ts)
+// so field definitions live in exactly one place. The only adaptation here is
+// mapping `messageId` (the DTO field) to `externalMessageId` (the IncomingMessage
+// field expected by AgentService).
 
 import { Body, Controller, HttpCode, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { z } from 'zod';
 import { ZodValidationPipe } from '@/common/pipes/zod-validation.pipe';
-import { AgentService, type IncomingMessage, type AgentReply } from './agent.service';
-
-// ---------------------------------------------------------------------------
-// Request schema
-// ---------------------------------------------------------------------------
-
-/**
- * Zod schema for POST /agent/message.
- *
- * Fields mirror the ManyChat External Request payload exactly — no defaults,
- * so integration tests and the eventual ManyChat block must supply all
- * required fields explicitly.
- *
- *  contactId    — ManyChat contact_id (stable subscriber id, stored as `psid`).
- *  text         — Customer message text (required, non-empty).
- *  lastImageUrl — Customer-sent image URL (optional; vision processing deferred).
- *  adRef        — Self-controlled ref slug from ManyChat (optional).
- *  name         — Facebook profile name from ManyChat (optional best-effort).
- */
-const incomingMessageSchema = z.object({
-  contactId: z.string().min(1),
-  text: z.string().min(1),
-  lastImageUrl: z.string().url().optional(),
-  adRef: z.string().optional(),
-  name: z.string().optional(),
-  // Inbound channel → order `source` (server-side). Defaults to messenger.
-  channel: z.enum(['messenger', 'whatsapp']).optional(),
-  // Provider message id from ManyChat — the idempotency key for this turn.
-  // Optional today; a content+time-window hash is the fallback when absent.
-  externalMessageId: z.string().optional(),
-});
-
-// ---------------------------------------------------------------------------
-// Controller
-// ---------------------------------------------------------------------------
+import { AgentService, type AgentReply } from './agent.service';
+import {
+  manyChatWebhookSchema,
+  type ManyChatWebhookDto,
+} from './manychat/manychat-webhook.dto';
 
 /**
  * Agent message controller — TEMPORARY dev surface.
  *
- * POST /agent/message accepts a payload that mirrors what ManyChat's External
- * Request will send.  The response shape (`reply` + optional `products` array)
- * is what Phase 4 (AIA-32) will format into a ManyChat Dynamic Block.
- *
- * Replace/extend with the real ManyChat webhook controller in Phase 4.
+ * POST /agent/message accepts the shared ManyChat-compatible payload
+ * (manyChatWebhookSchema). The response shape (`reply` + optional `products` array)
+ * is what the ManyChat webhook controller formats into a Dynamic Block.
  */
 @ApiTags('Agent')
 @Controller('agent')
@@ -62,13 +34,22 @@ export class AgentController {
     summary: 'Send a customer message to the Masa sales agent',
     description:
       'Accepts a ManyChat-compatible payload (contactId, text, optional image URL, ' +
-      'ad ref, and profile name) and returns the agent reply plus any product cards ' +
-      'extracted from search_products tool results. ' +
-      'TEMPORARY — the real ManyChat webhook + Dynamic Block formatting is AIA-32 (Phase 4).',
+      'ad ref, profile name, and optional messageId for idempotency) and returns the ' +
+      'agent reply plus any product cards extracted from search_products tool results. ' +
+      'TEMPORARY dev surface — the real entry point is /webhook/manychat.',
   })
   message(
-    @Body(new ZodValidationPipe(incomingMessageSchema)) dto: IncomingMessage,
+    @Body(new ZodValidationPipe(manyChatWebhookSchema)) dto: ManyChatWebhookDto,
   ): Promise<AgentReply> {
-    return this.agent.handleMessage(dto);
+    return this.agent.handleMessage({
+      contactId: dto.contactId,
+      text: dto.text,
+      lastImageUrl: dto.lastImageUrl,
+      adRef: dto.adRef,
+      name: dto.name,
+      channel: dto.channel,
+      // Map shared DTO's `messageId` → IncomingMessage's `externalMessageId`
+      externalMessageId: dto.messageId,
+    });
   }
 }

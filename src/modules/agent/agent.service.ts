@@ -415,16 +415,39 @@ export class AgentService implements OnModuleInit {
   }
 
   /**
-   * Idempotency key for an inbound turn: the provider message id when supplied,
-   * else a content + short-time-window hash so an immediate re-delivery collapses
-   * while a genuine repeat in a later window does not.
+   * Idempotency key for an inbound turn.
+   *
+   * WHY: ManyChat has no stable per-message id on all entry points (an
+   * External Request fires once per customer message, but webhook retries or
+   * double-taps can deliver the same content twice). We need a key that
+   * collapses re-deliveries within a short window while still letting a
+   * genuine new message with the same text through in a later window.
+   *
+   * RULE:
+   *  1. If the provider supplied an explicit message id (e.g. from
+   *     {{last_sent_message_id}} in the ManyChat flow body), use it as-is.
+   *     This is the most reliable key and de-dupes perfectly.
+   *  2. Otherwise, hash (contactId | normalizedText | imageUrl | 10s-window).
+   *     Text is normalized — trimmed, internal whitespace collapsed, lowercased —
+   *     so trivially-different casing or extra spaces collapse to the same key.
+   *     The 10-second window lets a genuine repeat from the same customer in a
+   *     later window produce a different hash and be processed normally.
+   *
+   * The partial unique index on messages.external_id (migration 0011) is the
+   * DB-level backstop against a concurrent race between two in-flight requests.
    */
   private computeDedupKey(input: IncomingMessage): string {
     if (input.externalMessageId) return input.externalMessageId;
+    // Normalize text: trim outer whitespace, collapse internal runs to one
+    // space, and lowercase — so "مرحبا  " and "مرحبا" hash identically.
+    const normalizedText = input.text
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
     const window = Math.floor(Date.now() / DEDUP_WINDOW_MS);
     const digest = createHash('sha256')
       .update(
-        `${input.contactId}|${input.text}|${input.lastImageUrl ?? ''}|${window}`,
+        `${input.contactId}|${normalizedText}|${input.lastImageUrl ?? ''}|${window}`,
       )
       .digest('hex')
       .slice(0, 40);

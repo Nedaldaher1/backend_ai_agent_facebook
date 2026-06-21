@@ -39,7 +39,15 @@ export interface ManyChatDynamicBlock {
   version: 'v2';
   content: {
     messages: ManyChatMessage[];
-    actions?: unknown[];
-    quick_replies?: unknown[];
+    /**
+     * Always present (empty array) per the v2 Dynamic Block contract.
+     * Future actions (e.g. set-field, add-tag) must be capped at ≤5.
+     */
+    actions: unknown[];
+    /**
+     * Always present (empty array) per the v2 Dynamic Block contract.
+     * Future quick replies must be capped at ≤11.
+     */
+    quick_replies: unknown[];
   };
 }
