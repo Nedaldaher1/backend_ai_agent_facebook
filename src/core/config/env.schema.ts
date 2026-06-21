@@ -71,6 +71,25 @@ export const envSchema = z
     // Set to 'false' to disable all outgoing ManyChat Send API calls (e.g.
     // during testing). Any other value (or omitting the var) means enabled.
     MANYCHAT_ENABLED: z.string().optional(),
+    // Public API base URL. Both the Send API and the Public API share the same
+    // account token under api.manychat.com; override only if ManyChat changes it.
+    MANYCHAT_API_BASE: z
+      .string()
+      .url()
+      .default('https://api.manychat.com'),
+    // Name of the ManyChat custom field that mirrors the agent's ai_state value
+    // (bot | human | paused). Create this field in ManyChat → Custom Fields.
+    MANYCHAT_AI_STATE_FIELD: z.string().default('ai_state'),
+    // ManyChat tag applied to subscribers whose conversation is handled by a
+    // human agent. Used to filter inboxes in ManyChat. Create the tag first.
+    MANYCHAT_HUMAN_TAG: z.string().default('ai_human'),
+    // Optional: flow namespace (flow_ns) of a ManyChat flow that pauses
+    // automation for the subscriber. Triggered on escalation / manual pause.
+    MANYCHAT_PAUSE_FLOW_ID: z.string().optional(),
+    // Optional: flow namespace (flow_ns) of a ManyChat flow that resumes
+    // automation for the subscriber. Triggered when the admin marks a
+    // conversation back to 'bot' state.
+    MANYCHAT_RESUME_FLOW_ID: z.string().optional(),
     // Shared secret checked on every inbound webhook request via the
     // x-manychat-secret header. Set in ManyChat → Flow → External Request →
     // Custom Headers. When unset, the guard logs a warning and allows the

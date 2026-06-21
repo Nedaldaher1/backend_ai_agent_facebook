@@ -9,6 +9,7 @@ import { AgentBehaviorService } from './agent-behavior.service';
 import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
 import { DebounceService } from './debounce/debounce.service';
+import { ManyChatControlService } from './manychat/manychat-control.service';
 import { ManyChatSecretGuard } from './manychat/manychat-secret.guard';
 import { ManyChatSenderService } from './manychat/manychat-sender.service';
 import { ManyChatWebhookController } from './manychat/manychat-webhook.controller';
@@ -36,8 +37,9 @@ import { VisionService } from './vision/vision.service';
     VisionService,
     DebounceService,
     ManyChatSenderService,
+    ManyChatControlService,
     ManyChatSecretGuard,
   ],
-  exports: [AgentService, AgentBehaviorService],
+  exports: [AgentService, AgentBehaviorService, ManyChatControlService],
 })
 export class AgentModule {}
