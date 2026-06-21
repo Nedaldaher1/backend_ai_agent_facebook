@@ -103,6 +103,11 @@ export class ConversationsService {
     return this.repo.findMessageByExternalId(conversationId, externalId);
   }
 
+  /** Recent agent messages carrying an eval `attributes` payload. */
+  listAgentEvalRows(limit?: number): Promise<Message[]> {
+    return this.repo.listAgentEvalRows(limit);
+  }
+
   /**
    * Mark a conversation as needing human attention.
    * Merges the escalation marker into the existing `state` jsonb so that no

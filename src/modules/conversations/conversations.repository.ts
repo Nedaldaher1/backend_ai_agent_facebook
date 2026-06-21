@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
@@ -146,5 +146,18 @@ export class ConversationsRepository {
       )
       .limit(1);
     return row;
+  }
+
+  /**
+   * Recent agent messages that carry an `attributes` payload (the eval rows the
+   * agent writes per product turn). Source for the descriptive eval report.
+   */
+  async listAgentEvalRows(limit = 500): Promise<Message[]> {
+    return this.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.role, 'agent'), isNotNull(messages.attributes)))
+      .orderBy(desc(messages.createdAt))
+      .limit(limit);
   }
 }

@@ -1,0 +1,24 @@
+{
+  "note": "Seed eval cases for `eval:run`. Fill expect.productIds with REAL published catalog UUIDs so precision/recall are meaningful; cases with an empty productIds array are run but not scored. Add cases that cover color/occasion search, image-led search, sizing, and escalation.",
+  "cases": [
+    {
+      "name": "text search — color + occasion",
+      "input": { "contactId": "eval-color", "text": "بدي عباية حمراء للسهرة" },
+      "expect": { "productIds": [] }
+    },
+    {
+      "name": "image-led — same design",
+      "input": {
+        "contactId": "eval-image",
+        "text": "بدي زي هاي الصورة",
+        "lastImageUrl": "https://example.com/abaya-sample.jpg"
+      },
+      "expect": { "productIds": [] }
+    },
+    {
+      "name": "escalation — return request",
+      "input": { "contactId": "eval-escalate", "text": "بدي أرجّع الطلب وأنا مش راضية" },
+      "expect": { "escalate": true }
+    }
+  ]
+}
