@@ -24,6 +24,8 @@ jest.mock('../../mastra/mastra.factory', () => ({ buildMastra: jest.fn() }));
 import { ManyChatWebhookController } from '../manychat-webhook.controller';
 import type { AgentService } from '../../agent.service';
 import type { ProductsService } from '@/modules/products/products.service';
+import type { DebounceService } from '../../debounce/debounce.service';
+import type { ManyChatSenderService } from '../manychat-sender.service';
 import type { ManyChatCardsMessage } from '../manychat.types';
 
 function makeController(opts: {
@@ -39,8 +41,39 @@ function makeController(opts: {
   const products = {
     getMedia: jest.fn(async (id: string) => opts.media?.[id] ?? []),
   } as unknown as ProductsService;
-  const controller = new ManyChatWebhookController(agent, products);
-  return { controller, agent, products };
+
+  // Debounce stand-in: invoke the flush immediately with the single item and
+  // capture its promise so a test can await the batch processing.
+  let lastFlush: Promise<void> | undefined;
+  const debounce = {
+    enqueue: jest.fn(
+      (
+        _key: string,
+        item: unknown,
+        flush: (items: unknown[]) => Promise<void>,
+      ) => {
+        lastFlush = Promise.resolve(flush([item]));
+      },
+    ),
+  } as unknown as DebounceService;
+  const sender = {
+    sendReply: jest.fn().mockResolvedValue(true),
+  } as unknown as ManyChatSenderService;
+
+  const controller = new ManyChatWebhookController(
+    agent,
+    products,
+    debounce,
+    sender,
+  );
+  return {
+    controller,
+    agent,
+    products,
+    debounce,
+    sender,
+    flush: () => lastFlush,
+  };
 }
 
 describe('ManyChatWebhookController', () => {
@@ -111,4 +144,45 @@ describe('ManyChatWebhookController', () => {
     ) as ManyChatCardsMessage;
     expect(cards.elements[0].image_url).toBeUndefined();
   });
+
+  it('handleAsync returns 202 status and enqueues the turn for debounce', () => {
+    const { controller, debounce } = makeController({ reply: { reply: 'x' } });
+
+    const res = controller.handleAsync({
+      contactId: 'C1',
+      text: 'مرحبا',
+      messageId: 'm1',
+    });
+
+    expect(res).toEqual({ status: 'accepted' });
+    expect(debounce.enqueue).toHaveBeenCalledWith(
+      'C1',
+      expect.objectContaining({ externalMessageId: 'm1' }),
+      expect.any(Function),
+    );
+  });
+
+  it('the debounce flush runs the agent on the merged turn and delivers via Send API', async () => {
+    const { controller, agent, sender, flush } = makeController({
+      reply: {
+        reply: 'هلا',
+        products: [{ id: 'p1', name: 'عباية', price: '45.000' }],
+      },
+      media: { p1: [{ url: 'https://cdn/p1.jpg', type: 'image' }] },
+    });
+
+    controller.handleAsync({
+      contactId: 'C1',
+      text: 'بدي عباية',
+      messageId: 'm1',
+    });
+    await flush();
+
+    expect(agent.handleMessage).toHaveBeenCalled();
+    expect(sender.sendReply).toHaveBeenCalledWith(
+      'C1',
+      expect.objectContaining({ version: 'v2' }),
+    );
+  });
 });
+

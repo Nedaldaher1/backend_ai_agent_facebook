@@ -8,6 +8,8 @@ import { AgentBehaviorRepository } from './agent-behavior.repository';
 import { AgentBehaviorService } from './agent-behavior.service';
 import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
+import { DebounceService } from './debounce/debounce.service';
+import { ManyChatSenderService } from './manychat/manychat-sender.service';
 import { ManyChatWebhookController } from './manychat/manychat-webhook.controller';
 import { VisionService } from './vision/vision.service';
 
@@ -31,6 +33,8 @@ import { VisionService } from './vision/vision.service';
     AgentBehaviorService,
     AgentBehaviorRepository,
     VisionService,
+    DebounceService,
+    ManyChatSenderService,
   ],
   exports: [AgentService, AgentBehaviorService],
 })
