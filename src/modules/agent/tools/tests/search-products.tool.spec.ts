@@ -6,6 +6,10 @@
  *   2. ad_ref fallthrough + structured / fuzzy search.
  *   3. color normalization via normalizeColor before search.
  *   4. free-text query → searchFuzzy instead of search.
+ *
+ * After AIA-34 sub-task A: execute receives ctx as 2nd arg; when
+ * ctx.requestContext.get('imageLed') === true, ad_ref is ignored and the
+ * normal search path runs instead (code-enforced image-over-ad priority).
  */
 
 jest.mock('@mastra/core/tools', () => ({
@@ -77,6 +81,13 @@ function makeProductsMock(overrides: Partial<Record<string, jest.Mock>> = {}) {
   };
 }
 
+/** Build a fake requestContext — mirrors the pattern from escalate-to-human.tool.spec.ts. */
+function ctx(vals: Record<string, unknown>) {
+  return {
+    requestContext: { get: (k: string) => vals[k] },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -101,7 +112,7 @@ describe('buildSearchProductsTool — search_products', () => {
         });
       const tool = buildSearchProductsTool(mock) as any;
 
-      const result = await tool.execute({ ad_ref: 'ad-x' });
+      const result = await tool.execute({ ad_ref: 'ad-x' }, ctx({}));
 
       expect(findByAdRef).toHaveBeenCalledWith('ad-x');
       expect(result.products).toHaveLength(1);
@@ -128,7 +139,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      const result = await tool.execute({ ad_ref: 'ad-x' });
+      const result = await tool.execute({ ad_ref: 'ad-x' }, ctx({}));
 
       expect(result.products[0].available).toBe(false);
     });
@@ -146,7 +157,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      await tool.execute({ ad_ref: 'ad-none', color: 'نبيتي' });
+      await tool.execute({ ad_ref: 'ad-none', color: 'نبيتي' }, ctx({}));
 
       expect(findByAdRef).toHaveBeenCalledWith('ad-none');
       expect(normalizeColor).toHaveBeenCalledWith('نبيتي');
@@ -167,12 +178,15 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      await tool.execute({
-        color: 'نبيتي',
-        category: 'سهرة',
-        size: 'L',
-        max_price: 50,
-      });
+      await tool.execute(
+        {
+          color: 'نبيتي',
+          category: 'سهرة',
+          size: 'L',
+          max_price: 50,
+        },
+        ctx({}),
+      );
 
       expect(normalizeColor).toHaveBeenCalledWith('نبيتي');
       expect(search).toHaveBeenCalledWith({
@@ -192,7 +206,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      await tool.execute({ color: 'نبيتي', max_price: 100 });
+      await tool.execute({ color: 'نبيتي', max_price: 100 }, ctx({}));
 
       const searchArg = search.mock.calls[0][0];
       expect(typeof searchArg.priceMax).toBe('string');
@@ -206,7 +220,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      await tool.execute({ color: 'أزرق' });
+      await tool.execute({ color: 'أزرق' }, ctx({}));
 
       const searchArg = search.mock.calls[0][0];
       expect(searchArg.occasion).toBeUndefined();
@@ -223,7 +237,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      await tool.execute({ query: 'فضفاضة' });
+      await tool.execute({ query: 'فضفاضة' }, ctx({}));
 
       expect(searchFuzzy).toHaveBeenCalledWith(
         'فضفاضة',
@@ -238,7 +252,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      await tool.execute({ query: 'عباءة فضفاضة مع حجاب' });
+      await tool.execute({ query: 'عباءة فضفاضة مع حجاب' }, ctx({}));
 
       expect(searchFuzzy.mock.calls[0][0]).toBe('عباءة فضفاضة مع حجاب');
     });
@@ -254,7 +268,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      const result = await tool.execute({ color: 'أحمر' });
+      const result = await tool.execute({ color: 'أحمر' }, ctx({}));
 
       expect(result).toEqual({ products: [] });
     });
@@ -266,7 +280,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      const result = await tool.execute({ ad_ref: 'ad-empty' });
+      const result = await tool.execute({ ad_ref: 'ad-empty' }, ctx({}));
 
       expect(result).toEqual({ products: [] });
     });
@@ -285,7 +299,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      const result = await tool.execute({});
+      const result = await tool.execute({}, ctx({}));
 
       expect(result.products).toHaveLength(8);
     });
@@ -299,7 +313,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      const result = await tool.execute({ ad_ref: 'ad-big' });
+      const result = await tool.execute({ ad_ref: 'ad-big' }, ctx({}));
 
       expect(result.products).toHaveLength(8);
     });
@@ -316,7 +330,7 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      const result = await tool.execute({});
+      const result = await tool.execute({}, ctx({}));
 
       expect(result.products[0].color).toBe('green');
       expect(result.products[0].category).toBe('عمل');
@@ -329,9 +343,61 @@ describe('buildSearchProductsTool — search_products', () => {
       });
       const tool = buildSearchProductsTool(mock) as any;
 
-      const result = await tool.execute({});
+      const result = await tool.execute({}, ctx({}));
 
       expect(result.products[0].color).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // (g) Image-led routing — AIA-34 sub-task A
+  // -------------------------------------------------------------------------
+  describe('image-led routing (imageLed in context)', () => {
+    it('ignores ad_ref and calls a search method (not findByAdRef) when imageLed=true', async () => {
+      const adProduct = makeProduct({ id: 'ad-p', name: 'From Ad' });
+      const searchProduct = makeProduct({ id: 'search-p', name: 'From Search' });
+      const { mock, findByAdRef, search } = makeProductsMock({
+        findByAdRef: jest.fn().mockResolvedValue([adProduct]),
+        search: jest.fn().mockResolvedValue([searchProduct]),
+      });
+      const tool = buildSearchProductsTool(mock) as any;
+
+      // ad_ref is present but imageLed=true → ad_ref must be ignored
+      const result = await tool.execute(
+        { ad_ref: 'spring-ad' },
+        ctx({ imageLed: true }),
+      );
+
+      expect(findByAdRef).not.toHaveBeenCalled();
+      expect(search).toHaveBeenCalled();
+      // result comes from normal search, not from the ad
+      expect(result.products[0].id).toBe('search-p');
+    });
+
+    it('still uses ad_ref fast path when imageLed is absent from context', async () => {
+      const adProduct = makeProduct({ id: 'ad-p', name: 'From Ad' });
+      const { mock, findByAdRef, search } = makeProductsMock({
+        findByAdRef: jest.fn().mockResolvedValue([adProduct]),
+      });
+      const tool = buildSearchProductsTool(mock) as any;
+
+      await tool.execute({ ad_ref: 'spring-ad' }, ctx({}));
+
+      expect(findByAdRef).toHaveBeenCalledWith('spring-ad');
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('still uses ad_ref fast path when imageLed is explicitly false', async () => {
+      const adProduct = makeProduct({ id: 'ad-p', name: 'From Ad' });
+      const { mock, findByAdRef, search } = makeProductsMock({
+        findByAdRef: jest.fn().mockResolvedValue([adProduct]),
+      });
+      const tool = buildSearchProductsTool(mock) as any;
+
+      await tool.execute({ ad_ref: 'spring-ad' }, ctx({ imageLed: false }));
+
+      expect(findByAdRef).toHaveBeenCalledWith('spring-ad');
+      expect(search).not.toHaveBeenCalled();
     });
   });
 });

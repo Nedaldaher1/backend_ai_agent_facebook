@@ -99,7 +99,8 @@ interface GenerateResult {
  *
  * RequestContext:
  *  - Populated before every generate() call with `contactId`, `conversationId`,
- *    `threadId`, and (when present) `adRef`.
+ *    `threadId`, `channel`, and (when present) `adRef`, plus `lastImageUrl` +
+ *    `imageLed` on turns where the customer sent a photo (image-over-ad routing).
  *  - Write tools (capture_order, escalate_to_human) read identity from here —
  *    NEVER from their tool input schema (security boundary, per AIA-27).
  *
@@ -186,7 +187,8 @@ export class AgentService implements OnModuleInit {
    *     generate — these are the admin panel + eval rows (diagram node T), NOT a
    *     duplicate of Mastra's LLM context store.
    *  6. Calls salesAgent.generate() with memory scoping and requestContext.
-   *  7. Extracts any search_products results for the reply card (best-effort).
+   *  7. Extracts search_products + find_similar_by_image results for the reply
+   *     card (best-effort).
    */
   async handleMessage(input: IncomingMessage): Promise<AgentReply> {
     const resourceId = input.contactId;
@@ -210,6 +212,17 @@ export class AgentService implements OnModuleInit {
       requestContext.set('adRef', input.adRef);
     }
 
+    // Image-led routing injection: when the customer sent a photo this turn,
+    // wire the URL into the request context and flag the turn as image-led.
+    // The search_products tool reads `imageLed` and ignores `ad_ref` when true
+    // (code-enforced: the design in the photo wins over the ad she came from).
+    // The find_similar_by_image tool reads `lastImageUrl` directly from context
+    // so it never appears in the tool input schema.
+    if (input.lastImageUrl) {
+      requestContext.set('lastImageUrl', input.lastImageUrl);
+      requestContext.set('imageLed', true);
+    }
+
     // Best-effort name seed: surfaces the FB profile name so the agent persists
     // it to working memory via its guardrail; the "only if working-memory name
     // is empty" refinement is deferred (the model won't overwrite a known name).
@@ -218,8 +231,6 @@ export class AgentService implements OnModuleInit {
     const context = input.name
       ? ([{ role: 'system', content: `اسم الزبونة من فيسبوك: ${input.name}` }] as Array<{ role: 'system'; content: string }>)
       : undefined;
-
-    // TODO (vision phase): download lastImageUrl + ad_ref-first + Claude Vision Haiku enum extraction
 
     // Persist the business record BEFORE generating — public-schema rows for the
     // admin panel + eval (diagram node T), NOT a duplicate of Mastra's LLM context
@@ -287,7 +298,9 @@ export class AgentService implements OnModuleInit {
       const products = chunks
         .filter(
           (c) =>
-            c.payload?.toolName === 'search_products' && !c.payload?.isError,
+            (c.payload?.toolName === 'search_products' ||
+              c.payload?.toolName === 'find_similar_by_image') &&
+            !c.payload?.isError,
         )
         .flatMap((c) => {
           const raw = c.payload?.result as

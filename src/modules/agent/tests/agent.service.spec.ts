@@ -289,6 +289,53 @@ describe('AgentService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // handleMessage — image-led routing injection (AIA-34 sub-task A)
+  // -------------------------------------------------------------------------
+
+  it('sets lastImageUrl and imageLed=true on requestContext when lastImageUrl is present', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+    );
+    service.onModuleInit();
+
+    const IMAGE_URL = 'https://cdn.example.com/customer-photo.jpg';
+    await service.handleMessage({
+      contactId: 'C1',
+      text: 'شوفي هاي الصورة',
+      lastImageUrl: IMAGE_URL,
+    });
+
+    const instance = MockRequestContextCtor.instances[0];
+    expect(instance.sets.get('lastImageUrl')).toBe(IMAGE_URL);
+    expect(instance.sets.get('imageLed')).toBe(true);
+  });
+
+  it('does NOT set lastImageUrl or imageLed on requestContext when lastImageUrl is absent', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    const instance = MockRequestContextCtor.instances[0];
+    expect(instance.sets.has('lastImageUrl')).toBe(false);
+    expect(instance.sets.has('imageLed')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
   // handleMessage — isolation (scope-derivation proxy)
   // -------------------------------------------------------------------------
 
@@ -434,6 +481,46 @@ describe('AgentService', () => {
 
     // Deduped to one entry; price is the STRING '45.000' (not a number)
     expect(result.products).toEqual([{ id: 'p1', name: 'عباية', price: '45.000' }]);
+  });
+
+  it('extracts products from find_similar_by_image toolResults (image-led reply card)', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+    );
+    service.onModuleInit();
+
+    fakeSalesAgent.generate.mockResolvedValueOnce({
+      text: 'لقيتلك عبايات شبيهة بالصورة',
+      toolResults: [
+        {
+          payload: {
+            toolName: 'find_similar_by_image',
+            isError: false,
+            result: {
+              products: [
+                { id: 'v1', name: 'عباية مطابقة', price: '60.000', available: true },
+              ],
+            },
+          },
+        },
+      ],
+    });
+
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'شوفي هاي الصورة',
+      lastImageUrl: 'https://cdn.example.com/p.jpg',
+    });
+
+    expect(result.products).toEqual([
+      { id: 'v1', name: 'عباية مطابقة', price: '60.000' },
+    ]);
   });
 
   it('returns products: undefined when toolResults is absent', async () => {

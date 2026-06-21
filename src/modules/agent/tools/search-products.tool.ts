@@ -69,10 +69,17 @@ export function buildSearchProductsTool(products: ProductsService) {
     inputSchema,
     outputSchema,
 
-    execute: async (input) => {
+    execute: async (input, ctx) => {
+      // Code-enforced image-over-ad priority (deterministic routing): when the
+      // customer sent a photo this turn, the design in the photo wins over the
+      // ad she came from — skip the ad_ref fast path entirely so the normal
+      // query/structured search runs instead.
+      const imageLed = ctx?.requestContext?.get('imageLed') === true;
+      const effectiveAdRef = imageLed ? undefined : input.ad_ref;
+
       // 1. Ad-ref fast path: return products linked to the ad, if any.
-      if (input.ad_ref) {
-        const byAd = await products.findByAdRef(input.ad_ref);
+      if (effectiveAdRef) {
+        const byAd = await products.findByAdRef(effectiveAdRef);
         if (byAd.length > 0) {
           return {
             products: byAd.slice(0, 8).map((p) => ({
@@ -87,7 +94,7 @@ export function buildSearchProductsTool(products: ProductsService) {
           };
         }
         // No products found for this ad_ref — log and fall through.
-        logger.warn('unmapped ad_ref: ' + input.ad_ref);
+        logger.warn('unmapped ad_ref: ' + effectiveAdRef);
       }
 
       // 2. Normalize the color dialect term.

@@ -18,13 +18,10 @@ import type { ProductsService } from '@/modules/products/products.service';
 
 const logger = new Logger('FindSimilarByImageTool');
 
-const inputSchema = z.object({
-  image_url: z
-    .string()
-    .url()
-    .optional()
-    .describe('رابط صورة العباءة التي أرسلتها الزبونة للبحث عن منتجات مشابهة'),
-});
+// No input fields: the image URL is injected into the request context by
+// AgentService (from input.lastImageUrl) before the generate() call.  The agent
+// invokes this tool with no arguments when the customer sent a photo.
+const inputSchema = z.object({});
 
 const outputSchema = z.object({
   products: z.array(
@@ -44,14 +41,16 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
   return createTool({
     id: 'find_similar_by_image',
     description:
-      'ابحثي عن عبايات مشابهة بصرياً لصورة أرسلتها الزبونة، مع تمرير رابط الصورة. لا تخترعي منتجات — إن لم تُرجع الأداة نتائج فاطلبي صورة أوضح أو استخدمي البحث النصي.',
+      'ابحثي عن عبايات مشابهة بصرياً للصورة التي أرسلتها الزبونة للتو — الرابط يُؤخذ تلقائياً من السياق، استدعي هذه الأداة بدون أي وسيطات عندما أرسلت الزبونة صورة. لا تخترعي منتجات — إن لم تُرجع الأداة نتائج فاطلبي صورة أوضح أو استخدمي البحث النصي.',
     inputSchema,
     outputSchema,
 
-    execute: async (input) => {
-      const url = input.image_url?.trim();
+    execute: async (_input, ctx) => {
+      // Read the image URL from the request context (set by AgentService from
+      // input.lastImageUrl before the generate() call — never from model input).
+      const url = (ctx?.requestContext?.get('lastImageUrl') as string | undefined)?.trim();
       if (!url) {
-        // No image to search with — empty result; the agent asks for a photo.
+        // No image in context this turn — empty result; the agent asks for a photo.
         return { products: [] };
       }
       try {
