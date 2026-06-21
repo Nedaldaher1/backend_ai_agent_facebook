@@ -3,6 +3,7 @@ import { ConversationsModule } from '@/modules/conversations/conversations.modul
 import { KnowledgeModule } from '@/modules/knowledge/knowledge.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { ProductsModule } from '@/modules/products/products.module';
+import { SizingModule } from '@/modules/sizing/sizing.module';
 import { AgentBehaviorRepository } from './agent-behavior.repository';
 import { AgentBehaviorService } from './agent-behavior.service';
 import { AgentController } from './agent.controller';
@@ -21,7 +22,7 @@ import { AgentService } from './agent.service';
  * will be replaced by the ManyChat webhook controller in a later ticket.
  */
 @Module({
-  imports: [ProductsModule, ConversationsModule, OrdersModule, KnowledgeModule],
+  imports: [ProductsModule, ConversationsModule, OrdersModule, KnowledgeModule, SizingModule],
   controllers: [AgentController],
   providers: [AgentService, AgentBehaviorService, AgentBehaviorRepository],
   exports: [AgentService, AgentBehaviorService],

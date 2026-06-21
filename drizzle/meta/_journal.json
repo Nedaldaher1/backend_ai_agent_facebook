@@ -71,6 +71,13 @@
       "when": 1781967103221,
       "tag": "0009_add_product_image_embeddings",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782004714252,
+      "tag": "0010_marvelous_ultragirl",
+      "breakpoints": true
     }
   ]
 }

@@ -64,6 +64,7 @@ import type { ConversationsService } from '@/modules/conversations/conversations
 import type { OrdersService } from '@/modules/orders/orders.service';
 import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
+import type { SizingService } from '@/modules/sizing/sizing.service';
 
 // ---------------------------------------------------------------------------
 // Typed cast helpers
@@ -96,6 +97,9 @@ const agentBehaviorMock = {
 
 /** A minimal KnowledgeService stub. */
 const knowledgeMock = {} as unknown as KnowledgeService;
+
+/** A minimal SizingService stub. */
+const sizingMock = { recommendSize: jest.fn() } as unknown as SizingService;
 
 /**
  * A ConversationsService stub with findOrCreateByPsid and addMessage.
@@ -148,6 +152,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
 
     service.onModuleInit();
@@ -167,6 +172,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
 
     service.onModuleInit();
@@ -185,6 +191,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
 
     service.onModuleInit();
@@ -207,6 +214,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -229,6 +237,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -253,6 +262,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -279,6 +289,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -301,6 +312,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -325,6 +337,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -351,6 +364,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -376,6 +390,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -413,6 +428,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -434,6 +450,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -455,6 +472,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -492,6 +510,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 
@@ -532,6 +551,7 @@ describe('AgentService', () => {
       ordersMock,
       agentBehaviorMock,
       knowledgeMock,
+      sizingMock,
     );
     service.onModuleInit();
 

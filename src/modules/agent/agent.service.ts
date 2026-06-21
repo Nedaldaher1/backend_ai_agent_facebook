@@ -11,6 +11,7 @@ import { ConversationsService } from '@/modules/conversations/conversations.serv
 import { OrdersService } from '@/modules/orders/orders.service';
 import { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import { AgentBehaviorService } from './agent-behavior.service';
+import { SizingService } from '@/modules/sizing/sizing.service';
 import { buildMastra } from './mastra/mastra.factory';
 
 // ---------------------------------------------------------------------------
@@ -128,6 +129,7 @@ export class AgentService implements OnModuleInit {
     private readonly orders: OrdersService,
     private readonly agentBehavior: AgentBehaviorService,
     private readonly knowledge: KnowledgeService,
+    private readonly sizing: SizingService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -142,13 +144,14 @@ export class AgentService implements OnModuleInit {
       orders: this.orders,
       conversations: this.conversations,
       knowledge: this.knowledge,
+      sizing: this.sizing,
       agentBehavior: this.agentBehavior,
     });
     this.mastra = mastra;
     this.salesAgent = salesAgent;
 
     this.logger.log(
-      'Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=7, instructions=dynamic',
+      'Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=8, instructions=dynamic',
     );
   }
 

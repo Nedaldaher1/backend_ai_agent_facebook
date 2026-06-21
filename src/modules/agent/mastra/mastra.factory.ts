@@ -24,9 +24,9 @@
  *    customer.
  *
  *  - Domain tools (search_products, check_availability, get_product_media,
- *    capture_order, escalate_to_human, find_similar_by_image) are built via
- *    `buildSalesTools` and registered here. Adding `tools` does NOT remove
- *    the auto-registered `updateWorkingMemory` tool.
+ *    recommend_size, capture_order, escalate_to_human, find_similar_by_image)
+ *    are built via `buildSalesTools` and registered here. Adding `tools` does
+ *    NOT remove the auto-registered `updateWorkingMemory` tool.
  *
  *  - `instructions` is a dynamic async function backed by
  *    AgentBehaviorService.getInstructions() (60s TTL cache). Admin edits to
@@ -47,6 +47,7 @@ import type { ProductsService } from '@/modules/products/products.service';
 import type { OrdersService } from '@/modules/orders/orders.service';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
+import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { AgentBehaviorService } from '../agent-behavior.service';
 import { buildSalesTools } from '../tools/index';
 
@@ -62,6 +63,8 @@ export interface BuildMastraDeps {
   conversations: ConversationsService;
   /** KnowledgeService — for the get_knowledge read tool. */
   knowledge: KnowledgeService;
+  /** SizingService — for the recommend_size read tool. */
+  sizing: SizingService;
   /** AgentBehaviorService — compiles dynamic system prompt (60s TTL cache). */
   agentBehavior: AgentBehaviorService;
 }
@@ -76,7 +79,7 @@ export function buildMastra(deps: BuildMastraDeps): {
   mastra: Mastra;
   salesAgent: Agent;
 } {
-  const { connectionString, products, orders, conversations, knowledge, agentBehavior } = deps;
+  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior } = deps;
 
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
@@ -91,9 +94,10 @@ export function buildMastra(deps: BuildMastraDeps): {
   // ------------------------------------------------------------------- tools
   // Build domain tools by closing over the injected services.
   // Registered: search_products, check_availability, get_product_media,
-  //   get_knowledge, capture_order, escalate_to_human, find_similar_by_image.
+  //   get_knowledge, recommend_size, capture_order, escalate_to_human,
+  //   find_similar_by_image.
   // `updateWorkingMemory` is auto-registered by Memory and is NOT removed here.
-  const tools = buildSalesTools({ products, orders, conversations, knowledge });
+  const tools = buildSalesTools({ products, orders, conversations, knowledge, sizing });
 
   // ------------------------------------------------------------- sales agent
   const salesAgent = new Agent({
@@ -137,8 +141,11 @@ export function buildMastra(deps: BuildMastraDeps): {
             /** Customer's first name, if shared. */
             name: z.string().optional(),
 
-            /** Abaya size preference. */
-            size: z.enum(['S', 'M', 'L', 'XL', 'XXL']).optional(),
+            /** Abaya size preference — numeric code from the size chart
+             *  (e.g. '1', '2') as returned by the recommend_size tool.
+             *  Stored as a permissive string to accept both legacy letter
+             *  values and current numeric codes without schema rejection. */
+            size: z.string().optional(),
 
             /** Colour preferences expressed in any dialect the customer used
              *  (stored raw; normalisation happens in the search tool). */
