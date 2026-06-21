@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
@@ -20,7 +20,22 @@ import {
 } from './entities/conversation-event.entity';
 
 /** Derived union from the AI_STATES tuple; avoids re-declaring the enum. */
-type AiState = (typeof AI_STATES)[number];
+export type AiState = (typeof AI_STATES)[number];
+
+/**
+ * Shape returned by listConversationsWithPreview: the key conversation columns
+ * plus the most-recent message content and its timestamp (null when the
+ * conversation has no messages yet).
+ */
+export interface ConversationListRow {
+  id: string;
+  psid: string;
+  aiState: string;
+  assignedTo: string | null;
+  handoffReason: string | null;
+  lastMessagePreview: string | null;
+  lastMessageAt: Date | null;
+}
 
 /**
  * Sole owner of conversations + messages SQL (the two runtime tables the agent
@@ -212,5 +227,78 @@ export class ConversationsRepository {
       .values(input)
       .returning();
     return row;
+  }
+
+  // --- WS5 — conversation list with last-message preview ---
+
+  /**
+   * Paginated list of conversations with optional filters and a correlated
+   * subquery that fetches the most-recent message (content + created_at) per
+   * conversation without a JOIN-then-GROUP-BY that would de-duplicate rows.
+   *
+   * All filtering (aiState, assignedTo, ILIKE psid search) is applied to both
+   * the data page and the count query so totals stay consistent.
+   */
+  async listConversationsWithPreview(
+    filters: {
+      aiState?: AiState;
+      assignedTo?: string;
+      q?: string;
+    } & ListOptions,
+  ): Promise<{ items: ConversationListRow[]; total: number }> {
+    const { limit, offset, orderBy } = normalizeListOptions(filters);
+    const direction = orderBy === 'asc' ? asc : desc;
+
+    // Build the WHERE conditions array incrementally.
+    const conditions: SQL[] = [];
+    if (filters.aiState !== undefined) {
+      conditions.push(eq(conversations.aiState, filters.aiState));
+    }
+    if (filters.assignedTo !== undefined) {
+      conditions.push(eq(conversations.assignedTo, filters.assignedTo));
+    }
+    if (filters.q !== undefined) {
+      conditions.push(ilike(conversations.psid, `%${filters.q}%`));
+    }
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // Correlated subquery columns via sql`` so Drizzle doesn't need a lateral
+    // join helper — this keeps the query builder typed and avoids raw SQL strings.
+    const lastContent = sql<string | null>`(
+      SELECT content FROM messages m
+      WHERE m.conversation_id = ${conversations.id}
+      ORDER BY m.created_at DESC
+      LIMIT 1
+    )`;
+    const lastCreatedAt = sql<Date | null>`(
+      SELECT created_at FROM messages m
+      WHERE m.conversation_id = ${conversations.id}
+      ORDER BY m.created_at DESC
+      LIMIT 1
+    )`;
+
+    const rows = await this.db
+      .select({
+        id: conversations.id,
+        psid: conversations.psid,
+        aiState: conversations.aiState,
+        assignedTo: conversations.assignedTo,
+        handoffReason: conversations.handoffReason,
+        lastMessagePreview: lastContent,
+        lastMessageAt: lastCreatedAt,
+      })
+      .from(conversations)
+      .where(where)
+      .orderBy(direction(conversations.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    const [{ value: total }] = await this.db
+      .select({ value: count() })
+      .from(conversations)
+      .where(where);
+
+    return { items: rows as ConversationListRow[], total: Number(total) };
   }
 }

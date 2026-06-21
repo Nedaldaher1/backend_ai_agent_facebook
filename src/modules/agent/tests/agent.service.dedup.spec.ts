@@ -68,7 +68,9 @@ const visionMock = {
  */
 function makeConversations(conversationId = 'convo-dedup'): ConversationsService {
   return {
-    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId, state: null }),
+    findOrCreateByPsid: jest
+      .fn()
+      .mockResolvedValue({ id: conversationId, state: null, aiState: 'bot' }),
     addMessage: jest.fn().mockResolvedValue({}),
     findMessageByExternalId: jest.fn().mockResolvedValue(undefined), // not a dup by default
   } as unknown as ConversationsService;

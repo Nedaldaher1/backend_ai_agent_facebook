@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { SecurityModule } from '@/core/security/security.module';
+import { ConversationControlService } from '@/modules/conversations/conversation-control.service';
+import { ConversationsAdminController } from '@/modules/conversations/conversations-admin.controller';
 import { ConversationsModule } from '@/modules/conversations/conversations.module';
 import { KnowledgeModule } from '@/modules/knowledge/knowledge.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
@@ -28,8 +31,15 @@ import { VisionService } from './vision/vision.service';
  * will be replaced by the ManyChat webhook controller in a later ticket.
  */
 @Module({
-  imports: [ProductsModule, ConversationsModule, OrdersModule, KnowledgeModule, SizingModule],
-  controllers: [AgentController, ManyChatWebhookController],
+  imports: [
+    SecurityModule,
+    ProductsModule,
+    ConversationsModule,
+    OrdersModule,
+    KnowledgeModule,
+    SizingModule,
+  ],
+  controllers: [AgentController, ManyChatWebhookController, ConversationsAdminController],
   providers: [
     AgentService,
     AgentBehaviorService,
@@ -39,6 +49,7 @@ import { VisionService } from './vision/vision.service';
     ManyChatSenderService,
     ManyChatControlService,
     ManyChatSecretGuard,
+    ConversationControlService,
   ],
   exports: [AgentService, AgentBehaviorService, ManyChatControlService],
 })

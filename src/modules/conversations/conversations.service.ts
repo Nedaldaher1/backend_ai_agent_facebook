@@ -7,7 +7,9 @@ import {
   type CreateConversationInput,
   type CreateMessageInput,
 } from '@/common/validation';
+import type { ConversationListRow } from './conversations.repository';
 import { ConversationsRepository } from './conversations.repository';
+import type { AiState } from './conversations.repository';
 import type { Conversation } from './entities/conversation.entity';
 import type { Message } from './entities/message.entity';
 import type { ConversationEvent, NewConversationEvent } from './entities/conversation-event.entity';
@@ -174,5 +176,16 @@ export class ConversationsService {
    */
   recordEvent(input: NewConversationEvent): Promise<ConversationEvent> {
     return this.repo.recordEvent(input);
+  }
+
+  /**
+   * Paginated list of conversations with optional state/assignee/psid filters
+   * and a last-message preview per row. Delegates entirely to the repository
+   * so the ConversationControlService never touches the repo directly.
+   */
+  listWithPreview(
+    filters: { aiState?: AiState; assignedTo?: string; q?: string } & ListOptions,
+  ): Promise<{ items: ConversationListRow[]; total: number }> {
+    return this.repo.listConversationsWithPreview(filters);
   }
 }
