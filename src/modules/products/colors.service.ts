@@ -77,6 +77,14 @@ export class ColorsService {
     return this.repo.list(opts);
   }
 
+  /**
+   * Canonical color families offered to customers — the closed-enum source for
+   * vision image-attribute extraction. System sentinel excluded.
+   */
+  listActiveFamilies(): Promise<string[]> {
+    return this.repo.distinctFamilies();
+  }
+
   async getById(id: string): Promise<Color> {
     const row = await this.repo.findById(id);
     if (!row) {

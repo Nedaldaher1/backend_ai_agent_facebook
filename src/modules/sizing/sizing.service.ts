@@ -24,6 +24,11 @@ export interface SizeRecommendation {
 export class SizingService {
   constructor(private readonly repo: SizeChartRepository) {}
 
+  /** Distinct size codes from the chart — the closed-enum size vocabulary. */
+  listSizeCodes(): Promise<string[]> {
+    return this.repo.distinctSizes();
+  }
+
   /**
    * Recommends an abaya size given the customer's weight (and optionally
    * height, which is reserved for future refinement and unused today).

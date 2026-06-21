@@ -195,6 +195,16 @@ export class ProductsService {
   }
 
   /**
+   * Distinct published values for a free-text attribute (occasion/fabric).
+   * Used to build the soft vocabulary that guides vision attribute extraction.
+   */
+  distinctPublishedAttribute(
+    attribute: 'occasion' | 'fabric',
+  ): Promise<string[]> {
+    return this.repo.distinctPublishedAttribute(attribute);
+  }
+
+  /**
    * Return published products linked to a Facebook ad reference slug.
    * Used by search_products to surface ad-specific products first.
    * Returns raw products (keys, not URLs) — imageUrls are not surfaced by the tool.

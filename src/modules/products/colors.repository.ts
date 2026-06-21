@@ -52,6 +52,20 @@ export class ColorsRepository {
     return row;
   }
 
+  /**
+   * Distinct canonical color families offered to customers (the system sentinel
+   * is excluded, mirroring `list`). Source for the closed-enum color vocabulary
+   * the vision pipeline uses; `family` is unique per row, selectDistinct guards.
+   */
+  async distinctFamilies(): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ family: colors.family })
+      .from(colors)
+      .where(eq(colors.isSystem, false))
+      .orderBy(asc(colors.family));
+    return rows.map((r) => r.family);
+  }
+
   /** Fetch the colors whose ids are in `ids` (used to validate image color sets). */
   async findManyByIds(ids: string[]): Promise<Color[]> {
     if (ids.length === 0) return [];

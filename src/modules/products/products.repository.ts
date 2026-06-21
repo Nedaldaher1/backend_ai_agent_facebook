@@ -9,6 +9,7 @@ import {
   eq,
   getTableColumns,
   ilike,
+  isNotNull,
   sql,
   type SQL,
 } from 'drizzle-orm';
@@ -48,6 +49,25 @@ export interface ProductFilter {
 @Injectable()
 export class ProductsRepository {
   constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+
+  /**
+   * Distinct non-null values of a free-text attribute over PUBLISHED products.
+   * Feeds the soft occasion/fabric vocabulary that guides vision attribute
+   * extraction. Restricted to known columns — never interpolates arbitrary SQL.
+   */
+  async distinctPublishedAttribute(
+    attribute: 'occasion' | 'fabric',
+  ): Promise<string[]> {
+    const col = attribute === 'occasion' ? products.occasion : products.fabric;
+    const rows = await this.db
+      .selectDistinct({ value: col })
+      .from(products)
+      .where(and(eq(products.isPublished, true), isNotNull(col)))
+      .orderBy(asc(col));
+    return rows
+      .map((r) => r.value)
+      .filter((v): v is string => v != null && v.length > 0);
+  }
 
   /** Translate a filter into a list of SQL conditions (parameterized). */
   private buildConditions(filter: ProductFilter): SQL[] {
