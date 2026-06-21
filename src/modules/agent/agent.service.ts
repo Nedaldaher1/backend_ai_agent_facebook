@@ -13,6 +13,7 @@ import { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import { AgentBehaviorService } from './agent-behavior.service';
 import { SizingService } from '@/modules/sizing/sizing.service';
 import { buildMastra } from './mastra/mastra.factory';
+import { HANDOFF_REPLY } from './handoff.constants';
 
 // ---------------------------------------------------------------------------
 // Public I/O contracts
@@ -179,6 +180,9 @@ export class AgentService implements OnModuleInit {
    *  2. Ensures a Conversation row exists for this contact via findOrCreateByPsid.
    *     contactId is stored in the `psid` column because ManyChat never exposes
    *     the real Facebook PSID; contact_id is our stable subscriber id.
+   *  2a. BOT-PAUSE GATE (code-enforced): if state.stage === 'needs_human', logs the
+   *      inbound message and returns the handoff reply immediately — generate() is
+   *      NOT called. This is the first check after obtaining the conversation row.
    *  3. Builds a RequestContext carrying `contactId`, `conversationId`, `threadId`,
    *     and `adRef` (when present) so that write tools can read customer identity
    *     without it appearing in the tool input schema (security boundary, AIA-27).
@@ -201,6 +205,20 @@ export class AgentService implements OnModuleInit {
       threadId,
       adRef: input.adRef,
     });
+
+    // Bot-pause gate (code-enforced): once a conversation is handed to a human
+    // (escalate_to_human set state.stage='needs_human'), the bot stops replying.
+    // We still log the inbound message so the human sees it, but skip the LLM.
+    const state = convo.state as { stage?: string } | null;
+    if (state?.stage === 'needs_human') {
+      await this.logTurn({
+        conversationId: convo.id,
+        role: 'customer',
+        content: input.text,
+        ...(input.lastImageUrl ? { imageUrl: input.lastImageUrl } : {}),
+      });
+      return { reply: HANDOFF_REPLY };
+    }
 
     // Build the trusted RequestContext that write tools read for identity.
     // Write tools read `conversationId` (identity) from here, never from model

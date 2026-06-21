@@ -11,6 +11,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
+import { HANDOFF_REPLY } from '../handoff.constants';
 
 const inputSchema = z.object({
   reason: z
@@ -22,6 +23,7 @@ const inputSchema = z.object({
 
 const outputSchema = z.object({
   escalated: z.boolean(),
+  message: z.string(),
 });
 
 export function buildEscalateToHumanTool(conversations: ConversationsService) {
@@ -44,7 +46,7 @@ export function buildEscalateToHumanTool(conversations: ConversationsService) {
       }
 
       await conversations.escalateToHuman(conversationId, input.reason);
-      return { escalated: true };
+      return { escalated: true, message: HANDOFF_REPLY };
     },
   });
 }

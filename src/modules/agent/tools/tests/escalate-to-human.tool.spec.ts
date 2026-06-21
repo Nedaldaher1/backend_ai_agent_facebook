@@ -9,6 +9,7 @@ jest.mock('@mastra/core/tools', () => ({
 }));
 
 import { buildEscalateToHumanTool } from '../escalate-to-human.tool';
+import { HANDOFF_REPLY } from '../../handoff.constants';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
 
 // ---------------------------------------------------------------------------
@@ -41,7 +42,7 @@ describe('buildEscalateToHumanTool', () => {
   // -------------------------------------------------------------------------
   // Happy path
   // -------------------------------------------------------------------------
-  it('calls escalateToHuman with (conversationId, reason) and returns { escalated: true }', async () => {
+  it('calls escalateToHuman with (conversationId, reason) and returns { escalated: true, message: HANDOFF_REPLY }', async () => {
     const escalateToHuman = jest.fn().mockResolvedValue({ id: 'conv-1' });
     const conversations = makeConversationsMock(escalateToHuman);
     const tool = buildEscalateToHumanTool(conversations) as any;
@@ -52,7 +53,7 @@ describe('buildEscalateToHumanTool', () => {
     );
 
     expect(escalateToHuman).toHaveBeenCalledWith('conv-1', 'شحن دولي');
-    expect(result).toEqual({ escalated: true });
+    expect(result).toEqual({ escalated: true, message: HANDOFF_REPLY });
   });
 
   // -------------------------------------------------------------------------
@@ -92,5 +93,15 @@ describe('buildEscalateToHumanTool', () => {
     expect(keys).toEqual(['reason']);
     expect(keys).not.toContain('conversationId');
     expect(keys).not.toContain('psid');
+  });
+
+  it('outputSchema includes escalated (boolean) and message (string)', () => {
+    const tool = buildEscalateToHumanTool(
+      makeConversationsMock(jest.fn()),
+    ) as any;
+
+    const keys = Object.keys(tool.outputSchema.shape);
+    expect(keys).toContain('escalated');
+    expect(keys).toContain('message');
   });
 });

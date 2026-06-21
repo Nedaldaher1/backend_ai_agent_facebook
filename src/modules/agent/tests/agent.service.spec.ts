@@ -17,6 +17,9 @@
  *  7. The reply equals the generate result text.
  *  8. Products are extracted and deduped from search_products toolResults.
  *  9. When toolResults is absent, products is undefined.
+ * 10. Bot-pause gate: when state.stage === 'needs_human', generate is NOT called,
+ *     addMessage is called once (inbound only), and reply === HANDOFF_REPLY.
+ * 11. A non-'needs_human' stage does NOT trigger the pause gate.
  */
 
 // Mock the factory BEFORE any import of AgentService so the module-level
@@ -58,6 +61,7 @@ jest.mock('@mastra/core/di', () => {
 import { AgentService } from '../agent.service';
 import { buildMastra } from '../mastra/mastra.factory';
 import { RequestContext } from '@mastra/core/di';
+import { HANDOFF_REPLY } from '../handoff.constants';
 import type { ConfigService } from '@nestjs/config';
 import type { ProductsService } from '@/modules/products/products.service';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
@@ -104,10 +108,17 @@ const sizingMock = { recommendSize: jest.fn() } as unknown as SizingService;
 /**
  * A ConversationsService stub with findOrCreateByPsid and addMessage.
  * Both resolve immediately; addMessage call order is asserted in the tests.
+ *
+ * @param conversationId  The id returned by findOrCreateByPsid (default 'convo-1').
+ * @param state           Optional state jsonb value to include in the conversation row.
+ *                        Pass `{ stage: 'needs_human' }` to exercise the pause gate.
  */
-function makeConversationsMock(conversationId = 'convo-1'): ConversationsService {
+function makeConversationsMock(
+  conversationId = 'convo-1',
+  state: Record<string, unknown> | null = null,
+): ConversationsService {
   return {
-    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId }),
+    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId, state }),
     addMessage: jest.fn().mockResolvedValue({}),
   } as unknown as ConversationsService;
 }
@@ -560,5 +571,124 @@ describe('AgentService', () => {
     const result = await service.handleMessage({ contactId: 'C1', text: 'كيف الأسعار؟' });
 
     expect(result.products).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — bot-pause gate (state.stage === 'needs_human')
+  // -------------------------------------------------------------------------
+
+  it('returns HANDOFF_REPLY and skips generate when state.stage is needs_human', async () => {
+    const CONVO_ID = 'convo-paused';
+    const conversations = makeConversationsMock(CONVO_ID, { stage: 'needs_human' });
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+    );
+    service.onModuleInit();
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'وين طلبي؟' });
+
+    // Must return the canned handoff line
+    expect(result.reply).toBe(HANDOFF_REPLY);
+    // LLM must NOT be invoked
+    expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
+  });
+
+  it('logs inbound message exactly once when the pause gate fires', async () => {
+    const CONVO_ID = 'convo-paused-log';
+    const conversations = makeConversationsMock(CONVO_ID, { stage: 'needs_human' });
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'وين طلبي؟' });
+
+    const addMessage = conversations.addMessage as jest.Mock;
+    // Only the inbound customer row — no outbound bot row
+    expect(addMessage).toHaveBeenCalledTimes(1);
+    expect(addMessage).toHaveBeenCalledWith({
+      conversationId: CONVO_ID,
+      role: 'customer',
+      content: 'وين طلبي؟',
+    });
+  });
+
+  it('pause gate includes imageUrl in the inbound log when lastImageUrl is present', async () => {
+    const CONVO_ID = 'convo-paused-img';
+    const conversations = makeConversationsMock(CONVO_ID, { stage: 'needs_human' });
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+    );
+    service.onModuleInit();
+
+    const IMAGE_URL = 'https://cdn.example.com/photo.jpg';
+    await service.handleMessage({ contactId: 'C1', text: 'صورة', lastImageUrl: IMAGE_URL });
+
+    const addMessage = conversations.addMessage as jest.Mock;
+    expect(addMessage).toHaveBeenCalledWith({
+      conversationId: CONVO_ID,
+      role: 'customer',
+      content: 'صورة',
+      imageUrl: IMAGE_URL,
+    });
+  });
+
+  it('does NOT pause when state.stage is a non-needs_human value', async () => {
+    // A conversation with an arbitrary stage like 'browsing' must go through
+    // the normal generate() path — only 'needs_human' triggers the pause.
+    const conversations = makeConversationsMock('convo-browsing', { stage: 'browsing' });
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+    );
+    service.onModuleInit();
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'عندك عبايات؟' });
+
+    expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
+    expect(result.reply).toBe(FAKE_REPLY);
+  });
+
+  it('does NOT pause when state is null (fresh conversation)', async () => {
+    // null state → not paused; existing tests rely on this (makeConversationsMock default)
+    const conversations = makeConversationsMock('convo-fresh', null);
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+    );
+    service.onModuleInit();
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
+    expect(result.reply).toBe(FAKE_REPLY);
   });
 });
