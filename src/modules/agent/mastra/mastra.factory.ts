@@ -36,7 +36,9 @@
  *
  * TODO (next ticket): enable semantic recall (requires an embedder + PgVector).
  *
- * TODO (next ticket): wire the vision pipeline (Haiku-powered attribute extractor).
+ * NOTE: the vision pipeline (Haiku attribute extractor) is implemented as a
+ * deterministic pre-generate step in AgentService (see VisionService), not as a
+ * tool here — image presence is known up front, so it is not an LLM decision.
  */
 
 import { Mastra } from '@mastra/core';

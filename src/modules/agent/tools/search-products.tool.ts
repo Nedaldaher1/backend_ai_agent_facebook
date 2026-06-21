@@ -97,10 +97,19 @@ export function buildSearchProductsTool(products: ProductsService) {
         logger.warn('unmapped ad_ref: ' + effectiveAdRef);
       }
 
-      // 2. Normalize the color dialect term.
-      const colorFamily = input.color
-        ? await products.normalizeColor(input.color)
-        : undefined;
+      // 2. Resolve the color filter. Prefer the agent-supplied color; otherwise,
+      // on an image-led turn, fall back to the vision-extracted color family
+      // seeded into the request context (already normalized) so the photo's
+      // color still constrains the search even if the agent omits it.
+      let colorFamily: string | undefined;
+      if (input.color) {
+        colorFamily = await products.normalizeColor(input.color);
+      } else if (imageLed) {
+        const seeded = ctx?.requestContext?.get('visionAttributes') as
+          | { colorFamily?: string }
+          | undefined;
+        colorFamily = seeded?.colorFamily;
+      }
 
       // 3. Build structured filter.
       // tool `category` → product `occasion` (no category column exists).

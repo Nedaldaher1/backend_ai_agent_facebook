@@ -14,6 +14,7 @@ import { AgentBehaviorService } from './agent-behavior.service';
 import { SizingService } from '@/modules/sizing/sizing.service';
 import { buildMastra } from './mastra/mastra.factory';
 import { HANDOFF_REPLY } from './handoff.constants';
+import { VisionService, type VisionExtractResult } from './vision/vision.service';
 
 // ---------------------------------------------------------------------------
 // Public I/O contracts
@@ -69,8 +70,24 @@ interface GenerateResult {
       toolName?: string;
       result?: unknown;
       isError?: boolean;
+      /** The tool input the model supplied (when the provider echoes it). */
+      args?: unknown;
     };
   }>;
+}
+
+/**
+ * Eval metadata persisted on an agent turn (messages.attributes.eval). It records
+ * which products the agent surfaced and how, so the admin panel and the evals
+ * harness (AIA-33) have ground-truth rows. `confirmed` starts null and a later
+ * turn may set it once we know whether the customer accepted the match.
+ */
+interface EvalInfo {
+  tool: 'search_products' | 'find_similar_by_image' | null;
+  matched_product_ids: string[];
+  search_params: unknown;
+  image_led: boolean;
+  confirmed: boolean | null;
 }
 
 /**
@@ -131,6 +148,7 @@ export class AgentService implements OnModuleInit {
     private readonly agentBehavior: AgentBehaviorService,
     private readonly knowledge: KnowledgeService,
     private readonly sizing: SizingService,
+    private readonly vision: VisionService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -239,19 +257,40 @@ export class AgentService implements OnModuleInit {
     // (code-enforced: the design in the photo wins over the ad she came from).
     // The find_similar_by_image tool reads `lastImageUrl` directly from context
     // so it never appears in the tool input schema.
+    let visionNote: string | undefined;
     if (input.lastImageUrl) {
       requestContext.set('lastImageUrl', input.lastImageUrl);
       requestContext.set('imageLed', true);
+
+      // Vision pre-step (deterministic, best-effort): extract structured
+      // attributes from the photo via Claude Haiku and seed them so the agent
+      // searches by what she photographed. The design in the photo wins over the
+      // ad, so this runs whenever a photo is present, regardless of adRef. The
+      // service never throws; on any failure it returns no attributes and the
+      // turn proceeds (the agent can still use find_similar_by_image or ask).
+      const vision = await this.vision.extractAttributes({
+        url: input.lastImageUrl,
+      });
+      if (vision.attributes) {
+        requestContext.set('visionAttributes', vision.attributes);
+        visionNote = this.buildVisionNote(vision);
+      }
     }
 
-    // Best-effort name seed: surfaces the FB profile name so the agent persists
-    // it to working memory via its guardrail; the "only if working-memory name
-    // is empty" refinement is deferred (the model won't overwrite a known name).
-    // Cast to the expected ModelMessage array — role: 'system' is valid per the
-    // SystemModelMessage type in @mastra/core's internal AI SDK types.
-    const context = input.name
-      ? ([{ role: 'system', content: `اسم الزبونة من فيسبوك: ${input.name}` }] as Array<{ role: 'system'; content: string }>)
-      : undefined;
+    // Best-effort system context: the FB profile name seed (so the agent saves it
+    // to working memory) and, when present, the vision attribute note. role:
+    // 'system' is valid per @mastra/core's internal AI SDK SystemModelMessage.
+    const systemMessages: Array<{ role: 'system'; content: string }> = [];
+    if (input.name) {
+      systemMessages.push({
+        role: 'system',
+        content: `اسم الزبونة من فيسبوك: ${input.name}`,
+      });
+    }
+    if (visionNote) {
+      systemMessages.push({ role: 'system', content: visionNote });
+    }
+    const context = systemMessages.length > 0 ? systemMessages : undefined;
 
     // Persist the business record BEFORE generating — public-schema rows for the
     // admin panel + eval (diagram node T), NOT a duplicate of Mastra's LLM context
@@ -273,11 +312,15 @@ export class AgentService implements OnModuleInit {
       ...(context ? { context } : {}),
     })) as GenerateResult;
 
-    // Persist the agent reply — same best-effort business-log rationale.
+    // Persist the agent reply — best-effort business-log row, now carrying eval
+    // metadata (matched products + tool + image_led) for the admin panel and the
+    // evals harness (diagram node T). A logging failure never denies the reply.
+    const evalInfo = this.buildEvalInfo(result, Boolean(input.lastImageUrl));
     await this.logTurn({
       conversationId: convo.id,
       role: 'agent',
       content: result.text,
+      ...(evalInfo ? { attributes: { eval: evalInfo } } : {}),
     });
 
     return { reply: result.text, products: this.extractProducts(result) };
@@ -344,5 +387,79 @@ export class AgentService implements OnModuleInit {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Builds eval metadata from the product-bearing tool results: the first tool
+   * that returned products, the deduped matched ids (cap 8, mirroring the card
+   * list), the search params (when the provider echoes them), and whether the
+   * turn was image-led. Returns undefined when no products were surfaced.
+   * Best-effort: a malformed payload yields undefined, never a thrown error.
+   */
+  private buildEvalInfo(
+    result: GenerateResult,
+    imageLed: boolean,
+  ): EvalInfo | undefined {
+    try {
+      const productChunks = (result.toolResults ?? []).filter(
+        (c) =>
+          (c.payload?.toolName === 'search_products' ||
+            c.payload?.toolName === 'find_similar_by_image') &&
+          !c.payload?.isError,
+      );
+
+      const seen = new Set<string>();
+      const ids: string[] = [];
+      for (const c of productChunks) {
+        const raw = c.payload?.result as
+          | { products?: Array<{ id: string }> }
+          | undefined;
+        for (const p of raw?.products ?? []) {
+          if (seen.has(p.id)) continue;
+          seen.add(p.id);
+          ids.push(p.id);
+          if (ids.length === 8) break;
+        }
+        if (ids.length === 8) break;
+      }
+
+      if (ids.length === 0) return undefined;
+
+      const first = productChunks[0];
+      return {
+        tool: (first?.payload?.toolName as EvalInfo['tool']) ?? null,
+        matched_product_ids: ids,
+        search_params: first?.payload?.args ?? null,
+        image_led: imageLed,
+        confirmed: null,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Formats vision-extracted attributes into a short Arabic system note that
+   * steers the agent to search by the photographed design. When confidence is
+   * low it also nudges a "قصدك هاي؟" confirmation before the order proceeds.
+   */
+  private buildVisionNote(vision: VisionExtractResult): string {
+    const a = vision.attributes;
+    if (!a) return '';
+    const parts: string[] = [];
+    const color = a.colorFamily ?? a.color ?? undefined;
+    if (color) parts.push(`اللون: ${color}`);
+    if (a.occasion) parts.push(`المناسبة: ${a.occasion}`);
+    if (a.fabric) parts.push(`القماش: ${a.fabric}`);
+    if (a.sleeveType) parts.push(`الكُمّ: ${a.sleeveType}`);
+    const attrs = parts.length > 0 ? parts.join('، ') : 'غير واضحة';
+    const lowConfidence = vision.reason === 'low_confidence';
+    return (
+      `الزبونة أرسلت صورة منتج. السمات المستخرجة منها (للاسترشاد فقط): ${attrs}. ` +
+      'استخدمي search_products بهذه السمات (خصوصاً اللون) لإيجاد الأقرب' +
+      (lowConfidence
+        ? '، وبما أن الثقة منخفضة اعرضي الأقرب وأكّدي مع الزبونة «قصدك هاي؟» قبل إتمام الطلب.'
+        : '.')
+    );
   }
 }

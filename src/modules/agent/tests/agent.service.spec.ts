@@ -29,6 +29,11 @@
 // be required under Jest (CJS).
 jest.mock('../mastra/mastra.factory', () => ({ buildMastra: jest.fn() }));
 
+// vision.service.ts (imported transitively via agent.service.ts) imports the real
+// @mastra/core/agent, whose ESM-only deps cannot be required under Jest (CJS).
+// Stub it so the module graph loads; VisionService itself is stubbed per test.
+jest.mock('@mastra/core/agent', () => ({ Agent: jest.fn() }));
+
 // flydrive is ESM-only and isolated inside StorageService; AgentService imports
 // ProductsService, which transitively imports the products -> storage chain.
 // Stub flydrive so requiring that chain doesn't load the real ESM module under
@@ -69,6 +74,7 @@ import type { OrdersService } from '@/modules/orders/orders.service';
 import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
+import type { VisionService } from '../vision/vision.service';
 
 // ---------------------------------------------------------------------------
 // Typed cast helpers
@@ -104,6 +110,17 @@ const knowledgeMock = {} as unknown as KnowledgeService;
 
 /** A minimal SizingService stub. */
 const sizingMock = { recommendSize: jest.fn() } as unknown as SizingService;
+
+/**
+ * A minimal VisionService stub. Default: no attributes (the image pre-step is a
+ * no-op), so the existing turn tests are unaffected. Image-specific tests
+ * override extractAttributes per case.
+ */
+const visionMock = {
+  extractAttributes: jest
+    .fn()
+    .mockResolvedValue({ attributes: null, confidence: null }),
+} as unknown as VisionService;
 
 /**
  * A ConversationsService stub with findOrCreateByPsid and addMessage.
@@ -164,6 +181,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
 
     service.onModuleInit();
@@ -184,6 +202,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
 
     service.onModuleInit();
@@ -203,6 +222,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
 
     service.onModuleInit();
@@ -226,6 +246,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -249,6 +270,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -274,6 +296,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -301,6 +324,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -324,6 +348,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -349,6 +374,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -357,6 +383,106 @@ describe('AgentService', () => {
     const instance = MockRequestContextCtor.instances[0];
     expect(instance.sets.has('lastImageUrl')).toBe(false);
     expect(instance.sets.has('imageLed')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — vision pre-step (AIA-28)
+  // -------------------------------------------------------------------------
+
+  it('runs the vision pre-step and seeds visionAttributes + a system note when an image is present', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    (visionMock.extractAttributes as jest.Mock).mockResolvedValueOnce({
+      attributes: {
+        isAbaya: true,
+        confidence: 0.9,
+        colorFamily: 'red',
+        occasion: 'سهرة',
+      },
+      confidence: 0.9,
+    });
+
+    const IMAGE_URL = 'https://cdn.example.com/abaya.jpg';
+    await service.handleMessage({
+      contactId: 'C1',
+      text: 'بدي هاي',
+      lastImageUrl: IMAGE_URL,
+    });
+
+    expect(visionMock.extractAttributes).toHaveBeenCalledWith({ url: IMAGE_URL });
+
+    const instance = MockRequestContextCtor.instances[0];
+    expect(instance.sets.get('visionAttributes')).toMatchObject({
+      colorFamily: 'red',
+    });
+
+    // A system note steering the agent to search by the photographed design is
+    // passed to generate as context.
+    const options = fakeSalesAgent.generate.mock.calls[0][1];
+    expect(options.context).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'system',
+          content: expect.stringContaining('السمات المستخرجة'),
+        }),
+      ]),
+    );
+  });
+
+  it('does NOT run the vision pre-step when no image is present', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    expect(visionMock.extractAttributes).not.toHaveBeenCalled();
+  });
+
+  it('proceeds normally (no visionAttributes) when the pre-step returns nothing', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    // visionMock default resolves { attributes: null }.
+    await service.handleMessage({
+      contactId: 'C1',
+      text: 'شوفي',
+      lastImageUrl: 'https://cdn.example.com/x.jpg',
+    });
+
+    const instance = MockRequestContextCtor.instances[0];
+    expect(instance.sets.has('visionAttributes')).toBe(false);
+    expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
   });
 
   // -------------------------------------------------------------------------
@@ -376,6 +502,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -402,6 +529,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -440,6 +568,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -462,6 +591,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -484,6 +614,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -512,6 +643,120 @@ describe('AgentService', () => {
     expect(result.products).toEqual([{ id: 'p1', name: 'عباية', price: '45.000' }]);
   });
 
+  // -------------------------------------------------------------------------
+  // handleMessage — eval/match logging (AIA-33 data producer)
+  // -------------------------------------------------------------------------
+
+  it('writes eval metadata (tool, matched ids, image_led) on the outbound message', async () => {
+    const CONVO_ID = 'convo-eval';
+    const conversations = makeConversationsMock(CONVO_ID);
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    fakeSalesAgent.generate.mockResolvedValueOnce({
+      text: 'إليك المنتجات',
+      toolResults: [
+        {
+          payload: {
+            toolName: 'search_products',
+            isError: false,
+            result: {
+              products: [
+                { id: 'p1', name: 'عباية', price: '45.000' },
+                { id: 'p2', name: 'عباية ٢', price: '50.000' },
+              ],
+            },
+          },
+        },
+      ],
+    });
+
+    await service.handleMessage({ contactId: 'C1', text: 'عبايات' });
+
+    const outbound = (conversations.addMessage as jest.Mock).mock.calls[1][0];
+    expect(outbound).toMatchObject({
+      role: 'agent',
+      attributes: {
+        eval: {
+          tool: 'search_products',
+          matched_product_ids: ['p1', 'p2'],
+          image_led: false,
+          confirmed: null,
+        },
+      },
+    });
+  });
+
+  it('marks eval image_led=true and the tool when the match came from an image', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    fakeSalesAgent.generate.mockResolvedValueOnce({
+      text: 'شبيهات صورتك',
+      toolResults: [
+        {
+          payload: {
+            toolName: 'find_similar_by_image',
+            isError: false,
+            result: { products: [{ id: 'p9', name: 'عباية', price: '60.000' }] },
+          },
+        },
+      ],
+    });
+
+    await service.handleMessage({
+      contactId: 'C1',
+      text: 'شوفي',
+      lastImageUrl: 'https://cdn.example.com/x.jpg',
+    });
+
+    const outbound = (conversations.addMessage as jest.Mock).mock.calls[1][0];
+    expect(outbound.attributes.eval).toMatchObject({
+      tool: 'find_similar_by_image',
+      matched_product_ids: ['p9'],
+      image_led: true,
+    });
+  });
+
+  it('omits eval attributes on the outbound message when no products were surfaced', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    const outbound = (conversations.addMessage as jest.Mock).mock.calls[1][0];
+    expect(outbound.attributes).toBeUndefined();
+  });
+
   it('extracts products from find_similar_by_image toolResults (image-led reply card)', async () => {
     const conversations = makeConversationsMock();
     const service = new AgentService(
@@ -522,6 +767,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -563,6 +809,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -588,6 +835,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -610,6 +858,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -636,6 +885,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -663,6 +913,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 
@@ -683,6 +934,7 @@ describe('AgentService', () => {
       agentBehaviorMock,
       knowledgeMock,
       sizingMock,
+      visionMock,
     );
     service.onModuleInit();
 

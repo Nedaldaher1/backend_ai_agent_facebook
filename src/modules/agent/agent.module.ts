@@ -8,6 +8,7 @@ import { AgentBehaviorRepository } from './agent-behavior.repository';
 import { AgentBehaviorService } from './agent-behavior.service';
 import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
+import { VisionService } from './vision/vision.service';
 
 /**
  * Importing a module gives access to its *exported services* only. That is the
@@ -24,7 +25,12 @@ import { AgentService } from './agent.service';
 @Module({
   imports: [ProductsModule, ConversationsModule, OrdersModule, KnowledgeModule, SizingModule],
   controllers: [AgentController],
-  providers: [AgentService, AgentBehaviorService, AgentBehaviorRepository],
+  providers: [
+    AgentService,
+    AgentBehaviorService,
+    AgentBehaviorRepository,
+    VisionService,
+  ],
   exports: [AgentService, AgentBehaviorService],
 })
 export class AgentModule {}
