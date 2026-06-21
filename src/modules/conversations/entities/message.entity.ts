@@ -1,10 +1,11 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   index,
   jsonb,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
@@ -30,11 +31,22 @@ export const messages = pgTable(
     content: text('content'),
     imageUrl: text('image_url'),
     attributes: jsonb('attributes'),
+    // Idempotency key for an inbound customer turn: the provider message id
+    // (ManyChat) or a content+time-window hash. Nullable so legacy rows and
+    // non-deduped writes are unaffected.
+    externalId: text('external_id'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
-  (t) => [index('messages_conversation_id_idx').on(t.conversationId)],
+  (t) => [
+    index('messages_conversation_id_idx').on(t.conversationId),
+    // Idempotency: at most one row per (conversation, external_id). Partial
+    // (external_id IS NOT NULL) so rows without a key never collide.
+    uniqueIndex('messages_conversation_external_id_uq')
+      .on(t.conversationId, t.externalId)
+      .where(sql`${t.externalId} IS NOT NULL`),
+  ],
 );
 
 /** messages N—1 conversations. */

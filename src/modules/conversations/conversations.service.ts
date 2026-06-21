@@ -95,6 +95,14 @@ export class ConversationsService {
     return this.repo.insertMessage(data);
   }
 
+  /** Whether an inbound message with this idempotency key was already logged. */
+  findMessageByExternalId(
+    conversationId: string,
+    externalId: string,
+  ): Promise<Message | undefined> {
+    return this.repo.findMessageByExternalId(conversationId, externalId);
+  }
+
   /**
    * Mark a conversation as needing human attention.
    * Merges the escalation marker into the existing `state` jsonb so that no

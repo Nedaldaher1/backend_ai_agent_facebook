@@ -137,6 +137,8 @@ function makeConversationsMock(
   return {
     findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId, state }),
     addMessage: jest.fn().mockResolvedValue({}),
+    // Default: no prior message with this idempotency key (not a duplicate).
+    findMessageByExternalId: jest.fn().mockResolvedValue(undefined),
   } as unknown as ConversationsService;
 }
 
@@ -538,11 +540,12 @@ describe('AgentService', () => {
     const addMessage = conversations.addMessage as jest.Mock;
     expect(addMessage).toHaveBeenCalledTimes(2);
 
-    // First call — inbound
+    // First call — inbound (now carries the idempotency key)
     expect(addMessage).toHaveBeenNthCalledWith(1, {
       conversationId: CONVO_ID,
       role: 'customer',
       content: 'مرحبا',
+      externalId: expect.any(String),
     });
 
     // Second call — outbound
@@ -575,6 +578,65 @@ describe('AgentService', () => {
     const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
 
     expect(result.reply).toBe(FAKE_REPLY);
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — idempotency (AIA-30)
+  // -------------------------------------------------------------------------
+
+  it('short-circuits a duplicate inbound turn (no generate, empty reply)', async () => {
+    const conversations = makeConversationsMock();
+    (conversations.findMessageByExternalId as jest.Mock).mockResolvedValue({
+      id: 'existing-msg',
+    });
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'مرحبا',
+      externalMessageId: 'mid-1',
+    });
+
+    expect(result.reply).toBe('');
+    expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
+    expect(conversations.addMessage).not.toHaveBeenCalled();
+  });
+
+  it('uses the provided externalMessageId as the idempotency key', async () => {
+    const CONVO_ID = 'convo-idem';
+    const conversations = makeConversationsMock(CONVO_ID);
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({
+      contactId: 'C1',
+      text: 'مرحبا',
+      externalMessageId: 'mid-xyz',
+    });
+
+    expect(conversations.findMessageByExternalId).toHaveBeenCalledWith(
+      CONVO_ID,
+      'mid-xyz',
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -871,6 +933,7 @@ describe('AgentService', () => {
       conversationId: CONVO_ID,
       role: 'customer',
       content: 'وين طلبي؟',
+      externalId: expect.any(String),
     });
   });
 
@@ -897,6 +960,7 @@ describe('AgentService', () => {
       conversationId: CONVO_ID,
       role: 'customer',
       content: 'صورة',
+      externalId: expect.any(String),
       imageUrl: IMAGE_URL,
     });
   });

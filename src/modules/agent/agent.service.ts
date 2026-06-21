@@ -12,9 +12,13 @@ import { OrdersService } from '@/modules/orders/orders.service';
 import { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import { AgentBehaviorService } from './agent-behavior.service';
 import { SizingService } from '@/modules/sizing/sizing.service';
+import { createHash } from 'node:crypto';
 import { buildMastra } from './mastra/mastra.factory';
 import { HANDOFF_REPLY } from './handoff.constants';
 import { VisionService, type VisionExtractResult } from './vision/vision.service';
+
+/** Window for the content-hash idempotency fallback when no provider id exists. */
+const DEDUP_WINDOW_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Public I/O contracts
@@ -44,6 +48,11 @@ export interface IncomingMessage {
    * current temp endpoint); 'whatsapp' is wired ahead of that integration.
    */
   channel?: 'messenger' | 'whatsapp';
+  /**
+   * Provider message id (ManyChat) used as the idempotency key for this turn.
+   * Optional today; AgentService falls back to a content+time-window hash.
+   */
+  externalMessageId?: string;
 }
 
 /**
@@ -224,6 +233,20 @@ export class AgentService implements OnModuleInit {
       adRef: input.adRef,
     });
 
+    // Idempotency: ignore a re-delivered inbound turn (webhook retry / double
+    // tap). The key is the provider message id when present, else a content +
+    // short-time-window hash. The partial unique index on messages.external_id
+    // is the DB-level backstop against a concurrent race.
+    const dedupKey = this.computeDedupKey(input);
+    const alreadyProcessed = await this.conversations.findMessageByExternalId(
+      convo.id,
+      dedupKey,
+    );
+    if (alreadyProcessed) {
+      // Duplicate — do nothing. Empty reply is dropped by the (future) adapter.
+      return { reply: '' };
+    }
+
     // Bot-pause gate (code-enforced): once a conversation is handed to a human
     // (escalate_to_human set state.stage='needs_human'), the bot stops replying.
     // We still log the inbound message so the human sees it, but skip the LLM.
@@ -233,6 +256,7 @@ export class AgentService implements OnModuleInit {
         conversationId: convo.id,
         role: 'customer',
         content: input.text,
+        externalId: dedupKey,
         ...(input.lastImageUrl ? { imageUrl: input.lastImageUrl } : {}),
       });
       return { reply: HANDOFF_REPLY };
@@ -300,6 +324,7 @@ export class AgentService implements OnModuleInit {
       conversationId: convo.id,
       role: 'customer',
       content: input.text,
+      externalId: dedupKey,
       ...(input.lastImageUrl ? { imageUrl: input.lastImageUrl } : {}),
     });
 
@@ -387,6 +412,23 @@ export class AgentService implements OnModuleInit {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Idempotency key for an inbound turn: the provider message id when supplied,
+   * else a content + short-time-window hash so an immediate re-delivery collapses
+   * while a genuine repeat in a later window does not.
+   */
+  private computeDedupKey(input: IncomingMessage): string {
+    if (input.externalMessageId) return input.externalMessageId;
+    const window = Math.floor(Date.now() / DEDUP_WINDOW_MS);
+    const digest = createHash('sha256')
+      .update(
+        `${input.contactId}|${input.text}|${input.lastImageUrl ?? ''}|${window}`,
+      )
+      .digest('hex')
+      .slice(0, 40);
+    return `h:${digest}`;
   }
 
   /**

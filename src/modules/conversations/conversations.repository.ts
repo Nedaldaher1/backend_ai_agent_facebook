@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
@@ -124,6 +124,27 @@ export class ConversationsRepository {
 
   async insertMessage(input: NewMessage): Promise<Message> {
     const [row] = await this.db.insert(messages).values(input).returning();
+    return row;
+  }
+
+  /**
+   * Find an inbound message previously logged under this idempotency key, scoped
+   * to the conversation. Backs the dedup short-circuit in AgentService.
+   */
+  async findMessageByExternalId(
+    conversationId: string,
+    externalId: string,
+  ): Promise<Message | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.externalId, externalId),
+        ),
+      )
+      .limit(1);
     return row;
   }
 }

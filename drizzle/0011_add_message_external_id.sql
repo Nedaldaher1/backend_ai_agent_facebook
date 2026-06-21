@@ -1,0 +1,2 @@
+ALTER TABLE "messages" ADD COLUMN "external_id" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "messages_conversation_external_id_uq" ON "messages" USING btree ("conversation_id","external_id") WHERE "messages"."external_id" IS NOT NULL;

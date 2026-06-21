@@ -33,6 +33,9 @@ const incomingMessageSchema = z.object({
   name: z.string().optional(),
   // Inbound channel → order `source` (server-side). Defaults to messenger.
   channel: z.enum(['messenger', 'whatsapp']).optional(),
+  // Provider message id from ManyChat — the idempotency key for this turn.
+  // Optional today; a content+time-window hash is the fallback when absent.
+  externalMessageId: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
