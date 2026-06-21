@@ -228,5 +228,77 @@ describe('AgentBehaviorService', () => {
 
       expect(result).toContain('ماسة');
     });
+
+    // --- conversational-judgment guardrails (AIA-41) ---
+
+    it('contains visual-search color guidance referencing target_color', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(makeBehavior()),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const out = await svc.getInstructions();
+
+      expect(out).toContain('target_color');
+    });
+
+    it('contains size-recommendation guidance referencing recommend_size and needs_human', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(makeBehavior()),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const out = await svc.getInstructions();
+
+      expect(out).toContain('recommend_size');
+      expect(out).toContain('لا تذكري أبداً مقاساً');
+    });
+
+    it('contains order-capture guidance referencing get_product_for_order and capture_order', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(makeBehavior()),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const out = await svc.getInstructions();
+
+      expect(out).toContain('get_product_for_order');
+      expect(out).toContain('capture_order');
+    });
+
+    it('contains escalation guidance referencing escalate_to_human', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(makeBehavior()),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const out = await svc.getInstructions();
+
+      expect(out).toContain('escalate_to_human');
+    });
   });
 });
