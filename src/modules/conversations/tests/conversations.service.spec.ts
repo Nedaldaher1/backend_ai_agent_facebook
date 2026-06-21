@@ -13,6 +13,12 @@ const makeConversation = (overrides: Record<string, unknown> = {}) => ({
   adRef: null,
   state: null,
   createdAt: new Date(),
+  aiState: 'bot',
+  assignedTo: null,
+  handoffReason: null,
+  humanSummary: null,
+  pausedUntil: null,
+  aiStateUpdatedAt: new Date(),
   ...overrides,
 });
 
@@ -75,22 +81,20 @@ describe('ConversationsService', () => {
 
   it('addMessage throws BadRequestException for an invalid role', () => {
     expect(() =>
-      service.addMessage({
-        conversationId: 'c1',
-        role: 'bot',
-        content: 'hello',
-      }),
+      service.addMessage(
+        // Intentionally invalid — cast to exercise runtime rejection.
+        { conversationId: 'c1', role: 'bot', content: 'hello' } as unknown as Parameters<typeof service.addMessage>[0],
+      ),
     ).toThrow(BadRequestException);
     expect(insertMessage).not.toHaveBeenCalled();
   });
 
   it('addMessage throws BadRequestException for an empty role string', () => {
     expect(() =>
-      service.addMessage({
-        conversationId: 'c1',
-        role: '',
-        content: 'hello',
-      }),
+      service.addMessage(
+        // Intentionally invalid — cast to exercise runtime rejection.
+        { conversationId: 'c1', role: '', content: 'hello' } as unknown as Parameters<typeof service.addMessage>[0],
+      ),
     ).toThrow(BadRequestException);
   });
 

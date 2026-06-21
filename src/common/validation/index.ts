@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { insertAdminUserSchema } from '@/modules/admin/entities/admin-user.entity';
 import { insertAgentBehaviorSchema } from '@/modules/agent/entities/agent-behavior.entity';
+import { insertConversationEventSchema } from '@/modules/conversations/entities/conversation-event.entity';
 import { insertConversationSchema } from '@/modules/conversations/entities/conversation.entity';
 import { insertMessageSchema } from '@/modules/conversations/entities/message.entity';
 import { insertKnowledgeEntrySchema } from '@/modules/knowledge/entities/knowledge-entry.entity';
@@ -123,13 +124,21 @@ export type UpdateAgentBehaviorInput = z.infer<
 
 // --- conversations (runtime: written by the agent) ---
 export const createConversationSchema = insertConversationSchema
-  .omit({ id: true, createdAt: true })
+  .omit({ id: true, createdAt: true, aiStateUpdatedAt: true })
   .strict();
 export const updateConversationSchema = createConversationSchema
   .partial()
   .strict();
 export type CreateConversationInput = z.infer<typeof createConversationSchema>;
 export type UpdateConversationInput = z.infer<typeof updateConversationSchema>;
+
+// --- conversation_events (runtime: audit trail) ---
+export const createConversationEventSchema = insertConversationEventSchema
+  .omit({ id: true, createdAt: true })
+  .strict();
+export type CreateConversationEventInput = z.infer<
+  typeof createConversationEventSchema
+>;
 
 // --- messages (runtime) ---
 export const createMessageSchema = insertMessageSchema

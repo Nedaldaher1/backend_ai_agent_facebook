@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { conversations } from './conversation.entity';
 
 /** Who authored a message. Enforced in zod; the column stays text. */
-export const MESSAGE_ROLES = ['customer', 'agent'] as const;
+export const MESSAGE_ROLES = ['customer', 'agent', 'human'] as const;
 
 /**
  * Runtime table: written by the agent. One row per message in a conversation.
