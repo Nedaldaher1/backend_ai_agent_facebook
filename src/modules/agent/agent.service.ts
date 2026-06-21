@@ -323,6 +323,20 @@ export class AgentService implements OnModuleInit {
     if (visionNote) {
       systemMessages.push({ role: 'system', content: visionNote });
     }
+    // Handoff context feedback (WS7): on the first turn after an admin resume, the
+    // human's wrap-up summary is injected once so the agent resumes with awareness
+    // of what the human did, then cleared so later turns don't repeat it.
+    if (convo.humanSummary) {
+      systemMessages.push({
+        role: 'system',
+        content: `ملخص ما تم مع فريق الدعم أثناء التحويل: ${convo.humanSummary}`,
+      });
+      void this.conversations
+        .clearHumanSummary(convo.id)
+        .catch((err) =>
+          this.logger.warn(`clearHumanSummary failed for ${convo.id}: ${err}`),
+        );
+    }
     const context = systemMessages.length > 0 ? systemMessages : undefined;
 
     // Persist the business record BEFORE generating — public-schema rows for the

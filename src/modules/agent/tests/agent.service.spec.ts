@@ -134,16 +134,24 @@ const manychatControlMock = {
  * @param conversationId  The id returned by findOrCreateByPsid (default 'convo-1').
  * @param aiState         The ai_state column value on the conversation row (default 'bot').
  *                        Pass 'human' or 'paused' to exercise the pause gate.
+ * @param humanSummary    Optional human wrap-up summary (WS7). When set, the row
+ *                        returned by findOrCreateByPsid carries it so the injection
+ *                        path fires. Defaults to null (no summary).
  */
 function makeConversationsMock(
   conversationId = 'convo-1',
   aiState: string = 'bot',
+  humanSummary: string | null = null,
 ): ConversationsService {
   return {
-    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId, aiState }),
+    findOrCreateByPsid: jest
+      .fn()
+      .mockResolvedValue({ id: conversationId, aiState, humanSummary }),
     addMessage: jest.fn().mockResolvedValue({}),
     // Default: no prior message with this idempotency key (not a duplicate).
     findMessageByExternalId: jest.fn().mockResolvedValue(undefined),
+    // WS7: one-shot clear of the human summary after injection.
+    clearHumanSummary: jest.fn().mockResolvedValue(undefined),
   } as unknown as ConversationsService;
 }
 
@@ -1107,5 +1115,82 @@ describe('AgentService', () => {
 
     expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
     expect(result.reply).toBe(FAKE_REPLY);
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — human summary injection (WS7 / AIA-34)
+  // -------------------------------------------------------------------------
+
+  describe('human summary injection (WS7)', () => {
+    it('injects the summary as a system message and clears it when humanSummary is set', async () => {
+      const CONVO_ID = 'convo-ws7-summary';
+      const SUMMARY = 'الزبونة تريد تأكيد لون العباية قبل الإرسال';
+      // aiState:'bot' (resumed), humanSummary carries the wrap-up text.
+      const conversations = makeConversationsMock(CONVO_ID, 'bot', SUMMARY);
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+        manychatControlMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      // generate() must have been called with a context array that contains a
+      // system message whose content includes the summary text.
+      const options = fakeSalesAgent.generate.mock.calls[0][1] as {
+        context?: Array<{ role: string; content: string }>;
+      };
+      expect(options.context).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringContaining(SUMMARY),
+          }),
+        ]),
+      );
+
+      // clearHumanSummary must be called exactly once with the conversation id.
+      expect(conversations.clearHumanSummary).toHaveBeenCalledTimes(1);
+      expect(conversations.clearHumanSummary).toHaveBeenCalledWith(CONVO_ID);
+    });
+
+    it('does NOT inject a summary system message or call clearHumanSummary when humanSummary is null', async () => {
+      // Default makeConversationsMock: humanSummary = null.
+      const CONVO_ID = 'convo-ws7-no-summary';
+      const conversations = makeConversationsMock(CONVO_ID, 'bot', null);
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+        manychatControlMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      // context must either be undefined or not contain a summary message.
+      const options = fakeSalesAgent.generate.mock.calls[0][1] as {
+        context?: Array<{ role: string; content: string }>;
+      };
+      const summaryMsg = (options.context ?? []).find((m) =>
+        m.content.includes('ملخص ما تم مع فريق الدعم'),
+      );
+      expect(summaryMsg).toBeUndefined();
+
+      // clearHumanSummary must NOT be called when there is no summary.
+      expect(conversations.clearHumanSummary).not.toHaveBeenCalled();
+    });
   });
 });

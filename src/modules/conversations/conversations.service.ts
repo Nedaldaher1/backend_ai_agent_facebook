@@ -170,6 +170,11 @@ export class ConversationsService {
     return this.repo.setAiState(id, patch);
   }
 
+  /** One-shot clear of the human handoff summary after it has been injected. */
+  clearHumanSummary(id: string): Promise<Conversation | undefined> {
+    return this.repo.setAiState(id, { humanSummary: null });
+  }
+
   /**
    * Append an immutable audit event. Delegates to the repository; callers
    * should use this rather than the repository directly.
