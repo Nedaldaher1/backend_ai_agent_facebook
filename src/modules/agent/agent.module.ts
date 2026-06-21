@@ -8,6 +8,7 @@ import { AgentBehaviorRepository } from './agent-behavior.repository';
 import { AgentBehaviorService } from './agent-behavior.service';
 import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
+import { ManyChatWebhookController } from './manychat/manychat-webhook.controller';
 import { VisionService } from './vision/vision.service';
 
 /**
@@ -24,7 +25,7 @@ import { VisionService } from './vision/vision.service';
  */
 @Module({
   imports: [ProductsModule, ConversationsModule, OrdersModule, KnowledgeModule, SizingModule],
-  controllers: [AgentController],
+  controllers: [AgentController, ManyChatWebhookController],
   providers: [
     AgentService,
     AgentBehaviorService,
