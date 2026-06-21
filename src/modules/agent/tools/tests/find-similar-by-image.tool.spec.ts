@@ -7,7 +7,9 @@
  * fabricates products).
  *
  * After AIA-34 sub-task A: the image URL comes from requestContext, NOT from
- * tool input. inputSchema is z.object({}).
+ * tool input.
+ * After AIA-35 sub-task B: target_color is forwarded to findSimilarByImage;
+ * normalization lives in the service, not here.
  */
 
 // Must precede the tool import so createTool is the identity mock under Jest (CJS).
@@ -33,7 +35,7 @@ import type { ProductsService } from '@/modules/products/products.service';
 
 type Tool = {
   execute: (
-    input: Record<string, never>,
+    input: { target_color?: string },
     ctx?: { requestContext: { get: (k: string) => unknown } },
   ) => Promise<{ products: unknown[] }>;
 };
@@ -82,7 +84,9 @@ describe('buildFindSimilarByImageTool', () => {
       ctx({ lastImageUrl: 'https://x/y.jpg' }),
     );
 
-    expect(findSimilarByImage).toHaveBeenCalledWith('https://x/y.jpg');
+    expect(findSimilarByImage).toHaveBeenCalledWith('https://x/y.jpg', {
+      targetColor: undefined,
+    });
     expect(result).toEqual({
       products: [
         {
@@ -143,11 +147,40 @@ describe('buildFindSimilarByImageTool', () => {
   });
 
   // -------------------------------------------------------------------------
-  // inputSchema — must be empty (no image_url field)
+  // inputSchema — has target_color but NOT image_url
   // -------------------------------------------------------------------------
-  it('inputSchema has no fields (image URL comes from context, not tool input)', () => {
+  it('inputSchema has target_color but no image_url (URL comes from context)', () => {
     const tool = buildFindSimilarByImageTool(products) as any;
-    expect(Object.keys(tool.inputSchema.shape)).toHaveLength(0);
+    expect(tool.inputSchema.shape).toHaveProperty('target_color');
     expect(tool.inputSchema.shape).not.toHaveProperty('image_url');
+  });
+
+  // -------------------------------------------------------------------------
+  // (d) target_color is forwarded to findSimilarByImage (normalization is in
+  //     the service, not the tool — tool just passes through)
+  // -------------------------------------------------------------------------
+  it('forwards target_color to findSimilarByImage when provided', async () => {
+    findSimilarByImage.mockResolvedValue([]);
+    const tool = buildFindSimilarByImageTool(products) as unknown as Tool;
+
+    await tool.execute(
+      { target_color: 'أسود' },
+      ctx({ lastImageUrl: 'https://x/y.jpg' }),
+    );
+
+    expect(findSimilarByImage).toHaveBeenCalledWith('https://x/y.jpg', {
+      targetColor: 'أسود',
+    });
+  });
+
+  it('calls findSimilarByImage with targetColor undefined when target_color is absent', async () => {
+    findSimilarByImage.mockResolvedValue([]);
+    const tool = buildFindSimilarByImageTool(products) as unknown as Tool;
+
+    await tool.execute({}, ctx({ lastImageUrl: 'https://x/y.jpg' }));
+
+    expect(findSimilarByImage).toHaveBeenCalledWith('https://x/y.jpg', {
+      targetColor: undefined,
+    });
   });
 });

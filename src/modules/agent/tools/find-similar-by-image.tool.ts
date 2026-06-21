@@ -18,10 +18,20 @@ import type { ProductsService } from '@/modules/products/products.service';
 
 const logger = new Logger('FindSimilarByImageTool');
 
-// No input fields: the image URL is injected into the request context by
-// AgentService (from input.lastImageUrl) before the generate() call.  The agent
-// invokes this tool with no arguments when the customer sent a photo.
-const inputSchema = z.object({});
+// The image URL is injected into the request context by AgentService (from
+// input.lastImageUrl) before the generate() call — the agent NEVER provides
+// it as a tool argument.
+// `target_color` is optional: the agent provides it when the customer asks for
+// the same design in a specific color. Normalization (color_synonyms) happens
+// in ProductsService, not here.
+const inputSchema = z.object({
+  target_color: z
+    .string()
+    .optional()
+    .describe(
+      'لون محدد طلبته الزبونة لنفس التصميم (مثلاً "أسود")، إن وُجد',
+    ),
+});
 
 const outputSchema = z.object({
   products: z.array(
@@ -45,7 +55,7 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
     inputSchema,
     outputSchema,
 
-    execute: async (_input, ctx) => {
+    execute: async (input, ctx) => {
       // Read the image URL from the request context (set by AgentService from
       // input.lastImageUrl before the generate() call — never from model input).
       const url = (ctx?.requestContext?.get('lastImageUrl') as string | undefined)?.trim();
@@ -54,7 +64,9 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
         return { products: [] };
       }
       try {
-        const matches = await products.findSimilarByImage(url);
+        const matches = await products.findSimilarByImage(url, {
+          targetColor: input.target_color,
+        });
         return {
           products: matches.map((p) => ({
             id: p.id,

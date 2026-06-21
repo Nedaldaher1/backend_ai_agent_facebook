@@ -274,16 +274,33 @@ export class ProductsService {
    * below SIMILARITY_MIN_SCORE are dropped so the agent never surfaces a weak
    * guess — an empty array is a valid, expected result. Outward boundary: the
    * primary image key is resolved to a public URL.
+   *
+   * `opts.targetColor` is a raw (possibly dialect) color term; when provided it
+   * is normalized to a color family via color_synonyms and the ANN search is
+   * scoped to products of that family BEFORE the LIMIT — only the closest images
+   * OF THAT COLOR are ranked. An unrecognized color (resolveColorFamily returns
+   * null) falls back to an unfiltered visual search, matching toPublishedFilter
+   * behaviour. An empty result is always valid.
    */
   async findSimilarByImage(
     imageUrl: string,
-    limit?: number,
+    opts?: { limit?: number; targetColor?: string },
   ): Promise<SimilarProduct[]> {
-    const k = limit ?? this.config.get<number>('SIMILARITY_TOP_K') ?? 6;
+    const k = opts?.limit ?? this.config.get<number>('SIMILARITY_TOP_K') ?? 6;
     const minScore = this.config.get<number>('SIMILARITY_MIN_SCORE') ?? 0;
 
+    // Normalize the requested color family via color_synonyms (mirrors toPublishedFilter).
+    // resolveColorFamily returns null for unrecognized terms → no color filter applied.
+    let colorFamily: string | undefined;
+    if (opts?.targetColor) {
+      colorFamily =
+        (await this.colors.resolveColorFamily(opts.targetColor)) ?? undefined;
+    }
+
     const vector = await this.embeddingService.embedImage(imageUrl);
-    const rows = await this.embeddings.searchSimilarByEmbedding(vector, k);
+    const rows = await this.embeddings.searchSimilarByEmbedding(vector, k, {
+      colorFamily,
+    });
 
     const hits = rows.filter((r) => r.similarity >= minScore);
     return Promise.all(

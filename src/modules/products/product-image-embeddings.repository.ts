@@ -138,12 +138,21 @@ export class ProductImageEmbeddingsRepository {
    * Over-fetching (k*4 by default) leaves enough candidates that the per-product
    * dedupe still yields up to `k` distinct products. The query vector must be the
    * same dtype/normalization as the stored vectors.
+   *
+   * `opts.colorFamily` narrows the search to a specific color family BEFORE the
+   * LIMIT so the HNSW scan only sees products of that color. The filter is fully
+   * parameterized — never string-concatenated. An unrecognized color (undefined)
+   * disables the filter and returns results across all colors.
    */
   async searchSimilarByEmbedding(
     embedding: number[],
     k: number,
-    overfetch = k * 4,
+    opts: { overfetch?: number; colorFamily?: string } = {},
   ): Promise<SimilarProductRow[]> {
+    const overfetch = opts.overfetch ?? k * 4;
+    const colorFilter = opts.colorFamily
+      ? sql`AND p.color_family = ${opts.colorFamily}`
+      : sql``;
     const vec = `[${embedding.join(',')}]`;
     const result = await this.db.execute(sql`
       WITH candidates AS (
@@ -159,7 +168,7 @@ export class ProductImageEmbeddingsRepository {
           p.image_urls
         FROM ${productImageEmbeddings} AS e
         JOIN ${products} AS p ON p.id = e.product_id
-        WHERE p.is_published = true
+        WHERE p.is_published = true ${colorFilter}
         ORDER BY e.embedding <=> ${vec}::vector
         LIMIT ${overfetch}
       ),

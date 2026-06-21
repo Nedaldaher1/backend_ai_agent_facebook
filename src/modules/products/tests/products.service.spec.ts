@@ -762,6 +762,67 @@ describe('ProductsService', () => {
     expect((err as Error).message).toBe('onnxruntime forward pass failed');
   });
 
+  // --- findSimilarByImage ---
+
+  const makeEmbeddingRow = (overrides: Record<string, unknown> = {}) => ({
+    productId: 'p1',
+    name: 'عباءة سوداء',
+    priceJod: '49.000',
+    colorFamily: 'black',
+    occasion: 'سهرة',
+    stockStatus: 'in_stock',
+    imageKey: 'img-key.jpg',
+    imageUrls: ['img-key.jpg'],
+    distance: 0.08,
+    similarity: 0.92,
+    ...overrides,
+  });
+
+  it('findSimilarByImage with targetColor resolves color family and forwards it to the repo', async () => {
+    resolveColorFamily.mockResolvedValue('red');
+    embedImage.mockResolvedValue(new Array(768).fill(0.1));
+    searchSimilarByEmbedding.mockResolvedValue([makeEmbeddingRow({ colorFamily: 'red' })]);
+
+    await service.findSimilarByImage('https://x/y.jpg', { targetColor: 'نبيتي' });
+
+    expect(resolveColorFamily).toHaveBeenCalledWith('نبيتي');
+    expect(searchSimilarByEmbedding).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Number),
+      { colorFamily: 'red' },
+    );
+  });
+
+  it('findSimilarByImage without targetColor calls the repo with no color filter', async () => {
+    embedImage.mockResolvedValue(new Array(768).fill(0.1));
+    searchSimilarByEmbedding.mockResolvedValue([makeEmbeddingRow()]);
+
+    await service.findSimilarByImage('https://x/y.jpg');
+
+    expect(resolveColorFamily).not.toHaveBeenCalled();
+    expect(searchSimilarByEmbedding).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Number),
+      { colorFamily: undefined },
+    );
+  });
+
+  it('findSimilarByImage falls back to unfiltered when resolveColorFamily returns null', async () => {
+    resolveColorFamily.mockResolvedValue(null);
+    embedImage.mockResolvedValue(new Array(768).fill(0.1));
+    searchSimilarByEmbedding.mockResolvedValue([makeEmbeddingRow()]);
+
+    await service.findSimilarByImage('https://x/y.jpg', { targetColor: 'مجهول' });
+
+    expect(resolveColorFamily).toHaveBeenCalledWith('مجهول');
+    // null resolved → colorFamily is undefined → no color filter
+    expect(searchSimilarByEmbedding).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Number),
+      { colorFamily: undefined },
+    );
+  });
+
   // --- setImageColors ---
 
   it('setImageColors validates colors, replaces the set, returns the descriptor', async () => {
