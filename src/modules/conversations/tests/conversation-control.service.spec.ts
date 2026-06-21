@@ -1,0 +1,640 @@
+/**
+ * Unit tests for ConversationControlService (WS5 + WS6 — AIA-34).
+ *
+ * ConversationsService, ManyChatControlService, and ManyChatSenderService are
+ * all fully mocked. No database or network calls are made.
+ *
+ * Coverage:
+ *  - pause:  setAiState called with correct patch, event recorded, ManyChat
+ *             mirror is fire-and-forget, never blocks on failure.
+ *  - resume: same pattern; humanSummary included iff input.summary present.
+ *  - assign: non-null → aiState='human', null → state unchanged, no applyState.
+ *  - handoff: aiState='human', event 'handoff', applyState('human').
+ *  - sendHumanMessage: gate (ai_state=bot throws), idempotency, happy path,
+ *             addMessage/sendReply/recordEvent, returns {message, delivered}.
+ *  - getThread: returns {conversation, messages}.
+ *  - listConversations: maps rows, escalated flag, unreadCount:0, ISO dates.
+ *  - ManyChat fire-and-forget: applyState rejection never surfaces to caller.
+ */
+
+// flydrive is ESM-only; stub it so the formatter/sender import chain doesn't
+// try to require the real module under Jest (CJS).
+jest.mock('flydrive', () => ({ Disk: jest.fn() }));
+jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
+jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
+
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConversationControlService } from '../conversation-control.service';
+import type { ConversationsService } from '../conversations.service';
+import type { ManyChatControlService } from '@/modules/agent/manychat/manychat-control.service';
+import type { ManyChatSenderService } from '@/modules/agent/manychat/manychat-sender.service';
+import type { Conversation } from '../entities/conversation.entity';
+import type { Message } from '../entities/message.entity';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const CONV_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+const PSID = 'psid-test-001';
+const ACTOR = 'admin@masafashion.com';
+
+function makeConvo(overrides: Partial<Conversation> = {}): Conversation {
+  return {
+    id: CONV_ID,
+    psid: PSID,
+    threadId: null,
+    adRef: null,
+    state: null,
+    createdAt: new Date('2025-01-01T00:00:00Z'),
+    aiState: 'bot',
+    assignedTo: null,
+    handoffReason: null,
+    humanSummary: null,
+    pausedUntil: null,
+    aiStateUpdatedAt: new Date('2025-01-01T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+function makeMsg(overrides: Partial<Message> = {}): Message {
+  return {
+    id: 'msg-001',
+    conversationId: CONV_ID,
+    role: 'human',
+    content: 'مرحبا',
+    imageUrl: null,
+    attributes: null,
+    externalId: null,
+    createdAt: new Date('2025-01-01T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mock factory
+// ---------------------------------------------------------------------------
+
+function makeMocks() {
+  const getById = jest.fn();
+  const setAiState = jest.fn();
+  const recordEvent = jest.fn();
+  const addMessage = jest.fn();
+  const findMessageByExternalId = jest.fn();
+  const listMessages = jest.fn();
+  const listWithPreview = jest.fn();
+
+  const conversations = {
+    getById,
+    setAiState,
+    recordEvent,
+    addMessage,
+    findMessageByExternalId,
+    listMessages,
+    listWithPreview,
+  } as unknown as ConversationsService;
+
+  const applyState = jest.fn().mockResolvedValue(undefined);
+  const manychatControl = { applyState } as unknown as ManyChatControlService;
+
+  const sendReply = jest.fn().mockResolvedValue(true);
+  const manychatSender = { sendReply } as unknown as ManyChatSenderService;
+
+  const svc = new ConversationControlService(conversations, manychatControl, manychatSender);
+
+  return { svc, getById, setAiState, recordEvent, addMessage, findMessageByExternalId, listMessages, listWithPreview, applyState, sendReply };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('ConversationControlService', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // -------------------------------------------------------------------------
+  // pause
+  // -------------------------------------------------------------------------
+
+  describe('pause', () => {
+    it('calls setAiState with aiState=paused, handoffReason, and computed pausedUntil', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      const convo = makeConvo({ aiState: 'bot' });
+      const updated = makeConvo({ aiState: 'paused' });
+      getById.mockResolvedValue(convo);
+      setAiState.mockResolvedValue(updated);
+      recordEvent.mockResolvedValue({});
+
+      const before = Date.now();
+      await svc.pause(CONV_ID, ACTOR, { reason: 'Customer upset', durationMinutes: 60 });
+      const after = Date.now();
+
+      expect(setAiState).toHaveBeenCalledWith(
+        CONV_ID,
+        expect.objectContaining({
+          aiState: 'paused',
+          handoffReason: 'Customer upset',
+        }),
+      );
+
+      // pausedUntil must be ~now+60m
+      const patch = setAiState.mock.calls[0][1] as { pausedUntil: Date | null };
+      expect(patch.pausedUntil).toBeInstanceOf(Date);
+      const until = patch.pausedUntil!.getTime();
+      expect(until).toBeGreaterThanOrEqual(before + 60 * 60_000);
+      expect(until).toBeLessThanOrEqual(after + 60 * 60_000);
+    });
+
+    it('sets pausedUntil=null when durationMinutes is not provided', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo());
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'paused' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.pause(CONV_ID, ACTOR, {});
+
+      const patch = setAiState.mock.calls[0][1] as { pausedUntil: null };
+      expect(patch.pausedUntil).toBeNull();
+    });
+
+    it('records a pause event with fromState, toState=paused, metadata:{durationMinutes}', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'paused' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.pause(CONV_ID, ACTOR, { reason: 'test', durationMinutes: 60 });
+
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: CONV_ID,
+          type: 'pause',
+          actor: ACTOR,
+          actorType: 'admin',
+          fromState: 'bot',
+          toState: 'paused',
+          metadata: { durationMinutes: 60 },
+        }),
+      );
+    });
+
+    it('records metadata=null when durationMinutes is absent', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo());
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'paused' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.pause(CONV_ID, ACTOR, {});
+
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: null }),
+      );
+    });
+
+    it('calls applyState(psid, "paused") fire-and-forget', async () => {
+      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
+      getById.mockResolvedValue(makeConvo());
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'paused' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.pause(CONV_ID, ACTOR, {});
+
+      // Fire-and-forget — allow the micro-task to flush before asserting.
+      await Promise.resolve();
+      expect(applyState).toHaveBeenCalledWith(PSID, 'paused');
+    });
+
+    it('still resolves even when applyState rejects (fire-and-forget does not surface)', async () => {
+      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
+      getById.mockResolvedValue(makeConvo());
+      const updatedConvo = makeConvo({ aiState: 'paused' });
+      setAiState.mockResolvedValue(updatedConvo);
+      recordEvent.mockResolvedValue({});
+      applyState.mockRejectedValue(new Error('ManyChat down'));
+
+      const result = await svc.pause(CONV_ID, ACTOR, {});
+
+      expect(result).toBe(updatedConvo);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // resume
+  // -------------------------------------------------------------------------
+
+  describe('resume', () => {
+    it('calls setAiState with aiState=bot, pausedUntil=null, and humanSummary when provided', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'paused' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.resume(CONV_ID, ACTOR, { summary: 'Customer agreed to size 2' });
+
+      expect(setAiState).toHaveBeenCalledWith(
+        CONV_ID,
+        expect.objectContaining({
+          aiState: 'bot',
+          pausedUntil: null,
+          humanSummary: 'Customer agreed to size 2',
+        }),
+      );
+    });
+
+    it('does NOT include humanSummary in the patch when summary is absent', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'paused' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.resume(CONV_ID, ACTOR, {});
+
+      const patch = setAiState.mock.calls[0][1] as Record<string, unknown>;
+      expect(patch).not.toHaveProperty('humanSummary');
+    });
+
+    it('records a resume event with toState=bot', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'paused' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.resume(CONV_ID, ACTOR, {});
+
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'resume',
+          fromState: 'paused',
+          toState: 'bot',
+        }),
+      );
+    });
+
+    it('calls applyState(psid, "bot") fire-and-forget', async () => {
+      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'paused' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.resume(CONV_ID, ACTOR, {});
+
+      await Promise.resolve();
+      expect(applyState).toHaveBeenCalledWith(PSID, 'bot');
+    });
+
+    it('still resolves even when applyState rejects', async () => {
+      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
+      getById.mockResolvedValue(makeConvo());
+      const updatedConvo = makeConvo({ aiState: 'bot' });
+      setAiState.mockResolvedValue(updatedConvo);
+      recordEvent.mockResolvedValue({});
+      applyState.mockRejectedValue(new Error('ManyChat down'));
+
+      const result = await svc.resume(CONV_ID, ACTOR, {});
+
+      expect(result).toBe(updatedConvo);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // assign
+  // -------------------------------------------------------------------------
+
+  describe('assign', () => {
+    it('sets aiState=human and assignedTo when assignedTo is non-null', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: 'agent@masa.com' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.assign(CONV_ID, ACTOR, { assignedTo: 'agent@masa.com' });
+
+      expect(setAiState).toHaveBeenCalledWith(
+        CONV_ID,
+        expect.objectContaining({
+          aiState: 'human',
+          assignedTo: 'agent@masa.com',
+        }),
+      );
+    });
+
+    it('records an assign event with toState=human when assignedTo is non-null', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.assign(CONV_ID, ACTOR, { assignedTo: 'agent@masa.com' });
+
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'assign',
+          toState: 'human',
+          metadata: { assignedTo: 'agent@masa.com' },
+        }),
+      );
+    });
+
+    it('calls applyState(psid, "human") when assignedTo is non-null', async () => {
+      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.assign(CONV_ID, ACTOR, { assignedTo: 'agent@masa.com' });
+
+      await Promise.resolve();
+      expect(applyState).toHaveBeenCalledWith(PSID, 'human');
+    });
+
+    it('sets assignedTo=null only (aiState unchanged) when assignedTo is null', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: 'agent@masa.com' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: null }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.assign(CONV_ID, ACTOR, { assignedTo: null });
+
+      expect(setAiState).toHaveBeenCalledWith(CONV_ID, { assignedTo: null });
+    });
+
+    it('records an assign event with toState=fromState when assignedTo is null', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: null }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.assign(CONV_ID, ACTOR, { assignedTo: null });
+
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'assign',
+          fromState: 'human',
+          toState: 'human', // state unchanged on unassign
+        }),
+      );
+    });
+
+    it('does NOT call applyState when assignedTo is null', async () => {
+      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: null }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.assign(CONV_ID, ACTOR, { assignedTo: null });
+
+      await Promise.resolve();
+      expect(applyState).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // handoff
+  // -------------------------------------------------------------------------
+
+  describe('handoff', () => {
+    it('calls setAiState with aiState=human and handoffReason', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.handoff(CONV_ID, ACTOR, { reason: 'Custom size request' });
+
+      expect(setAiState).toHaveBeenCalledWith(
+        CONV_ID,
+        expect.objectContaining({
+          aiState: 'human',
+          handoffReason: 'Custom size request',
+        }),
+      );
+    });
+
+    it('records a handoff event', async () => {
+      const { svc, getById, setAiState, recordEvent } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.handoff(CONV_ID, ACTOR, { reason: 'size' });
+
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'handoff',
+          toState: 'human',
+          actor: ACTOR,
+          actorType: 'admin',
+        }),
+      );
+    });
+
+    it('calls applyState(psid, "human") fire-and-forget', async () => {
+      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      setAiState.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      recordEvent.mockResolvedValue({});
+
+      await svc.handoff(CONV_ID, ACTOR, {});
+
+      await Promise.resolve();
+      expect(applyState).toHaveBeenCalledWith(PSID, 'human');
+    });
+
+    it('still resolves even when applyState rejects', async () => {
+      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
+      getById.mockResolvedValue(makeConvo());
+      const updatedConvo = makeConvo({ aiState: 'human' });
+      setAiState.mockResolvedValue(updatedConvo);
+      recordEvent.mockResolvedValue({});
+      applyState.mockRejectedValue(new Error('ManyChat down'));
+
+      await expect(svc.handoff(CONV_ID, ACTOR, {})).resolves.toBe(updatedConvo);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // sendHumanMessage
+  // -------------------------------------------------------------------------
+
+  describe('sendHumanMessage', () => {
+    it('throws BadRequestException when aiState is bot', async () => {
+      const { svc, getById, addMessage, sendReply } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+
+      await expect(
+        svc.sendHumanMessage(CONV_ID, ACTOR, { text: 'مرحبا' }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(addMessage).not.toHaveBeenCalled();
+      expect(sendReply).not.toHaveBeenCalled();
+    });
+
+    it('happy path: persists message, calls sendReply, records event, returns {message, delivered}', async () => {
+      const { svc, getById, addMessage, sendReply, recordEvent, findMessageByExternalId } = makeMocks();
+      const convo = makeConvo({ aiState: 'human' });
+      const msg = makeMsg({ id: 'new-msg-1', content: 'سيتم التوصيل غداً' });
+      getById.mockResolvedValue(convo);
+      findMessageByExternalId.mockResolvedValue(undefined);
+      addMessage.mockResolvedValue(msg);
+      sendReply.mockResolvedValue(true);
+      recordEvent.mockResolvedValue({});
+
+      const result = await svc.sendHumanMessage(
+        CONV_ID,
+        ACTOR,
+        { text: 'سيتم التوصيل غداً' },
+        'idem-key-1',
+      );
+
+      expect(addMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: CONV_ID,
+          role: 'human',
+          content: 'سيتم التوصيل غداً',
+          externalId: 'idem-key-1',
+        }),
+      );
+      expect(sendReply).toHaveBeenCalled();
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'human_message',
+          metadata: expect.objectContaining({ messageId: 'new-msg-1', delivered: true }),
+        }),
+      );
+      expect(result).toEqual({ message: msg, delivered: true });
+    });
+
+    it('idempotent: returns {message:existing, delivered:false} without calling addMessage or sendReply', async () => {
+      const { svc, getById, addMessage, sendReply, findMessageByExternalId } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      const existing = makeMsg({ id: 'existing-msg', externalId: 'idem-key-dup' });
+      findMessageByExternalId.mockResolvedValue(existing);
+
+      const result = await svc.sendHumanMessage(
+        CONV_ID,
+        ACTOR,
+        { text: 'سيتم التوصيل غداً' },
+        'idem-key-dup',
+      );
+
+      expect(addMessage).not.toHaveBeenCalled();
+      expect(sendReply).not.toHaveBeenCalled();
+      expect(result).toEqual({ message: existing, delivered: false });
+    });
+
+    it('propagates NotFoundException when getById throws', async () => {
+      const { svc, getById } = makeMocks();
+      getById.mockRejectedValue(new NotFoundException(`Conversation ${CONV_ID} not found`));
+
+      await expect(
+        svc.sendHumanMessage(CONV_ID, ACTOR, { text: 'مرحبا' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('reflects sendReply=false in the returned delivered field', async () => {
+      const { svc, getById, addMessage, sendReply, recordEvent, findMessageByExternalId } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      findMessageByExternalId.mockResolvedValue(undefined);
+      addMessage.mockResolvedValue(makeMsg({ id: 'msg-fail-send' }));
+      sendReply.mockResolvedValue(false); // ManyChat delivery failed
+      recordEvent.mockResolvedValue({});
+
+      const result = await svc.sendHumanMessage(CONV_ID, ACTOR, { text: 'test' }, 'k');
+
+      expect(result.delivered).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getThread
+  // -------------------------------------------------------------------------
+
+  describe('getThread', () => {
+    it('returns {conversation, messages} from getById + listMessages(asc)', async () => {
+      const { svc, getById, listMessages } = makeMocks();
+      const convo = makeConvo();
+      const msgs = [makeMsg({ id: 'msg-a' }), makeMsg({ id: 'msg-b' })];
+      getById.mockResolvedValue(convo);
+      listMessages.mockResolvedValue(msgs);
+
+      const result = await svc.getThread(CONV_ID);
+
+      expect(getById).toHaveBeenCalledWith(CONV_ID);
+      expect(listMessages).toHaveBeenCalledWith(CONV_ID, { orderBy: 'asc' });
+      expect(result).toEqual({ conversation: convo, messages: msgs });
+    });
+
+    it('propagates NotFoundException from getById', async () => {
+      const { svc, getById } = makeMocks();
+      getById.mockRejectedValue(new NotFoundException('not found'));
+
+      await expect(svc.getThread(CONV_ID)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // listConversations
+  // -------------------------------------------------------------------------
+
+  describe('listConversations', () => {
+    it('maps rows: escalated=true when handoffReason is non-null, unreadCount=0, customer=psid', async () => {
+      const { svc, listWithPreview } = makeMocks();
+      const lastAt = new Date('2025-06-01T12:00:00Z');
+      const row = {
+        id: CONV_ID,
+        psid: PSID,
+        aiState: 'human',
+        assignedTo: 'agent@masa.com',
+        handoffReason: 'size issue',
+        lastMessagePreview: 'مرحبا',
+        lastMessageAt: lastAt,
+      };
+      listWithPreview.mockResolvedValue({ items: [row], total: 1 });
+
+      const result = await svc.listConversations({ limit: 10, offset: 0 });
+
+      expect(result.items).toHaveLength(1);
+      const item = result.items[0];
+      expect(item.escalated).toBe(true);
+      expect(item.unreadCount).toBe(0);
+      expect(item.customer).toBe(PSID);
+      expect(item.lastMessageAt).toBe(lastAt.toISOString());
+    });
+
+    it('maps rows: escalated=false when handoffReason is null', async () => {
+      const { svc, listWithPreview } = makeMocks();
+      listWithPreview.mockResolvedValue({
+        items: [
+          {
+            id: CONV_ID,
+            psid: PSID,
+            aiState: 'bot',
+            assignedTo: null,
+            handoffReason: null,
+            lastMessagePreview: null,
+            lastMessageAt: null,
+          },
+        ],
+        total: 1,
+      });
+
+      const result = await svc.listConversations({});
+
+      expect(result.items[0].escalated).toBe(false);
+      expect(result.items[0].lastMessageAt).toBeNull();
+    });
+
+    it('returns {items, total, limit, offset} shape', async () => {
+      const { svc, listWithPreview } = makeMocks();
+      listWithPreview.mockResolvedValue({ items: [], total: 42 });
+
+      const result = await svc.listConversations({ limit: 20, offset: 5 });
+
+      expect(result.total).toBe(42);
+      expect(result.limit).toBe(20);
+      expect(result.offset).toBe(5);
+    });
+  });
+});
