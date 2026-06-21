@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { buildMastra } from './mastra/mastra.factory';
 import { HANDOFF_REPLY } from './handoff.constants';
 import { VisionService, type VisionExtractResult } from './vision/vision.service';
+import { MAX_GALLERY_CARDS } from './manychat/manychat.formatter';
 
 /** Window for the content-hash idempotency fallback when no provider id exists. */
 const DEDUP_WINDOW_MS = 10_000;
@@ -392,8 +393,9 @@ export class AgentService implements OnModuleInit {
    * Returns `{ products: undefined, overflow: 0 }` when there are no products
    * to surface.
    *
-   * The cap is 8 rendered cards (carousel limit). Overflow = total deduped
-   * products − 8, clamped to 0 (never negative).
+   * The cap is MAX_GALLERY_CARDS rendered cards (shared with the formatter so
+   * the rendered count and overflow math never drift). Overflow = total deduped
+   * products − cap, clamped to 0 (never negative).
    */
   private extractProducts(result: GenerateResult): {
     products: AgentReply['products'];
@@ -425,9 +427,8 @@ export class AgentService implements OnModuleInit {
         deduped.push({ id: p.id, name: p.name, price: p.price });
       }
 
-      const CAP = 8;
-      const rendered = deduped.slice(0, CAP);
-      const overflow = Math.max(0, deduped.length - CAP);
+      const rendered = deduped.slice(0, MAX_GALLERY_CARDS);
+      const overflow = Math.max(0, deduped.length - MAX_GALLERY_CARDS);
 
       return {
         products: rendered.length > 0 ? rendered : undefined,

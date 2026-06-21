@@ -36,7 +36,7 @@ describe('toDynamicBlock', () => {
     expect(cards.elements[0].image_url).toBeUndefined();
   });
 
-  it('caps the gallery at 10 cards', () => {
+  it('caps the gallery at MAX_GALLERY_CARDS (8) cards', () => {
     const products = Array.from({ length: 14 }, (_, i) => ({
       id: `p${i}`,
       name: `n${i}`,
@@ -46,7 +46,7 @@ describe('toDynamicBlock', () => {
     const cards = out.content.messages.find(
       (m) => m.type === 'cards',
     ) as ManyChatCardsMessage;
-    expect(cards.elements).toHaveLength(10);
+    expect(cards.elements).toHaveLength(8);
   });
 
   it('appends an Arabic overflow note when overflowCount > 0', () => {

@@ -5,7 +5,7 @@
  *
  * ManyChat Dynamic Block limits (enforced defensively here):
  *  - messages      : ≤10
- *  - gallery cards : ≤10  (MAX_CARDS)
+ *  - gallery cards : ≤8 rendered (MAX_GALLERY_CARDS); ManyChat's hard max is 10
  *  - buttons/card  : ≤3   (not emitted yet — enforced when added)
  *  - quick_replies : ≤11  (not emitted yet — enforced when added)
  *  - actions       : ≤5   (not emitted yet — enforced when added)
@@ -41,8 +41,13 @@ export interface DynamicBlockInput {
   overflowCount?: number;
 }
 
-/** ManyChat caps a gallery at 10 cards. */
-const MAX_CARDS = 10;
+/**
+ * Number of product cards we render in a gallery. ManyChat's hard gallery cap is
+ * 10; we render up to 8 to keep the carousel tight. Exported and shared with
+ * AgentService.extractProducts so the rendered count and the overflow-note count
+ * (total matched − this cap) can never drift apart.
+ */
+export const MAX_GALLERY_CARDS = 8;
 
 /** ManyChat caps the total message list at 10. */
 const MAX_MESSAGES = 10;
@@ -77,7 +82,7 @@ export function toDynamicBlock(input: DynamicBlockInput): ManyChatDynamicBlock {
 
   if (input.products && input.products.length > 0) {
     const elements: ManyChatCard[] = input.products
-      .slice(0, MAX_CARDS)
+      .slice(0, MAX_GALLERY_CARDS)
       .map((p) => ({
         title: p.name,
         subtitle: `${p.price} د.أ`,

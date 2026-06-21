@@ -4,9 +4,10 @@
  * Validates:
  *  (a) secret set + matching header → canActivate returns true.
  *  (b) secret set + wrong header → throws UnauthorizedException.
- *  (c) secret set + missing header → throws UnauthorizedException.
- *  (d) secret NOT set → returns true (open-dev mode).
- *  (e) "warn once" invariant: the missing-secret warning fires exactly once
+ *  (c) secret set + missing/duplicated header → throws UnauthorizedException.
+ *  (d) secret NOT set + non-production → returns true (open-dev mode).
+ *  (e) secret NOT set + production → FAIL CLOSED: throws UnauthorizedException.
+ *  (f) "warn once" invariant: the missing-secret message fires exactly once
  *      even across multiple canActivate calls.
  *
  * No real HTTP, no NestJS DI — the guard is constructed directly with a stub
@@ -36,7 +37,9 @@ function makeConfig(env: Record<string, string | undefined>): ConfigService {
  * request object with `headers` containing the given key-value pairs.
  * Fastify lowercases all header names, matching the production guard behaviour.
  */
-function makeContext(headers: Record<string, string | undefined>): ExecutionContext {
+function makeContext(
+  headers: Record<string, string | string[] | undefined>,
+): ExecutionContext {
   return {
     switchToHttp: () => ({
       getRequest: () => ({ headers }),
@@ -95,6 +98,15 @@ describe('ManyChatSecretGuard', () => {
     expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
   });
 
+  it('throws when the header is duplicated (array value) even if one element matches', () => {
+    const guard = new ManyChatSecretGuard(
+      makeConfig({ WEBHOOK_SHARED_SECRET: 'correct-secret' }),
+    );
+    // A duplicated header arrives as an array in Fastify; fail closed.
+    const ctx = makeContext({ 'x-manychat-secret': ['correct-secret', 'x'] });
+    expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
+  });
+
   // -------------------------------------------------------------------------
   // (d) Secret NOT set → open-dev mode, always returns true
   // -------------------------------------------------------------------------
@@ -116,7 +128,27 @@ describe('ManyChatSecretGuard', () => {
   });
 
   // -------------------------------------------------------------------------
-  // (e) "warn once" invariant — missing-secret warning fires exactly once
+  // (e) Secret NOT set + production → FAIL CLOSED
+  // -------------------------------------------------------------------------
+
+  it('throws (fail closed) when the secret is unset and NODE_ENV is production', () => {
+    const guard = new ManyChatSecretGuard(
+      makeConfig({ NODE_ENV: 'production' }), // no WEBHOOK_SHARED_SECRET
+    );
+    const ctx = makeContext({ 'x-manychat-secret': 'anything' });
+    expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
+  });
+
+  it('allows when the secret is unset and NODE_ENV is not production', () => {
+    const guard = new ManyChatSecretGuard(
+      makeConfig({ NODE_ENV: 'development' }),
+    );
+    const ctx = makeContext({});
+    expect(guard.canActivate(ctx)).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // (f) "warn once" invariant — missing-secret message fires exactly once
   // -------------------------------------------------------------------------
 
   it('logs the missing-secret warning only once across multiple canActivate calls', () => {

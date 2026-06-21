@@ -198,4 +198,4 @@ notifications.
 - The ManyChat flow has a fallback block configured (step 4).
 - `STORAGE_DRIVER=r2` in production so image URLs in product cards are publicly
   reachable by ManyChat and the subscriber's Messenger client.
-- The database is migrated (`bun run db:migrate` or equivalent).
+- The database is migrated to the latest revision (`bunx drizzle-kit migrate`).
