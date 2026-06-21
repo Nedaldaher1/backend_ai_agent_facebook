@@ -24,6 +24,7 @@ import type { OrderItem } from './entities/order-item.entity';
 import { DELIVERY_FEE_MILLI } from './delivery-fees';
 import { OrderCaptureError } from './order-capture.error';
 import { normalizeJordanMobile } from './phone.util';
+import { orderStatusLabelAr } from './status-labels';
 
 /** One item the customer chose: a product + the exact image (model/color) variant. */
 export interface CaptureOrderItemInput {
@@ -53,6 +54,22 @@ export interface CaptureOrderInput {
   /** Order-level fallback size for items with no explicit size. */
   unifiedSize?: string;
   items: CaptureOrderItemInput[];
+}
+
+/**
+ * Agent-facing summary of one order and its items, with the status already
+ * mapped to an Arabic label. This is what the get_order_status tool surfaces
+ * to the model — no raw SQL columns, no float money.
+ */
+export interface OrderStatusView {
+  orderId: string;
+  status: string;
+  statusLabelAr: string;
+  /** Human-readable line summary, e.g. "عباية كلاسيك (أسود) ×1، عباية سهرة ×2" */
+  itemsSummary: string;
+  /** JOD total as a numeric string, e.g. "92.000" */
+  total: string;
+  currency: string;
 }
 
 /** One persisted line, echoed back so the agent reads accurate numbers. */
@@ -152,6 +169,61 @@ export class OrdersService {
 
   listItems(orderId: string): Promise<OrderItem[]> {
     return this.repo.listItemsByOrder(orderId);
+  }
+
+  // --- order status lookup (agent read path) ---
+
+  /**
+   * Returns the status of one or all orders for a given conversation, with
+   * Arabic labels and a human-readable items summary pre-computed.
+   *
+   * Security: when `orderId` is provided we verify that the order actually
+   * belongs to `conversationId`; a mismatch returns `{ orders: [] }` so one
+   * customer can never look up another customer's order.
+   *
+   * Never throws — the caller (the tool's execute function) can always
+   * destructure `{ orders }` safely.
+   */
+  async getStatusForConversation(
+    conversationId: string,
+    orderId?: string,
+  ): Promise<{ orders: OrderStatusView[] }> {
+    let orderList: Order[];
+
+    if (orderId) {
+      // Use findById (returns undefined) NOT getById (throws NotFoundException).
+      const found = await this.repo.findById(orderId);
+      // Security: reject if missing OR if it belongs to a different conversation.
+      if (!found || found.conversationId !== conversationId) {
+        return { orders: [] };
+      }
+      orderList = [found];
+    } else {
+      orderList = await this.repo.listByConversation(conversationId);
+    }
+
+    const views: OrderStatusView[] = [];
+    for (const order of orderList) {
+      const items = await this.listItems(order.id);
+      const itemsSummary = items
+        .map((i) =>
+          i.colorName
+            ? `${i.productName} (${i.colorName}) ×${i.qty}`
+            : `${i.productName} ×${i.qty}`,
+        )
+        .join('، ');
+
+      views.push({
+        orderId: order.id,
+        status: order.status,
+        statusLabelAr: orderStatusLabelAr(order.status),
+        itemsSummary,
+        total: order.total,
+        currency: order.currency,
+      });
+    }
+
+    return { orders: views };
   }
 
   // --- COD capture (agent write path) ---

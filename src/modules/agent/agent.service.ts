@@ -151,7 +151,7 @@ export class AgentService implements OnModuleInit {
     this.salesAgent = salesAgent;
 
     this.logger.log(
-      'Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=8, instructions=dynamic',
+      'Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=9, instructions=dynamic',
     );
   }
 

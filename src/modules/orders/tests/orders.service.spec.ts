@@ -479,4 +479,174 @@ describe('OrdersService', () => {
       expect(createWithItems).not.toHaveBeenCalled();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // getStatusForConversation — order status lookup (agent read path)
+  // -------------------------------------------------------------------------
+  describe('getStatusForConversation', () => {
+    const CONV_ID = 'conv-abc';
+    const OTHER_CONV_ID = 'conv-xyz';
+    const ORDER_ID_1 = '11111111-1111-1111-1111-111111111111';
+    const ORDER_ID_2 = '22222222-2222-2222-2222-222222222222';
+
+    function makeOrderRow(
+      overrides: Record<string, unknown> = {},
+    ) {
+      return {
+        id: ORDER_ID_1,
+        conversationId: CONV_ID,
+        status: 'draft',
+        total: '92.000',
+        currency: 'JOD',
+        createdAt: new Date(),
+        source: 'messenger',
+        phone: '+962791234567',
+        address: 'عمّان',
+        unifiedSize: null,
+        subtotal: '90.000',
+        deliveryFee: '2.000',
+        ...overrides,
+      };
+    }
+
+    function makeItemRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'item-1',
+        orderId: ORDER_ID_1,
+        productId: PRODUCT_ID,
+        storageKey: 'img-1.jpg',
+        size: 'M',
+        qty: 1,
+        unitPrice: '45.000',
+        lineTotal: '45.000',
+        productName: 'عباية كلاسيك',
+        colorName: 'أسود',
+        ...overrides,
+      };
+    }
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('(a) lists all orders for a conversation newest-first with correct Arabic labels and itemsSummary', async () => {
+      const order1 = makeOrderRow({ id: ORDER_ID_1, status: 'confirmed' });
+      const order2 = makeOrderRow({
+        id: ORDER_ID_2,
+        status: 'fulfilled',
+        total: '47.000',
+      });
+      // newest-first — repo returns them in this order
+      listByConversation.mockResolvedValue([order1, order2]);
+      // items for order 1: one with colorName, one without
+      listItemsByOrder
+        .mockResolvedValueOnce([
+          makeItemRow({ qty: 1, colorName: 'أسود' }),
+          makeItemRow({ id: 'item-2', productName: 'عباية سهرة', colorName: null, qty: 2 }),
+        ])
+        // items for order 2: single item
+        .mockResolvedValueOnce([
+          makeItemRow({ productName: 'عباية سهرة', colorName: 'بنّي', qty: 1 }),
+        ]);
+
+      const result = await service.getStatusForConversation(CONV_ID);
+
+      expect(result.orders).toHaveLength(2);
+
+      // First order (confirmed)
+      expect(result.orders[0]).toMatchObject({
+        orderId: ORDER_ID_1,
+        status: 'confirmed',
+        statusLabelAr: 'تم تأكيد طلبك وهو قيد التجهيز',
+        itemsSummary: 'عباية كلاسيك (أسود) ×1، عباية سهرة ×2',
+        total: '92.000',
+        currency: 'JOD',
+      });
+
+      // Second order (fulfilled)
+      expect(result.orders[1]).toMatchObject({
+        orderId: ORDER_ID_2,
+        status: 'fulfilled',
+        statusLabelAr: 'تم إخراج طلبك وهو في طريقه إليك',
+        itemsSummary: 'عباية سهرة (بنّي) ×1',
+        total: '47.000',
+      });
+    });
+
+    it('(b) orderId belonging to the conversation → returns just that order', async () => {
+      const order = makeOrderRow({ id: ORDER_ID_1, status: 'draft' });
+      findById.mockResolvedValue(order);
+      listItemsByOrder.mockResolvedValue([makeItemRow()]);
+
+      const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+
+      expect(findById).toHaveBeenCalledWith(ORDER_ID_1);
+      expect(listByConversation).not.toHaveBeenCalled();
+      expect(result.orders).toHaveLength(1);
+      expect(result.orders[0].orderId).toBe(ORDER_ID_1);
+      expect(result.orders[0].statusLabelAr).toBe('طلبك مسجّل عنا وقيد المراجعة');
+    });
+
+    it('(c) orderId belonging to a DIFFERENT conversation → returns empty (security)', async () => {
+      // The order exists but belongs to another conversation.
+      const order = makeOrderRow({ id: ORDER_ID_1, conversationId: OTHER_CONV_ID });
+      findById.mockResolvedValue(order);
+
+      const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+
+      expect(result.orders).toEqual([]);
+      expect(listItemsByOrder).not.toHaveBeenCalled();
+    });
+
+    it('(c) unknown orderId (findById returns undefined) → returns empty', async () => {
+      findById.mockResolvedValue(undefined);
+
+      const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+
+      expect(result.orders).toEqual([]);
+      expect(listItemsByOrder).not.toHaveBeenCalled();
+    });
+
+    it('(d) no orders for the conversation → returns { orders: [] }', async () => {
+      listByConversation.mockResolvedValue([]);
+
+      const result = await service.getStatusForConversation(CONV_ID);
+
+      expect(result).toEqual({ orders: [] });
+      expect(listItemsByOrder).not.toHaveBeenCalled();
+    });
+
+    it('(e) maps every status to its correct Arabic label', async () => {
+      const statuses: Array<{ status: string; expected: string }> = [
+        { status: 'draft', expected: 'طلبك مسجّل عنا وقيد المراجعة' },
+        { status: 'confirmed', expected: 'تم تأكيد طلبك وهو قيد التجهيز' },
+        { status: 'fulfilled', expected: 'تم إخراج طلبك وهو في طريقه إليك' },
+        { status: 'canceled', expected: 'طلبك ملغى' },
+      ];
+
+      for (const { status, expected } of statuses) {
+        jest.clearAllMocks();
+        const order = makeOrderRow({ status });
+        findById.mockResolvedValue(order);
+        listItemsByOrder.mockResolvedValue([]);
+
+        const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+
+        expect(result.orders[0].statusLabelAr).toBe(expected);
+      }
+    });
+
+    it('(e) itemsSummary uses colorName when present and omits it when null', async () => {
+      const order = makeOrderRow({ status: 'draft' });
+      findById.mockResolvedValue(order);
+      listItemsByOrder.mockResolvedValue([
+        makeItemRow({ productName: 'عباية A', colorName: 'أسود', qty: 1 }),
+        makeItemRow({ id: 'item-2', productName: 'عباية B', colorName: null, qty: 3 }),
+      ]);
+
+      const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+
+      expect(result.orders[0].itemsSummary).toBe('عباية A (أسود) ×1، عباية B ×3');
+    });
+  });
 });

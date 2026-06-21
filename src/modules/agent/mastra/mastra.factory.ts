@@ -95,7 +95,7 @@ export function buildMastra(deps: BuildMastraDeps): {
   // Build domain tools by closing over the injected services.
   // Registered: search_products, check_availability, get_product_media,
   //   get_knowledge, recommend_size, capture_order, escalate_to_human,
-  //   find_similar_by_image.
+  //   find_similar_by_image, get_order_status.
   // `updateWorkingMemory` is auto-registered by Memory and is NOT removed here.
   const tools = buildSalesTools({ products, orders, conversations, knowledge, sizing });
 
