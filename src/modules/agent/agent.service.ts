@@ -14,9 +14,9 @@ import { AgentBehaviorService } from './agent-behavior.service';
 import { SizingService } from '@/modules/sizing/sizing.service';
 import { createHash } from 'node:crypto';
 import { buildMastra } from './mastra/mastra.factory';
-import { HANDOFF_REPLY } from './handoff.constants';
 import { VisionService, type VisionExtractResult } from './vision/vision.service';
 import { MAX_GALLERY_CARDS } from './manychat/manychat.formatter';
+import { ManyChatControlService } from './manychat/manychat-control.service';
 
 /** Window for the content-hash idempotency fallback when no provider id exists. */
 const DEDUP_WINDOW_MS = 10_000;
@@ -164,6 +164,7 @@ export class AgentService implements OnModuleInit {
     private readonly knowledge: KnowledgeService,
     private readonly sizing: SizingService,
     private readonly vision: VisionService,
+    private readonly manychatControl: ManyChatControlService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -213,9 +214,10 @@ export class AgentService implements OnModuleInit {
    *  2. Ensures a Conversation row exists for this contact via findOrCreateByPsid.
    *     contactId is stored in the `psid` column because ManyChat never exposes
    *     the real Facebook PSID; contact_id is our stable subscriber id.
-   *  2a. BOT-PAUSE GATE (code-enforced): if state.stage === 'needs_human', logs the
-   *      inbound message and returns the handoff reply immediately — generate() is
-   *      NOT called. This is the first check after obtaining the conversation row.
+   *  2a. BOT-PAUSE GATE (code-enforced): if ai_state !== 'bot', logs the inbound
+   *      message and returns silently (reply: '') — generate() is NOT called. The
+   *      handoff line is delivered once on the escalation turn by the tool; all
+   *      subsequent turns while paused or handed-off are silent.
    *  3. Builds a RequestContext carrying `contactId`, `conversationId`, `threadId`,
    *     and `adRef` (when present) so that write tools can read customer identity
    *     without it appearing in the tool input schema (security boundary, AIA-27).
@@ -253,11 +255,12 @@ export class AgentService implements OnModuleInit {
       return { reply: '' };
     }
 
-    // Bot-pause gate (code-enforced): once a conversation is handed to a human
-    // (escalate_to_human set state.stage='needs_human'), the bot stops replying.
-    // We still log the inbound message so the human sees it, but skip the LLM.
-    const state = convo.state as { stage?: string } | null;
-    if (state?.stage === 'needs_human') {
+    // Secondary gate (code-enforced): the bot replies only when ai_state === 'bot'.
+    // 'human'/'paused' → log the inbound for the human, skip generate(), stay silent.
+    // The handoff line is delivered once on the escalation turn itself (the tool's
+    // reply); subsequent turns are silent. '' maps to an empty Dynamic Block (sync
+    // no-op) and a no-op Send (async).
+    if (convo.aiState !== 'bot') {
       await this.logTurn({
         conversationId: convo.id,
         role: 'customer',
@@ -265,7 +268,7 @@ export class AgentService implements OnModuleInit {
         externalId: dedupKey,
         ...(input.lastImageUrl ? { imageUrl: input.lastImageUrl } : {}),
       });
-      return { reply: HANDOFF_REPLY };
+      return { reply: '' };
     }
 
     // Build the trusted RequestContext that write tools read for identity.
@@ -353,6 +356,18 @@ export class AgentService implements OnModuleInit {
       content: result.text,
       ...(evalInfo ? { attributes: { eval: evalInfo } } : {}),
     });
+
+    // Mirror escalation into ManyChat (fire-and-forget) when this turn escalated.
+    // The DB is the source of truth; ManyChat sync is best-effort and must never
+    // delay or break the reply to the customer. Only AgentService calls this
+    // (ConversationsService and the tool stay ManyChat-free to avoid module cycles).
+    if (this.didEscalate(result)) {
+      void this.manychatControl
+        .applyState(resourceId, 'human')
+        .catch((err) =>
+          this.logger.warn(`ManyChat escalation sync failed: ${err}`),
+        );
+    }
 
     const { products: extractedProducts, overflow } = this.extractProducts(result);
     return {
@@ -525,6 +540,27 @@ export class AgentService implements OnModuleInit {
       };
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * Returns true when the just-finished generate() turn contained a successful
+   * `escalate_to_human` tool call. Mirrors the defensive style of `extractProducts`
+   * and `buildEvalInfo`: filters `result.toolResults` by `payload.toolName` and
+   * `!payload.isError`, then checks `payload.result.escalated`. Best-effort:
+   * never throws — returns false on any malformed payload.
+   */
+  private didEscalate(result: GenerateResult): boolean {
+    try {
+      return (result.toolResults ?? []).some(
+        (c) =>
+          c.payload?.toolName === 'escalate_to_human' &&
+          !c.payload?.isError &&
+          (c.payload?.result as { escalated?: boolean } | undefined)
+            ?.escalated === true,
+      );
+    } catch {
+      return false;
     }
   }
 

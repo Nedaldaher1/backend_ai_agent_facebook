@@ -17,9 +17,9 @@
  *  7. The reply equals the generate result text.
  *  8. Products are extracted and deduped from search_products toolResults.
  *  9. When toolResults is absent, products is undefined.
- * 10. Bot-pause gate: when state.stage === 'needs_human', generate is NOT called,
- *     addMessage is called once (inbound only), and reply === HANDOFF_REPLY.
- * 11. A non-'needs_human' stage does NOT trigger the pause gate.
+ * 10. Bot-pause gate: when aiState !== 'bot' (human/paused), generate is NOT called,
+ *     addMessage is called once (inbound only), and reply === ''.
+ * 11. aiState === 'bot' proceeds normally through generate().
  */
 
 // Mock the factory BEFORE any import of AgentService so the module-level
@@ -66,7 +66,6 @@ jest.mock('@mastra/core/di', () => {
 import { AgentService } from '../agent.service';
 import { buildMastra } from '../mastra/mastra.factory';
 import { RequestContext } from '@mastra/core/di';
-import { HANDOFF_REPLY } from '../handoff.constants';
 import type { ConfigService } from '@nestjs/config';
 import type { ProductsService } from '@/modules/products/products.service';
 import type { ConversationsService } from '@/modules/conversations/conversations.service';
@@ -75,6 +74,7 @@ import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { VisionService } from '../vision/vision.service';
+import type { ManyChatControlService } from '../manychat/manychat-control.service';
 
 // ---------------------------------------------------------------------------
 // Typed cast helpers
@@ -122,20 +122,25 @@ const visionMock = {
     .mockResolvedValue({ attributes: null, confidence: null }),
 } as unknown as VisionService;
 
+/** A minimal ManyChatControlService stub. */
+const manychatControlMock = {
+  applyState: jest.fn().mockResolvedValue(undefined),
+} as unknown as ManyChatControlService;
+
 /**
  * A ConversationsService stub with findOrCreateByPsid and addMessage.
  * Both resolve immediately; addMessage call order is asserted in the tests.
  *
  * @param conversationId  The id returned by findOrCreateByPsid (default 'convo-1').
- * @param state           Optional state jsonb value to include in the conversation row.
- *                        Pass `{ stage: 'needs_human' }` to exercise the pause gate.
+ * @param aiState         The ai_state column value on the conversation row (default 'bot').
+ *                        Pass 'human' or 'paused' to exercise the pause gate.
  */
 function makeConversationsMock(
   conversationId = 'convo-1',
-  state: Record<string, unknown> | null = null,
+  aiState: string = 'bot',
 ): ConversationsService {
   return {
-    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId, state }),
+    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId, aiState }),
     addMessage: jest.fn().mockResolvedValue({}),
     // Default: no prior message with this idempotency key (not a duplicate).
     findMessageByExternalId: jest.fn().mockResolvedValue(undefined),
@@ -184,6 +189,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
 
     service.onModuleInit();
@@ -205,6 +211,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
 
     service.onModuleInit();
@@ -225,6 +232,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
 
     service.onModuleInit();
@@ -249,6 +257,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -273,6 +282,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -299,6 +309,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -327,6 +338,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -351,6 +363,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -377,6 +390,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -402,6 +416,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -453,6 +468,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -472,6 +488,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -505,6 +522,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -532,6 +550,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -572,6 +591,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -598,6 +618,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -624,6 +645,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -654,6 +676,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -677,6 +700,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -718,6 +742,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -764,6 +789,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -812,6 +838,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -853,6 +880,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -873,6 +901,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -917,6 +946,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -928,12 +958,12 @@ describe('AgentService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // handleMessage — bot-pause gate (state.stage === 'needs_human')
+  // handleMessage — bot-pause gate (ai_state !== 'bot')
   // -------------------------------------------------------------------------
 
-  it('returns HANDOFF_REPLY and skips generate when state.stage is needs_human', async () => {
+  it('returns empty reply and skips generate when aiState is human', async () => {
     const CONVO_ID = 'convo-paused';
-    const conversations = makeConversationsMock(CONVO_ID, { stage: 'needs_human' });
+    const conversations = makeConversationsMock(CONVO_ID, 'human');
     const service = new AgentService(
       makeConfigMock(),
       productsMock,
@@ -943,20 +973,21 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
     const result = await service.handleMessage({ contactId: 'C1', text: 'وين طلبي؟' });
 
-    // Must return the canned handoff line
-    expect(result.reply).toBe(HANDOFF_REPLY);
+    // Silent — the handoff line was delivered once on the escalation turn itself.
+    expect(result.reply).toBe('');
     // LLM must NOT be invoked
     expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
   });
 
-  it('logs inbound message exactly once when the pause gate fires', async () => {
-    const CONVO_ID = 'convo-paused-log';
-    const conversations = makeConversationsMock(CONVO_ID, { stage: 'needs_human' });
+  it('returns empty reply and skips generate when aiState is paused', async () => {
+    const CONVO_ID = 'convo-paused-state';
+    const conversations = makeConversationsMock(CONVO_ID, 'paused');
     const service = new AgentService(
       makeConfigMock(),
       productsMock,
@@ -966,6 +997,29 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
+    );
+    service.onModuleInit();
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'هل الطلب جاهز؟' });
+
+    expect(result.reply).toBe('');
+    expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
+  });
+
+  it('logs inbound message exactly once when the pause gate fires', async () => {
+    const CONVO_ID = 'convo-paused-log';
+    const conversations = makeConversationsMock(CONVO_ID, 'human');
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -984,7 +1038,7 @@ describe('AgentService', () => {
 
   it('pause gate includes imageUrl in the inbound log when lastImageUrl is present', async () => {
     const CONVO_ID = 'convo-paused-img';
-    const conversations = makeConversationsMock(CONVO_ID, { stage: 'needs_human' });
+    const conversations = makeConversationsMock(CONVO_ID, 'human');
     const service = new AgentService(
       makeConfigMock(),
       productsMock,
@@ -994,6 +1048,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -1010,10 +1065,9 @@ describe('AgentService', () => {
     });
   });
 
-  it('does NOT pause when state.stage is a non-needs_human value', async () => {
-    // A conversation with an arbitrary stage like 'browsing' must go through
-    // the normal generate() path — only 'needs_human' triggers the pause.
-    const conversations = makeConversationsMock('convo-browsing', { stage: 'browsing' });
+  it('does NOT pause when aiState is bot (normal conversation)', async () => {
+    // aiState: 'bot' → normal generate() path.
+    const conversations = makeConversationsMock('convo-bot', 'bot');
     const service = new AgentService(
       makeConfigMock(),
       productsMock,
@@ -1023,6 +1077,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -1032,9 +1087,9 @@ describe('AgentService', () => {
     expect(result.reply).toBe(FAKE_REPLY);
   });
 
-  it('does NOT pause when state is null (fresh conversation)', async () => {
-    // null state → not paused; existing tests rely on this (makeConversationsMock default)
-    const conversations = makeConversationsMock('convo-fresh', null);
+  it('does NOT pause for a fresh conversation (default aiState: bot)', async () => {
+    // makeConversationsMock defaults to aiState:'bot'.
+    const conversations = makeConversationsMock('convo-fresh');
     const service = new AgentService(
       makeConfigMock(),
       productsMock,
@@ -1044,6 +1099,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      manychatControlMock,
     );
     service.onModuleInit();
 

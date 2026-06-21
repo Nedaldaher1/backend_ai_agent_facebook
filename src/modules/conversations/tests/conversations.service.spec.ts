@@ -42,6 +42,8 @@ describe('ConversationsService', () => {
   const listMessagesByConversation = jest.fn();
   const findMessageById = jest.fn();
   const insertMessage = jest.fn();
+  const setAiState = jest.fn();
+  const recordEvent = jest.fn();
 
   const repo = {
     listConversations,
@@ -52,6 +54,8 @@ describe('ConversationsService', () => {
     listMessagesByConversation,
     findMessageById,
     insertMessage,
+    setAiState,
+    recordEvent,
   } as unknown as ConversationsRepository;
 
   const service = new ConversationsService(repo);
@@ -158,5 +162,55 @@ describe('ConversationsService', () => {
     const result = await service.getById('c2');
 
     expect(result).toBe(conv);
+  });
+
+  // --- escalateToHuman (WS4 — AIA-34) ---
+
+  it('escalateToHuman throws NotFoundException when conversation is not found', async () => {
+    findConversationById.mockResolvedValue(undefined);
+
+    await expect(
+      service.escalateToHuman(CONVERSATION_ID, 'test reason'),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(setAiState).not.toHaveBeenCalled();
+    expect(recordEvent).not.toHaveBeenCalled();
+  });
+
+  it('escalateToHuman calls setAiState with aiState human and the reason', async () => {
+    const convo = makeConversation({ id: CONVERSATION_ID, aiState: 'bot' });
+    const updated = makeConversation({ id: CONVERSATION_ID, aiState: 'human', handoffReason: 'too complex' });
+    findConversationById.mockResolvedValue(convo);
+    setAiState.mockResolvedValue(updated);
+    recordEvent.mockResolvedValue({});
+
+    const result = await service.escalateToHuman(CONVERSATION_ID, 'too complex');
+
+    expect(setAiState).toHaveBeenCalledWith(CONVERSATION_ID, {
+      aiState: 'human',
+      handoffReason: 'too complex',
+    });
+    expect(result).toBe(updated);
+  });
+
+  it('escalateToHuman records a handoff audit event with correct fields', async () => {
+    const convo = makeConversation({ id: CONVERSATION_ID, aiState: 'bot' });
+    const updated = makeConversation({ id: CONVERSATION_ID, aiState: 'human' });
+    findConversationById.mockResolvedValue(convo);
+    setAiState.mockResolvedValue(updated);
+    recordEvent.mockResolvedValue({});
+
+    await service.escalateToHuman(CONVERSATION_ID, 'size question');
+
+    expect(recordEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: CONVERSATION_ID,
+        type: 'handoff',
+        actorType: 'agent',
+        fromState: 'bot',
+        toState: 'human',
+        reason: 'size question',
+      }),
+    );
   });
 });

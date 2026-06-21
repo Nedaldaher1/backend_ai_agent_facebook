@@ -10,6 +10,7 @@ import {
 import { ConversationsRepository } from './conversations.repository';
 import type { Conversation } from './entities/conversation.entity';
 import type { Message } from './entities/message.entity';
+import type { ConversationEvent, NewConversationEvent } from './entities/conversation-event.entity';
 
 /** Options when opening (or reusing) a thread for a psid. */
 export interface FindOrCreateConversationInput {
@@ -109,12 +110,13 @@ export class ConversationsService {
   }
 
   /**
-   * Mark a conversation as needing human attention.
-   * Merges the escalation marker into the existing `state` jsonb so that no
-   * other state keys (customer preferences, funnel stage, etc.) are lost.
+   * Mark a conversation as handed off to a human agent.
    *
-   * The `stage: 'needs_human'` key is the machine-readable signal used by the
-   * admin panel and the ManyChat webhook to route the thread to a human agent.
+   * Writes `ai_state = 'human'` and `handoff_reason` via the dedicated columns
+   * (WS4 — AIA-34) and appends a `handoff` audit event to `conversation_events`.
+   * The `state` jsonb is intentionally left unchanged — it still holds customer
+   * preferences and funnel data; `ai_state` is the source of truth for handler
+   * routing from this point on.
    *
    * @param conversationId  UUID of the conversation to escalate.
    * @param reason          Human-readable escalation note for the admin side.
@@ -123,19 +125,54 @@ export class ConversationsService {
     conversationId: string,
     reason: string,
   ): Promise<Conversation> {
-    // Atomic shallow jsonb merge (no read-modify-write): preserves any other
-    // state keys (customer preferences, funnel stage) while setting the
-    // escalation marker, so a concurrent state write can't clobber it.
-    const updated = await this.repo.mergeConversationState(conversationId, {
-      stage: 'needs_human',
-      escalation: {
-        reason,
-        at: new Date().toISOString(),
-      },
+    const convo = await this.repo.findConversationById(conversationId);
+    if (!convo) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+    const fromState = convo.aiState;
+
+    const updated = await this.repo.setAiState(conversationId, {
+      aiState: 'human',
+      handoffReason: reason,
     });
+
+    await this.repo.recordEvent({
+      conversationId,
+      type: 'handoff',
+      actorType: 'agent',
+      fromState,
+      toState: 'human',
+      reason,
+    });
+
+    // setAiState only returns undefined when the row was deleted between the
+    // findConversationById check above and the UPDATE — treat as not-found.
     if (!updated) {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
     return updated;
+  }
+
+  // --- thin pass-throughs for WS5 and later workstreams ---
+
+  /**
+   * Update dedicated handler-state columns on a conversation. Delegates to the
+   * repository; callers (e.g. the admin handoff API) should use this rather
+   * than the repository directly so the data-access layer stays behind the
+   * service boundary.
+   */
+  setAiState(
+    id: string,
+    patch: Parameters<ConversationsRepository['setAiState']>[1],
+  ): Promise<Conversation | undefined> {
+    return this.repo.setAiState(id, patch);
+  }
+
+  /**
+   * Append an immutable audit event. Delegates to the repository; callers
+   * should use this rather than the repository directly.
+   */
+  recordEvent(input: NewConversationEvent): Promise<ConversationEvent> {
+    return this.repo.recordEvent(input);
   }
 }

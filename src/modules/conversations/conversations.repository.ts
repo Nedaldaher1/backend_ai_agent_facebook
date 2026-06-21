@@ -4,6 +4,7 @@ import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
   conversations,
+  AI_STATES,
   type Conversation,
   type NewConversation,
 } from './entities/conversation.entity';
@@ -12,6 +13,14 @@ import {
   type Message,
   type NewMessage,
 } from './entities/message.entity';
+import {
+  conversationEvents,
+  type ConversationEvent,
+  type NewConversationEvent,
+} from './entities/conversation-event.entity';
+
+/** Derived union from the AI_STATES tuple; avoids re-declaring the enum. */
+type AiState = (typeof AI_STATES)[number];
 
 /**
  * Sole owner of conversations + messages SQL (the two runtime tables the agent
@@ -159,5 +168,49 @@ export class ConversationsRepository {
       .where(and(eq(messages.role, 'agent'), isNotNull(messages.attributes)))
       .orderBy(desc(messages.createdAt))
       .limit(limit);
+  }
+
+  // --- conversation state (WS4 — AIA-34) ---
+
+  /**
+   * Update the dedicated handler-state columns on a conversation row.
+   * Whenever `patch.aiState` is present, `ai_state_updated_at` is also set to
+   * the current timestamp so callers can track when the transition happened.
+   * Returns the updated row, or undefined if the conversation does not exist.
+   */
+  async setAiState(
+    id: string,
+    patch: {
+      aiState?: AiState;
+      assignedTo?: string | null;
+      handoffReason?: string | null;
+      humanSummary?: string | null;
+      pausedUntil?: Date | null;
+    },
+  ): Promise<Conversation | undefined> {
+    const updates: Partial<typeof conversations.$inferInsert> = { ...patch };
+    if (patch.aiState !== undefined) {
+      updates.aiStateUpdatedAt = new Date();
+    }
+    const [row] = await this.db
+      .update(conversations)
+      .set(updates)
+      .where(eq(conversations.id, id))
+      .returning();
+    return row;
+  }
+
+  /**
+   * Append an immutable audit event to the conversation_events table.
+   * Returns the inserted row.
+   */
+  async recordEvent(
+    input: NewConversationEvent,
+  ): Promise<ConversationEvent> {
+    const [row] = await this.db
+      .insert(conversationEvents)
+      .values(input)
+      .returning();
+    return row;
   }
 }
