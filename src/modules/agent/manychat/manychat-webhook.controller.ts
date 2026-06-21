@@ -66,7 +66,11 @@ export class ManyChatWebhookController {
     try {
       const reply = await this.agent.handleMessage(this.toIncoming(dto));
       const products = await this.enrichWithImages(reply.products);
-      return toDynamicBlock({ reply: reply.reply, products });
+      return toDynamicBlock({
+        reply: reply.reply,
+        products,
+        overflowCount: reply.productOverflow,
+      });
     } catch (err) {
       // Log the failure but ALWAYS return a valid v2 block so ManyChat never
       // halts the automation due to a 5xx or malformed response from our side.
@@ -125,7 +129,11 @@ export class ManyChatWebhookController {
   ): Promise<void> {
     const reply = await this.agent.handleMessage(mergeTurns(items));
     const products = await this.enrichWithImages(reply.products);
-    const block = toDynamicBlock({ reply: reply.reply, products });
+    const block = toDynamicBlock({
+      reply: reply.reply,
+      products,
+      overflowCount: reply.productOverflow,
+    });
     await this.sender.sendReply(contactId, block);
   }
 

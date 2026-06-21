@@ -32,6 +32,7 @@ function makeController(opts: {
   reply: {
     reply: string;
     products?: Array<{ id: string; name: string; price: string }>;
+    productOverflow?: number;
   };
   media?: Record<string, { url: string; type: string }[]>;
 }) {
@@ -183,6 +184,43 @@ describe('ManyChatWebhookController', () => {
       'C1',
       expect.objectContaining({ version: 'v2' }),
     );
+  });
+
+  it('sync handle passes productOverflow to toDynamicBlock (overflow note in messages)', async () => {
+    const { controller } = makeController({
+      reply: {
+        reply: 'خيارات',
+        products: [{ id: 'p1', name: 'عباية', price: '45.000' }],
+        productOverflow: 4,
+      },
+    });
+
+    const block = await controller.handle({ contactId: 'C1', text: 'بدي عباية' });
+
+    const texts = block.content.messages.filter((m) => m.type === 'text');
+    // First text = reply; second text = overflow note
+    expect(texts.length).toBeGreaterThanOrEqual(2);
+    const note = texts[texts.length - 1] as import('../manychat.types').ManyChatTextMessage;
+    expect(note.text).toContain('4');
+  });
+
+  it('async processBatch passes productOverflow to the delivered block', async () => {
+    const { controller, sender, flush } = makeController({
+      reply: {
+        reply: 'خيارات',
+        products: [{ id: 'p1', name: 'عباية', price: '45.000' }],
+        productOverflow: 2,
+      },
+    });
+
+    controller.handleAsync({ contactId: 'C1', text: 'بدي عباية', messageId: 'm1' });
+    await flush();
+
+    const deliveredBlock = (sender.sendReply as jest.Mock).mock.calls[0][1] as import('../manychat.types').ManyChatDynamicBlock;
+    const texts = deliveredBlock.content.messages.filter((m) => m.type === 'text');
+    expect(texts.length).toBeGreaterThanOrEqual(2);
+    const note = texts[texts.length - 1] as import('../manychat.types').ManyChatTextMessage;
+    expect(note.text).toContain('2');
   });
 });
 

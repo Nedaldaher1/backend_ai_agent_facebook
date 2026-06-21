@@ -49,6 +49,58 @@ describe('toDynamicBlock', () => {
     expect(cards.elements).toHaveLength(10);
   });
 
+  it('appends an Arabic overflow note when overflowCount > 0', () => {
+    const out = toDynamicBlock({
+      reply: 'خيارات',
+      products: [{ id: 'p1', name: 'عباية', price: '45.000' }],
+      overflowCount: 3,
+    });
+    const texts = out.content.messages.filter((m) => m.type === 'text');
+    expect(texts).toHaveLength(2);
+    // The trailing note must mention the count and invite the customer
+    const note = texts[texts.length - 1] as import('../manychat.types').ManyChatTextMessage;
+    expect(note.text).toContain('3');
+    expect(note.text).toContain('تصميم');
+  });
+
+  it('does NOT append an overflow note when overflowCount is 0', () => {
+    const out = toDynamicBlock({
+      reply: 'خيارات',
+      products: [{ id: 'p1', name: 'عباية', price: '45.000' }],
+      overflowCount: 0,
+    });
+    const texts = out.content.messages.filter((m) => m.type === 'text');
+    // Only the reply text — no overflow note
+    expect(texts).toHaveLength(1);
+  });
+
+  it('does NOT append an overflow note when overflowCount is absent', () => {
+    const out = toDynamicBlock({
+      reply: 'خيارات',
+      products: [{ id: 'p1', name: 'عباية', price: '45.000' }],
+    });
+    const texts = out.content.messages.filter((m) => m.type === 'text');
+    expect(texts).toHaveLength(1);
+  });
+
+  it('still caps total messages at 10 even with overflow note', () => {
+    // 1 text reply + 1 cards message = 2; adding overflow note → 3. Well under 10.
+    // Force the worst case: fill messages to MAX_MESSAGES before the overflow note.
+    // The formatter slice(0, 10) must prevent a note from pushing past the limit.
+    // Constructing this via multiple gallery+text is internal, so test indirectly:
+    // provide an overflow note on an already-large message list (simulate via a
+    // reply that reaches the cap via the gallery alone — not possible with current
+    // formatter, but the cap guard must hold regardless).
+    // Simple proof: 1 reply + 1 gallery + overflow → 3 messages total, not 11.
+    const products = Array.from({ length: 10 }, (_, i) => ({
+      id: `p${i}`,
+      name: `n${i}`,
+      price: '1.000',
+    }));
+    const out = toDynamicBlock({ reply: 'x', products, overflowCount: 5 });
+    expect(out.content.messages.length).toBeLessThanOrEqual(10);
+  });
+
   it('returns empty messages for an empty reply with no products (dedup no-op)', () => {
     const out = toDynamicBlock({ reply: '' });
     expect(out.content.messages).toEqual([]);

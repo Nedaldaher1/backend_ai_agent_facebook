@@ -703,6 +703,49 @@ describe('AgentService', () => {
 
     // Deduped to one entry; price is the STRING '45.000' (not a number)
     expect(result.products).toEqual([{ id: 'p1', name: 'عباية', price: '45.000' }]);
+    // No overflow — only 1 unique product, well under the 8-item cap
+    expect(result.productOverflow).toBeUndefined();
+  });
+
+  it('sets productOverflow when matched products exceed the 8-item cap', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    // 11 distinct products → 8 rendered + 3 overflow
+    const manyProducts = Array.from({ length: 11 }, (_, i) => ({
+      id: `p${i}`,
+      name: `عباية ${i}`,
+      price: '45.000',
+      available: true,
+    }));
+
+    fakeSalesAgent.generate.mockResolvedValueOnce({
+      text: 'إليك المنتجات',
+      toolResults: [
+        {
+          payload: {
+            toolName: 'search_products',
+            isError: false,
+            result: { products: manyProducts },
+          },
+        },
+      ],
+    });
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'عبايات' });
+
+    expect(result.products).toHaveLength(8);
+    expect(result.productOverflow).toBe(3);
   });
 
   // -------------------------------------------------------------------------
@@ -859,6 +902,8 @@ describe('AgentService', () => {
     expect(result.products).toEqual([
       { id: 'v1', name: 'عباية مطابقة', price: '60.000' },
     ]);
+    // Single product — no overflow
+    expect(result.productOverflow).toBeUndefined();
   });
 
   it('returns products: undefined when toolResults is absent', async () => {

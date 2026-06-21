@@ -61,10 +61,15 @@ export interface IncomingMessage {
  * `price` is a STRING (JOD notation) to honour the money-as-string rule
  * (CLAUDE.md §3 — never use float for prices).  Phase 4 formats it for the
  * Dynamic Block card.
+ *
+ * `productOverflow` carries the count of matched products that exceeded the
+ * rendered cap (8). When > 0 the formatter appends an Arabic overflow note.
  */
 export interface AgentReply {
   reply: string;
   products?: Array<{ id: string; name: string; price: string }>;
+  /** Number of matched products beyond the rendered cap. 0 when nothing overflows. */
+  productOverflow?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +353,12 @@ export class AgentService implements OnModuleInit {
       ...(evalInfo ? { attributes: { eval: evalInfo } } : {}),
     });
 
-    return { reply: result.text, products: this.extractProducts(result) };
+    const { products: extractedProducts, overflow } = this.extractProducts(result);
+    return {
+      reply: result.text,
+      products: extractedProducts,
+      ...(overflow > 0 ? { productOverflow: overflow } : {}),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -374,17 +384,25 @@ export class AgentService implements OnModuleInit {
   }
 
   /**
-   * Extracts deduplicated product cards from search_products tool results.
+   * Extracts deduplicated product cards from search_products tool results,
+   * together with the overflow count (total matched − rendered cap).
    *
    * Defensive + best-effort: the whole body is wrapped in try/catch so a
    * malformed toolResults payload NEVER breaks the reply to the customer.
-   * Returns `undefined` (field omitted) when there are no products to surface.
+   * Returns `{ products: undefined, overflow: 0 }` when there are no products
+   * to surface.
+   *
+   * The cap is 8 rendered cards (carousel limit). Overflow = total deduped
+   * products − 8, clamped to 0 (never negative).
    */
-  private extractProducts(result: GenerateResult): AgentReply['products'] {
+  private extractProducts(result: GenerateResult): {
+    products: AgentReply['products'];
+    overflow: number;
+  } {
     try {
       const chunks = result.toolResults ?? [];
 
-      const products = chunks
+      const allProducts = chunks
         .filter(
           (c) =>
             (c.payload?.toolName === 'search_products' ||
@@ -398,19 +416,25 @@ export class AgentService implements OnModuleInit {
           return raw?.products ?? [];
         });
 
-      // Dedupe by id (first occurrence wins), cap at 8 (carousel limit).
+      // Dedupe by id (first occurrence wins) — collect ALL deduped, then cap.
       const seen = new Set<string>();
       const deduped: Array<{ id: string; name: string; price: string }> = [];
-      for (const p of products) {
+      for (const p of allProducts) {
         if (seen.has(p.id)) continue;
         seen.add(p.id);
         deduped.push({ id: p.id, name: p.name, price: p.price });
-        if (deduped.length === 8) break;
       }
 
-      return deduped.length > 0 ? deduped : undefined;
+      const CAP = 8;
+      const rendered = deduped.slice(0, CAP);
+      const overflow = Math.max(0, deduped.length - CAP);
+
+      return {
+        products: rendered.length > 0 ? rendered : undefined,
+        overflow,
+      };
     } catch {
-      return undefined;
+      return { products: undefined, overflow: 0 };
     }
   }
 
