@@ -1,7 +1,7 @@
 /**
  * Sales tools barrel.
  *
- * `buildSalesTools(deps)` constructs all nine Mastra tools by closing over the
+ * `buildSalesTools(deps)` constructs all ten Mastra tools by closing over the
  * injected domain services. Tools never import a repository or run SQL directly.
  *
  * The returned object is keyed by the tool id (snake_case) exactly as required
@@ -9,8 +9,8 @@
  *
  * Key order (grouped by read vs. write):
  *   search_products, check_availability, get_product_media, get_knowledge,
- *   recommend_size, capture_order, escalate_to_human, find_similar_by_image,
- *   get_order_status
+ *   recommend_size, get_product_for_order, capture_order, escalate_to_human,
+ *   find_similar_by_image, get_order_status
  */
 
 import type { ProductsService } from '@/modules/products/products.service';
@@ -27,6 +27,7 @@ import { buildRecommendSizeTool } from './recommend-size.tool';
 import { buildCaptureOrderTool } from './capture-order.tool';
 import { buildEscalateToHumanTool } from './escalate-to-human.tool';
 import { buildGetOrderStatusTool } from './get-order-status.tool';
+import { buildGetProductForOrderTool } from './get-product-for-order.tool';
 
 /** Injected domain services required to build the sales tools. */
 export interface SalesToolsDeps {
@@ -50,6 +51,7 @@ export function buildSalesTools(deps: SalesToolsDeps) {
     get_product_media: buildGetProductMediaTool(products),
     get_knowledge: buildGetKnowledgeTool(knowledge),
     recommend_size: buildRecommendSizeTool(sizing),
+    get_product_for_order: buildGetProductForOrderTool(products),
     capture_order: buildCaptureOrderTool(orders),
     escalate_to_human: buildEscalateToHumanTool(conversations),
     find_similar_by_image: buildFindSimilarByImageTool(products),

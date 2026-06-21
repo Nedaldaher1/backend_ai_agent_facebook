@@ -29,6 +29,29 @@ import type { Product } from './entities/product.entity';
 /** Public list filters. `isPublished` is honored only on the admin path. */
 export type ProductListFilter = ProductFilter;
 
+/**
+ * Resolved product data required to construct an order line item.
+ *
+ * `storageKey` is the primary image key (image_urls[0]). `capture_order` uses
+ * this as the `storage_key` per item — it identifies the product's color
+ * variant (each color is its own product row) and pins the order to that
+ * variant. `capture_order` re-validates everything server-side; this resolver
+ * is a pre-flight check only.
+ *
+ * NOTE: storageKey is a STORAGE KEY (not a public URL). Do NOT call
+ * resolveImageUrls/storage.getUrl here — callers that need public URLs must
+ * resolve independently at their own outward boundary.
+ */
+export interface OrderReadyProduct {
+  productId: string;
+  storageKey: string;
+  name: string;
+  priceJod: string;
+  colorFamily: string | null;
+  available: boolean;
+  availableSizes: string[];
+}
+
 export interface ProductSearchInput {
   /** Raw (possibly dialect) color term; normalized via color_synonyms. */
   color?: string;
@@ -233,6 +256,57 @@ export class ProductsService {
     // Return the product too so write callers (capture_order) can read its
     // price/name without a second fetch.
     return { available, inStockSizes, product };
+  }
+
+  /**
+   * Resolve a published product to the data needed to construct an order item.
+   *
+   * This is the SINGLE authoritative resolver for product_id → order key.
+   * It enforces two gates before returning order-ready data:
+   *   1. Publish gate: unpublished / missing products are never orderable.
+   *   2. Image gate: products with no images cannot be pinned to a storage key,
+   *      so they are also treated as not found.
+   *
+   * The `storageKey` returned is image_urls[0] — the primary image key that
+   * identifies the product's color variant. `capture_order` accepts this key
+   * as `storage_key` and re-validates everything server-side; this resolver is
+   * a pre-flight convenience so the agent knows what to pass.
+   *
+   * NOTE: returns `{ found: false }` (never throws) for missing/unpublished
+   * products or products without images — the agent should surface a different
+   * product rather than failing hard. Returns STORAGE KEYS, not public URLs.
+   *
+   * @param productId  UUID of the product to resolve.
+   */
+  async resolveForOrder(
+    productId: string,
+  ): Promise<{ found: false } | { found: true; product: OrderReadyProduct }> {
+    let product: Product;
+    try {
+      product = await this.findPublishedRaw(productId);
+    } catch {
+      return { found: false };
+    }
+
+    const storageKey = product.imageUrls?.[0];
+    if (!storageKey) {
+      // Product has no images — cannot pin an order key without one.
+      return { found: false };
+    }
+
+    const available = product.stockStatus !== 'out';
+    return {
+      found: true,
+      product: {
+        productId: product.id,
+        storageKey,
+        name: product.name,
+        priceJod: product.priceJod,
+        colorFamily: product.colorFamily,
+        available,
+        availableSizes: available ? (product.sizes ?? []) : [],
+      },
+    };
   }
 
   /**

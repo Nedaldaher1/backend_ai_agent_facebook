@@ -1,7 +1,7 @@
 /**
  * Structural test for the tools barrel (buildSalesTools).
  *
- * Verifies that buildSalesTools returns exactly the nine expected tool keys,
+ * Verifies that buildSalesTools returns exactly the ten expected tool keys,
  * in the correct order. This guards against accidental additions, removals,
  * or renames that would silently break the Agent constructor registration.
  *
@@ -27,7 +27,7 @@ import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 
 describe('buildSalesTools — tool registry', () => {
-  it('returns exactly the nine expected tool keys in order', () => {
+  it('returns exactly the ten expected tool keys in order', () => {
     const result = buildSalesTools({
       products: {} as unknown as ProductsService,
       orders: {} as unknown as OrdersService,
@@ -42,6 +42,7 @@ describe('buildSalesTools — tool registry', () => {
       'get_product_media',
       'get_knowledge',
       'recommend_size',
+      'get_product_for_order',
       'capture_order',
       'escalate_to_human',
       'find_similar_by_image',

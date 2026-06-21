@@ -24,9 +24,10 @@
  *    customer.
  *
  *  - Domain tools (search_products, check_availability, get_product_media,
- *    recommend_size, capture_order, escalate_to_human, find_similar_by_image)
- *    are built via `buildSalesTools` and registered here. Adding `tools` does
- *    NOT remove the auto-registered `updateWorkingMemory` tool.
+ *    recommend_size, get_product_for_order, capture_order, escalate_to_human,
+ *    find_similar_by_image, get_order_status) are built via `buildSalesTools`
+ *    and registered here. Adding `tools` does NOT remove the auto-registered
+ *    `updateWorkingMemory` tool.
  *
  *  - `instructions` is a dynamic async function backed by
  *    AgentBehaviorService.getInstructions() (60s TTL cache). Admin edits to
@@ -94,8 +95,8 @@ export function buildMastra(deps: BuildMastraDeps): {
   // ------------------------------------------------------------------- tools
   // Build domain tools by closing over the injected services.
   // Registered: search_products, check_availability, get_product_media,
-  //   get_knowledge, recommend_size, capture_order, escalate_to_human,
-  //   find_similar_by_image, get_order_status.
+  //   get_knowledge, recommend_size, get_product_for_order, capture_order,
+  //   escalate_to_human, find_similar_by_image, get_order_status.
   // `updateWorkingMemory` is auto-registered by Memory and is NOT removed here.
   const tools = buildSalesTools({ products, orders, conversations, knowledge, sizing });
 

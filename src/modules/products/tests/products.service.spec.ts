@@ -901,4 +901,96 @@ describe('ProductsService', () => {
 
     expect(deleteForImage).toHaveBeenCalledWith('p1', 'a.jpg');
   });
+
+  // --- resolveForOrder ---
+
+  it('resolveForOrder returns found:true with storageKey = imageUrls[0] for a published in-stock product', async () => {
+    const product = makeProduct({
+      id: 'ord-1',
+      isPublished: true,
+      stockStatus: 'in_stock',
+      imageUrls: ['primary.jpg', 'secondary.png'],
+      sizes: ['S', 'M', 'L'],
+      colorFamily: 'blue',
+    });
+    findById.mockResolvedValue(product);
+
+    const result = await service.resolveForOrder('ord-1');
+
+    expect(result.found).toBe(true);
+    if (!result.found) return; // narrow for TS
+    expect(result.product.productId).toBe('ord-1');
+    expect(result.product.storageKey).toBe('primary.jpg'); // index 0 is the order key
+    expect(result.product.name).toBe('عباءة زرقاء');
+    expect(result.product.priceJod).toBe('45.000');
+    expect(result.product.colorFamily).toBe('blue');
+    expect(result.product.available).toBe(true);
+    expect(result.product.availableSizes).toEqual(['S', 'M', 'L']);
+    // Must NOT have called getUrl — keys only, never URLs
+    expect(getUrl).not.toHaveBeenCalled();
+  });
+
+  it('resolveForOrder returns available:false and availableSizes:[] when stockStatus is out', async () => {
+    const product = makeProduct({
+      id: 'ord-2',
+      isPublished: true,
+      stockStatus: 'out',
+      imageUrls: ['img.jpg'],
+      sizes: ['M', 'L'],
+    });
+    findById.mockResolvedValue(product);
+
+    const result = await service.resolveForOrder('ord-2');
+
+    expect(result.found).toBe(true);
+    if (!result.found) return;
+    expect(result.product.available).toBe(false);
+    expect(result.product.availableSizes).toEqual([]);
+    // storageKey still present — the product exists and has an image
+    expect(result.product.storageKey).toBe('img.jpg');
+  });
+
+  it('resolveForOrder returns found:false for a missing product (no throw)', async () => {
+    findById.mockResolvedValue(undefined);
+
+    const result = await service.resolveForOrder('missing-uuid');
+
+    expect(result.found).toBe(false);
+    expect(result).not.toHaveProperty('product');
+  });
+
+  it('resolveForOrder returns found:false for an unpublished product (no throw)', async () => {
+    findById.mockResolvedValue(makeProduct({ id: 'draft-1', isPublished: false }));
+
+    const result = await service.resolveForOrder('draft-1');
+
+    expect(result.found).toBe(false);
+    expect(result).not.toHaveProperty('product');
+  });
+
+  it('resolveForOrder returns found:false when imageUrls is empty (no order key possible)', async () => {
+    const product = makeProduct({
+      id: 'no-img',
+      isPublished: true,
+      imageUrls: [],
+    });
+    findById.mockResolvedValue(product);
+
+    const result = await service.resolveForOrder('no-img');
+
+    expect(result.found).toBe(false);
+  });
+
+  it('resolveForOrder returns found:false when imageUrls is null (no order key possible)', async () => {
+    const product = makeProduct({
+      id: 'null-img',
+      isPublished: true,
+      imageUrls: null,
+    });
+    findById.mockResolvedValue(product);
+
+    const result = await service.resolveForOrder('null-img');
+
+    expect(result.found).toBe(false);
+  });
 });
