@@ -4,8 +4,10 @@
  * Key design rules under test:
  *  - conversationId comes ONLY from requestContext, never from tool input.
  *  - `source` is derived from the channel in requestContext, never from input.
- *  - The tool delegates ALL business logic to OrdersService.captureCodOrder and
- *    maps its structured confirmation to the agent-facing snake_case output.
+ *  - The tool delegates ALL business logic to OrdersService.captureCodOrderSafe
+ *    and maps its structured confirmation to the agent-facing snake_case output.
+ *  - When captureCodOrderSafe returns { ok: false }, the tool returns { ok: false,
+ *    reason } with NO order fields — never reports success on failure.
  *  - The input schema exposes NO identity fields and NO price/total fields — the
  *    LLM cannot set money.
  */
@@ -23,8 +25,8 @@ function ctx(vals: Record<string, string>) {
   return { requestContext: { get: (k: string) => vals[k] } };
 }
 
-function makeOrdersMock(captureImpl: jest.Mock): OrdersService {
-  return { captureCodOrder: captureImpl } as unknown as OrdersService;
+function makeOrdersMock(safeCaptureImpl: jest.Mock): OrdersService {
+  return { captureCodOrderSafe: safeCaptureImpl } as unknown as OrdersService;
 }
 
 // --- shared data -----------------------------------------------------------
@@ -53,7 +55,7 @@ const CONFIRMATION = {
   currency: 'JOD' as const,
 };
 
-const HAPPY_RESULT = { order: { id: 'o1' }, items: [], confirmation: CONFIRMATION };
+const HAPPY_SAFE_RESULT = { ok: true as const, confirmation: CONFIRMATION };
 
 const HAPPY_INPUT = {
   items: [{ product_id: 'p1', storage_key: 'img-1.jpg', size: 'M', quantity: 2 }],
@@ -67,13 +69,13 @@ const HAPPY_CTX = ctx({ conversationId: 'conv-1', channel: 'messenger' });
 
 describe('buildCaptureOrderTool', () => {
   describe('delegation + mapping', () => {
-    it('calls captureCodOrder with identity from context and mapped input', async () => {
-      const capture = jest.fn().mockResolvedValue(HAPPY_RESULT);
-      const tool = buildCaptureOrderTool(makeOrdersMock(capture)) as any;
+    it('calls captureCodOrderSafe with identity from context and mapped input', async () => {
+      const safeCapture = jest.fn().mockResolvedValue(HAPPY_SAFE_RESULT);
+      const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
 
       await tool.execute(HAPPY_INPUT, HAPPY_CTX);
 
-      expect(capture).toHaveBeenCalledWith({
+      expect(safeCapture).toHaveBeenCalledWith({
         conversationId: 'conv-1', // from requestContext, not input
         source: 'messenger', // from channel
         phone: '0791234567',
@@ -83,13 +85,14 @@ describe('buildCaptureOrderTool', () => {
       });
     });
 
-    it('maps the service confirmation to the snake_case output', async () => {
-      const capture = jest.fn().mockResolvedValue(HAPPY_RESULT);
-      const tool = buildCaptureOrderTool(makeOrdersMock(capture)) as any;
+    it('maps the service confirmation to snake_case output with ok:true', async () => {
+      const safeCapture = jest.fn().mockResolvedValue(HAPPY_SAFE_RESULT);
+      const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
 
       const result = await tool.execute(HAPPY_INPUT, HAPPY_CTX);
 
       expect(result).toEqual({
+        ok: true,
         order_id: 'o1',
         status: 'draft',
         source: 'messenger',
@@ -112,30 +115,45 @@ describe('buildCaptureOrderTool', () => {
         currency: 'JOD',
       });
     });
+
+    it('returns { ok: false, reason } and NO order fields when service returns ok:false', async () => {
+      const safeCapture = jest
+        .fn()
+        .mockResolvedValue({ ok: false as const, reason: 'رقم الهاتف غير صالح.' });
+      const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
+
+      const result = await tool.execute(HAPPY_INPUT, HAPPY_CTX);
+
+      expect(result).toEqual({ ok: false, reason: 'رقم الهاتف غير صالح.' });
+      // Must not expose any order fields — never fabricate success
+      expect(result).not.toHaveProperty('order_id');
+      expect(result).not.toHaveProperty('total');
+      expect(result).not.toHaveProperty('items');
+    });
   });
 
   describe('source from channel', () => {
     it('uses whatsapp when the channel is whatsapp', async () => {
-      const capture = jest.fn().mockResolvedValue(HAPPY_RESULT);
-      const tool = buildCaptureOrderTool(makeOrdersMock(capture)) as any;
+      const safeCapture = jest.fn().mockResolvedValue(HAPPY_SAFE_RESULT);
+      const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
 
       await tool.execute(
         HAPPY_INPUT,
         ctx({ conversationId: 'conv-1', channel: 'whatsapp' }),
       );
 
-      expect(capture).toHaveBeenCalledWith(
+      expect(safeCapture).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'whatsapp' }),
       );
     });
 
     it('defaults to messenger when no channel is present', async () => {
-      const capture = jest.fn().mockResolvedValue(HAPPY_RESULT);
-      const tool = buildCaptureOrderTool(makeOrdersMock(capture)) as any;
+      const safeCapture = jest.fn().mockResolvedValue(HAPPY_SAFE_RESULT);
+      const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
 
       await tool.execute(HAPPY_INPUT, ctx({ conversationId: 'conv-1' }));
 
-      expect(capture).toHaveBeenCalledWith(
+      expect(safeCapture).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'messenger' }),
       );
     });
@@ -143,19 +161,19 @@ describe('buildCaptureOrderTool', () => {
 
   describe('identity absent', () => {
     it('rejects when conversationId is missing from requestContext', async () => {
-      const capture = jest.fn();
-      const tool = buildCaptureOrderTool(makeOrdersMock(capture)) as any;
+      const safeCapture = jest.fn();
+      const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
 
       await expect(tool.execute(HAPPY_INPUT, ctx({}))).rejects.toThrow();
-      expect(capture).not.toHaveBeenCalled();
+      expect(safeCapture).not.toHaveBeenCalled();
     });
 
     it('rejects when no context is passed at all', async () => {
-      const capture = jest.fn();
-      const tool = buildCaptureOrderTool(makeOrdersMock(capture)) as any;
+      const safeCapture = jest.fn();
+      const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
 
       await expect(tool.execute(HAPPY_INPUT)).rejects.toThrow();
-      expect(capture).not.toHaveBeenCalled();
+      expect(safeCapture).not.toHaveBeenCalled();
     });
   });
 

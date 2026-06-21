@@ -46,6 +46,7 @@ describe('OrdersService', () => {
   const insertItems = jest.fn();
   const listItemsByOrder = jest.fn();
   const createWithItems = jest.fn();
+  const findOpenDraftByConversation = jest.fn();
 
   const repo = {
     list,
@@ -56,6 +57,7 @@ describe('OrdersService', () => {
     insertItems,
     listItemsByOrder,
     createWithItems,
+    findOpenDraftByConversation,
   } as unknown as OrdersRepository;
 
   const checkAvailability = jest.fn();
@@ -205,6 +207,11 @@ describe('OrdersService', () => {
       items: [
         { productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 2 },
       ],
+    });
+
+    beforeEach(() => {
+      // Default: no existing draft (idempotency check returns undefined).
+      findOpenDraftByConversation.mockResolvedValue(undefined);
     });
 
     it('persists a full order: normalized phone, snapshots, server-derived totals', async () => {
@@ -477,6 +484,144 @@ describe('OrdersService', () => {
         service.captureCodOrder({ ...baseInput(), items: [] }),
       ).rejects.toThrow();
       expect(createWithItems).not.toHaveBeenCalled();
+    });
+
+    // --- idempotency ---
+
+    it('returns the existing open draft without inserting when conversationId matches', async () => {
+      const existingOrder = makeOrder({
+        id: 'o-existing',
+        conversationId: 'conv-1',
+        status: 'draft',
+        source: 'messenger',
+        phone: '+962791234567',
+        address: 'عمّان',
+        subtotal: '45.000',
+        deliveryFee: '2.000',
+        total: '47.000',
+        currency: 'JOD',
+      });
+      const existingItem = {
+        id: 'i-existing',
+        orderId: 'o-existing',
+        productId: PRODUCT_ID,
+        storageKey: 'img-1.jpg',
+        productName: 'عباية كلاسيك',
+        colorName: 'أسود',
+        size: 'M',
+        qty: 1,
+        unitPrice: '45.000',
+        lineTotal: '45.000',
+      };
+
+      findOpenDraftByConversation.mockResolvedValue(existingOrder);
+      listItemsByOrder.mockResolvedValue([existingItem]);
+
+      const result = await service.captureCodOrder(baseInput());
+
+      // Must NOT insert a new order
+      expect(createWithItems).not.toHaveBeenCalled();
+      // Returns the existing order's confirmation
+      expect(result.order.id).toBe('o-existing');
+      expect(result.confirmation.orderId).toBe('o-existing');
+      expect(result.confirmation.subtotal).toBe('45.000');
+      expect(result.confirmation.total).toBe('47.000');
+      expect(result.confirmation.lines[0].productName).toBe('عباية كلاسيك');
+      expect(result.confirmation.lines[0].quantity).toBe(1);
+    });
+
+    it('creates a new order when no open draft exists for the conversation', async () => {
+      mockCatalog();
+      mockPersist();
+      // findOpenDraftByConversation already returns undefined via beforeEach
+
+      await service.captureCodOrder(baseInput());
+
+      expect(createWithItems).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT call findOpenDraftByConversation when conversationId is null', async () => {
+      mockCatalog();
+      mockPersist();
+
+      await service.captureCodOrder({ ...baseInput(), conversationId: null });
+
+      expect(findOpenDraftByConversation).not.toHaveBeenCalled();
+      expect(createWithItems).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // captureCodOrderSafe — agent-safe wrapper
+  // -------------------------------------------------------------------------
+  describe('captureCodOrderSafe', () => {
+    beforeEach(() => {
+      findOpenDraftByConversation.mockResolvedValue(undefined);
+    });
+
+    it('returns { ok: true, confirmation } on success', async () => {
+      checkAvailability.mockResolvedValue({
+        available: true,
+        product: makeProduct(),
+      });
+      getImageColorName.mockResolvedValue('أسود');
+      createWithItems.mockImplementation((order, items) =>
+        Promise.resolve({
+          order: { id: 'o1', ...order },
+          items: items.map((it: Record<string, unknown>, i: number) => ({
+            id: `i${i}`,
+            orderId: 'o1',
+            ...it,
+          })),
+        }),
+      );
+
+      const result = await service.captureCodOrderSafe({
+        conversationId: 'conv-1',
+        source: 'messenger',
+        phone: '0791234567',
+        address: 'عمّان، الصويفية',
+        items: [{ productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 1 }],
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.confirmation.orderId).toBe('o1');
+        expect(result.confirmation.currency).toBe('JOD');
+      }
+    });
+
+    it('returns { ok: false, reason } when an OrderCaptureError is thrown', async () => {
+      // Invalid phone triggers OrderCaptureError
+      const result = await service.captureCodOrderSafe({
+        conversationId: 'conv-1',
+        source: 'messenger',
+        phone: '06-invalid',
+        address: 'عمّان',
+        items: [{ productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 1 }],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toMatch(/رقم الهاتف/);
+      }
+      expect(createWithItems).not.toHaveBeenCalled();
+    });
+
+    it('rethrows non-OrderCaptureError exceptions (system errors)', async () => {
+      const boom = new Error('db connection lost');
+      // Simulate a system-level failure in the catalog read
+      checkAvailability.mockRejectedValue(boom);
+
+      await expect(
+        service.captureCodOrderSafe({
+          conversationId: 'conv-1',
+          source: 'messenger',
+          phone: '0791234567',
+          address: 'عمّان',
+          items: [{ productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 1 }],
+        }),
+      ).rejects.toBe(boom);
     });
   });
 

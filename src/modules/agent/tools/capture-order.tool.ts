@@ -58,26 +58,30 @@ const inputSchema = z.object({
 });
 
 const outputSchema = z.object({
-  order_id: z.string(),
-  status: z.string(),
-  source: z.string(),
-  phone: z.string(),
-  address: z.string(),
-  items: z.array(
-    z.object({
-      product_id: z.string(),
-      product_name: z.string(),
-      color_name: z.string().optional(),
-      size: z.string().optional(),
-      quantity: z.number().int(),
-      unit_price: z.string(),
-      line_total: z.string(),
-    }),
-  ),
-  subtotal: z.string(),
-  delivery_fee: z.string(),
-  total: z.string(),
-  currency: z.literal('JOD'),
+  ok: z.boolean(),
+  reason: z.string().optional(),
+  order_id: z.string().optional(),
+  status: z.string().optional(),
+  source: z.string().optional(),
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  items: z
+    .array(
+      z.object({
+        product_id: z.string(),
+        product_name: z.string(),
+        color_name: z.string().optional(),
+        size: z.string().optional(),
+        quantity: z.number().int(),
+        unit_price: z.string(),
+        line_total: z.string(),
+      }),
+    )
+    .optional(),
+  subtotal: z.string().optional(),
+  delivery_fee: z.string().optional(),
+  total: z.string().optional(),
+  currency: z.string().optional(),
 });
 
 export function buildCaptureOrderTool(orders: OrdersService) {
@@ -104,7 +108,7 @@ export function buildCaptureOrderTool(orders: OrdersService) {
       const channel = ctx?.requestContext?.get('channel') as string | undefined;
       const source = channel === 'whatsapp' ? 'whatsapp' : 'messenger';
 
-      const { confirmation } = await orders.captureCodOrder({
+      const result = await orders.captureCodOrderSafe({
         conversationId,
         source,
         phone: input.phone,
@@ -120,7 +124,16 @@ export function buildCaptureOrderTool(orders: OrdersService) {
         })),
       });
 
+      // Validation failure: return the reason so the agent can phrase a reply.
+      // NEVER report success or fabricate order fields when ok is false.
+      if (!result.ok) {
+        return { ok: false, reason: result.reason };
+      }
+
+      // Success: map confirmation to snake_case agent-facing output.
+      const { confirmation } = result;
       return {
+        ok: true,
         order_id: confirmation.orderId,
         status: confirmation.status,
         source: confirmation.source,
@@ -138,7 +151,7 @@ export function buildCaptureOrderTool(orders: OrdersService) {
         subtotal: confirmation.subtotal,
         delivery_fee: confirmation.deliveryFee,
         total: confirmation.total,
-        currency: 'JOD' as const,
+        currency: confirmation.currency,
       };
     },
   });

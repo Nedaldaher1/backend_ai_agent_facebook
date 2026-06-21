@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import { orders, type NewOrder, type Order } from './entities/order.entity';
@@ -49,6 +49,29 @@ export class OrdersRepository {
       .from(orders)
       .where(eq(orders.conversationId, conversationId))
       .orderBy(desc(orders.createdAt));
+  }
+
+  /**
+   * Returns the most-recent open draft for a conversation, or undefined when
+   * none exists. Used for idempotent re-capture: re-submitting the same order
+   * for an active conversation returns the existing draft rather than inserting
+   * a duplicate.
+   */
+  async findOpenDraftByConversation(
+    conversationId: string,
+  ): Promise<Order | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(orders)
+      .where(
+        and(
+          eq(orders.conversationId, conversationId),
+          eq(orders.status, 'draft'),
+        ),
+      )
+      .orderBy(desc(orders.createdAt))
+      .limit(1);
+    return row;
   }
 
   async insert(input: NewOrder): Promise<Order> {

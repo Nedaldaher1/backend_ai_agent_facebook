@@ -103,6 +103,17 @@ export interface CaptureOrderResult {
 }
 
 /**
+ * Discriminated-union result for the agent tool. ok:true carries the
+ * confirmation; ok:false carries an Arabic reason string (from OrderCaptureError)
+ * that the model can phrase into a reply. System errors (DB down, etc.) still
+ * propagate as thrown exceptions — the agent's error handler treats those
+ * differently from input-validation failures.
+ */
+export type SafeCaptureResult =
+  | { ok: true; confirmation: CaptureOrderResult['confirmation'] }
+  | { ok: false; reason: string };
+
+/**
  * COD order-draft capture and lifecycle. The agent module calls this (never the
  * repository) to create drafts, attach line items, and advance status.
  */
@@ -245,6 +256,19 @@ export class OrdersService {
    * maps it to 400) — no partial orders are ever written.
    */
   async captureCodOrder(input: CaptureOrderInput): Promise<CaptureOrderResult> {
+    // --- idempotency: return the existing open draft for this conversation ---
+    // Applies only when conversationId is present (agent path). Standalone admin
+    // orders (conversationId === null) always create a new record.
+    if (input.conversationId != null) {
+      const existing = await this.repo.findOpenDraftByConversation(
+        input.conversationId,
+      );
+      if (existing) {
+        const items = await this.repo.listItemsByOrder(existing.id);
+        return this.buildResultFromPersisted(existing, items);
+      }
+    }
+
     // --- header validation ---
     const phone = normalizeJordanMobile(input.phone);
     if (!phone) {
@@ -367,6 +391,71 @@ export class OrdersService {
         subtotal,
         deliveryFee,
         total,
+        currency: 'JOD',
+      },
+    };
+  }
+
+  // --- agent-safe wrapper ---
+
+  /**
+   * Wraps captureCodOrder for the capture_order tool. Input-validation failures
+   * (OrderCaptureError) become { ok: false, reason } so the agent can phrase a
+   * reply without crashing. System errors (DB, FK violation, …) still propagate
+   * — they are unexpected and should surface as 500 / agent-level error.
+   *
+   * The admin route must continue calling captureCodOrder directly so that
+   * OrderCaptureError still maps to HTTP 400 (see OrdersAdminController.create).
+   */
+  async captureCodOrderSafe(
+    input: CaptureOrderInput,
+  ): Promise<SafeCaptureResult> {
+    try {
+      const { confirmation } = await this.captureCodOrder(input);
+      return { ok: true, confirmation };
+    } catch (err) {
+      if (err instanceof OrderCaptureError) {
+        return { ok: false, reason: err.message };
+      }
+      throw err; // genuine / system errors still propagate
+    }
+  }
+
+  // --- private helpers ---
+
+  /**
+   * Reconstructs a CaptureOrderResult from already-persisted rows. Used by the
+   * idempotency branch (returning an existing draft) so the caller always receives
+   * the same shape regardless of whether the order was just created or fetched.
+   */
+  private buildResultFromPersisted(
+    order: Order,
+    items: OrderItem[],
+  ): CaptureOrderResult {
+    const lines: CaptureOrderLine[] = items.map((item) => ({
+      productId: item.productId ?? '',
+      storageKey: item.storageKey,
+      productName: item.productName ?? '',
+      colorName: item.colorName,
+      size: item.size,
+      quantity: item.qty,
+      unitPrice: item.unitPrice,
+      lineTotal: item.lineTotal,
+    }));
+
+    return {
+      order,
+      items,
+      confirmation: {
+        orderId: order.id,
+        status: order.status,
+        source: order.source,
+        phone: order.phone ?? '',
+        address: order.address ?? '',
+        lines,
+        subtotal: order.subtotal,
+        deliveryFee: order.deliveryFee,
+        total: order.total,
         currency: 'JOD',
       },
     };
