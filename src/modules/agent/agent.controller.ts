@@ -7,10 +7,11 @@
 // mapping `messageId` (the DTO field) to `externalMessageId` (the IncomingMessage
 // field expected by AgentService).
 
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ZodValidationPipe } from '@/common/pipes/zod-validation.pipe';
 import { AgentService, type AgentReply } from './agent.service';
+import { ManyChatSecretGuard } from './manychat/manychat-secret.guard';
 import {
   manyChatWebhookSchema,
   type ManyChatWebhookDto,
@@ -22,8 +23,15 @@ import {
  * POST /agent/message accepts the shared ManyChat-compatible payload
  * (manyChatWebhookSchema). The response shape (`reply` + optional `products` array)
  * is what the ManyChat webhook controller formats into a Dynamic Block.
+ *
+ * Guarded by ManyChatSecretGuard exactly like the real webhook: this is a full,
+ * unformatted entry point into the agent pipeline (Claude calls, write tools,
+ * per-contact history), so it must not be reachable without the shared secret.
+ * In dev (no WEBHOOK_SHARED_SECRET) the guard allows with a warning; in
+ * production it fails closed.
  */
 @ApiTags('Agent')
+@UseGuards(ManyChatSecretGuard)
 @Controller('agent')
 export class AgentController {
   constructor(private readonly agent: AgentService) {}
