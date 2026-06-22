@@ -127,14 +127,40 @@ export class ManyChatWebhookController {
     contactId: string,
     items: IncomingMessage[],
   ): Promise<void> {
-    const reply = await this.agent.handleMessage(mergeTurns(items));
-    const products = await this.enrichWithImages(reply.products);
-    const block = toDynamicBlock({
-      reply: reply.reply,
-      products,
-      overflowCount: reply.productOverflow,
-    });
-    await this.sender.sendReply(contactId, block);
+    try {
+      const reply = await this.agent.handleMessage(mergeTurns(items));
+      const products = await this.enrichWithImages(reply.products);
+      const block = toDynamicBlock({
+        reply: reply.reply,
+        products,
+        overflowCount: reply.productOverflow,
+      });
+      await this.sender.sendReply(contactId, block);
+    } catch (err) {
+      // The async worker runs AFTER the 202 ACK, so an unhandled failure here
+      // (Claude 429/5xx, DB drop mid-generate, enrichment throw) would deliver
+      // NOTHING to the customer — the rejection only reaches the debounce
+      // worker, which just logs. Mirror the sync handler's never-leave-silent
+      // contract: push the graceful Arabic fallback via the Send API instead.
+      this.logger.error(
+        `Async batch failed for contact ${contactId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      try {
+        await this.sender.sendReply(
+          contactId,
+          toDynamicBlock({ reply: FALLBACK_ARABIC }),
+        );
+      } catch (sendErr) {
+        this.logger.error(
+          `Async fallback send also failed for contact ${contactId}: ${
+            sendErr instanceof Error ? sendErr.message : String(sendErr)
+          }`,
+        );
+      }
+    }
   }
 
   /**

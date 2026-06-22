@@ -148,3 +148,55 @@ describe('ManyChatWebhookController — never-5xx fallback (WS4)', () => {
     expect(block.content.messages[0].type).toBe('text');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Async path never-silent fallback (audit R1)
+// ---------------------------------------------------------------------------
+
+describe('ManyChatWebhookController — async path never-silent fallback (audit R1)', () => {
+  // Reaches into the private worker the debounce callback invokes. Unlike the
+  // sync handle(), the async path delivers out-of-band via the Send API after a
+  // 202 ACK, so a failed turn must still push the Arabic fallback (before the
+  // fix it pushed nothing and the customer got total silence).
+  type WithProcessBatch = {
+    processBatch(contactId: string, items: { contactId: string; text: string }[]): Promise<void>;
+    sender: { sendReply: jest.Mock };
+  };
+
+  it('delivers the Arabic fallback via the Send API when the async turn throws', async () => {
+    const controller = makeController({
+      agentBehaviour: () => Promise.reject(new Error('Claude 429')),
+    }) as unknown as WithProcessBatch;
+
+    await controller.processBatch('C9', [{ contactId: 'C9', text: 'مرحبا' }]);
+
+    expect(controller.sender.sendReply).toHaveBeenCalledTimes(1);
+    const block = controller.sender.sendReply.mock.calls[0][1];
+    const first = block.content.messages[0] as ManyChatTextMessage;
+    expect(first.type).toBe('text');
+    expect(first.text).toBe(FALLBACK_ARABIC);
+  });
+
+  it('does not throw out of processBatch when BOTH the turn and the fallback send fail', async () => {
+    const controller = makeController({
+      agentBehaviour: () => Promise.reject(new Error('turn failed')),
+    }) as unknown as WithProcessBatch;
+    controller.sender.sendReply.mockRejectedValue(new Error('ManyChat down'));
+
+    await expect(
+      controller.processBatch('C9', [{ contactId: 'C9', text: 'x' }]),
+    ).resolves.toBeUndefined();
+  });
+
+  it('on a successful async turn it sends the real reply, not the fallback', async () => {
+    const controller = makeController({
+      agentBehaviour: () => Promise.resolve({ reply: 'أهلاً وسهلاً' }),
+    }) as unknown as WithProcessBatch;
+
+    await controller.processBatch('C9', [{ contactId: 'C9', text: 'مرحبا' }]);
+
+    const block = controller.sender.sendReply.mock.calls[0][1];
+    const first = block.content.messages[0] as ManyChatTextMessage;
+    expect(first.text).toBe('أهلاً وسهلاً');
+  });
+});
