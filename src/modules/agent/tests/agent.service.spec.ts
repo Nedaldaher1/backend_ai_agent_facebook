@@ -1269,6 +1269,34 @@ describe('AgentService', () => {
       // clearHumanSummary must NOT be called when there is no summary.
       expect(conversations.clearHumanSummary).not.toHaveBeenCalled();
     });
+
+    it('does NOT clear the summary when generate() throws — kept for the retry (audit A2)', async () => {
+      const SUMMARY = 'سياق التحويل يجب أن يبقى';
+      const conversations = makeConversationsMock('convo-ws7-fail', 'bot', SUMMARY);
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+        manychatControlMock,
+      );
+      service.onModuleInit();
+
+      // The turn fails after the summary was injected into context.
+      fakeSalesAgent.generate.mockRejectedValueOnce(new Error('Claude 429'));
+
+      await expect(
+        service.handleMessage({ contactId: 'C1', text: 'مرحبا' }),
+      ).rejects.toThrow('Claude 429');
+
+      // The one-shot summary must survive a failed turn so the next attempt
+      // still injects it (before the fix it was cleared before generate()).
+      expect(conversations.clearHumanSummary).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------

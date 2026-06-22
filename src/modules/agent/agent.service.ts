@@ -358,16 +358,13 @@ export class AgentService implements OnModuleInit {
     // Handoff context feedback (WS7): on the first turn after an admin resume, the
     // human's wrap-up summary is injected once so the agent resumes with awareness
     // of what the human did, then cleared so later turns don't repeat it.
+    let injectedHumanSummary = false;
     if (convo.humanSummary) {
       systemMessages.push({
         role: 'system',
         content: `ملخص ما تم مع فريق الدعم أثناء التحويل: ${convo.humanSummary}`,
       });
-      void this.conversations
-        .clearHumanSummary(convo.id)
-        .catch((err) =>
-          this.logger.warn(`clearHumanSummary failed for ${convo.id}: ${err}`),
-        );
+      injectedHumanSummary = true;
     }
     const context = systemMessages.length > 0 ? systemMessages : undefined;
 
@@ -391,6 +388,17 @@ export class AgentService implements OnModuleInit {
       requestContext,
       ...(context ? { context } : {}),
     })) as GenerateResult;
+
+    // One-shot handoff summary (WS7): clear it only AFTER a successful generate()
+    // so a failed turn (Claude 429/5xx) leaves it intact for the retry instead of
+    // losing the human's wrap-up context. Best-effort + fire-and-forget.
+    if (injectedHumanSummary) {
+      void this.conversations
+        .clearHumanSummary(convo.id)
+        .catch((err) =>
+          this.logger.warn(`clearHumanSummary failed for ${convo.id}: ${err}`),
+        );
+    }
 
     // Persist the agent reply — best-effort business-log row, now carrying eval
     // metadata (matched products + tool + image_led) for the admin panel and the
