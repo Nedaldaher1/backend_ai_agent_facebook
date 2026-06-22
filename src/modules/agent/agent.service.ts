@@ -255,12 +255,44 @@ export class AgentService implements OnModuleInit {
       return { reply: '' };
     }
 
+    // Timed-pause expiry (auto-resume): a pause created with `durationMinutes`
+    // stores `pausedUntil`, but the gate below only checks `aiState`. Nothing
+    // else reads `pausedUntil`, so without this an elapsed *temporary* pause
+    // would stay silent forever. If the window has passed, flip back to 'bot'
+    // (record a system resume event + mirror to ManyChat, best-effort) and let
+    // the turn proceed normally.
+    let aiState = convo.aiState;
+    if (
+      aiState === 'paused' &&
+      convo.pausedUntil &&
+      convo.pausedUntil.getTime() <= Date.now()
+    ) {
+      await this.conversations.setAiState(convo.id, {
+        aiState: 'bot',
+        pausedUntil: null,
+      });
+      await this.conversations.recordEvent({
+        conversationId: convo.id,
+        type: 'resume',
+        actorType: 'system',
+        fromState: 'paused',
+        toState: 'bot',
+        reason: 'auto-resume: pause window elapsed',
+      });
+      aiState = 'bot';
+      void this.manychatControl
+        .applyState(resourceId, 'bot')
+        .catch((err) =>
+          this.logger.warn(`ManyChat auto-resume sync failed: ${err}`),
+        );
+    }
+
     // Secondary gate (code-enforced): the bot replies only when ai_state === 'bot'.
     // 'human'/'paused' → log the inbound for the human, skip generate(), stay silent.
     // The handoff line is delivered once on the escalation turn itself (the tool's
     // reply); subsequent turns are silent. '' maps to an empty Dynamic Block (sync
     // no-op) and a no-op Send (async).
-    if (convo.aiState !== 'bot') {
+    if (aiState !== 'bot') {
       await this.logTurn({
         conversationId: convo.id,
         role: 'customer',

@@ -142,16 +142,25 @@ function makeConversationsMock(
   conversationId = 'convo-1',
   aiState: string = 'bot',
   humanSummary: string | null = null,
+  pausedUntil: Date | null = null,
 ): ConversationsService {
   return {
-    findOrCreateByPsid: jest
-      .fn()
-      .mockResolvedValue({ id: conversationId, aiState, humanSummary }),
+    findOrCreateByPsid: jest.fn().mockResolvedValue({
+      id: conversationId,
+      aiState,
+      humanSummary,
+      pausedUntil,
+    }),
     addMessage: jest.fn().mockResolvedValue({}),
     // Default: no prior message with this idempotency key (not a duplicate).
     findMessageByExternalId: jest.fn().mockResolvedValue(undefined),
     // WS7: one-shot clear of the human summary after injection.
     clearHumanSummary: jest.fn().mockResolvedValue(undefined),
+    // Audit A1: timed-pause auto-resume writes ai_state + records a resume event.
+    setAiState: jest
+      .fn()
+      .mockResolvedValue({ id: conversationId, aiState: 'bot' }),
+    recordEvent: jest.fn().mockResolvedValue({}),
   } as unknown as ConversationsService;
 }
 
@@ -1115,6 +1124,74 @@ describe('AgentService', () => {
 
     expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
     expect(result.reply).toBe(FAKE_REPLY);
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — timed-pause auto-resume (audit A1)
+  // -------------------------------------------------------------------------
+
+  describe('timed-pause auto-resume (audit A1)', () => {
+    const makeService = (conversations: ConversationsService) => {
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+        manychatControlMock,
+      );
+      service.onModuleInit();
+      return service;
+    };
+
+    it('auto-resumes a paused conversation whose window has elapsed, then generates', async () => {
+      const past = new Date(Date.now() - 60_000);
+      const conversations = makeConversationsMock('convo-exp', 'paused', null, past);
+      const service = makeService(conversations);
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(conversations.setAiState).toHaveBeenCalledWith('convo-exp', {
+        aiState: 'bot',
+        pausedUntil: null,
+      });
+      expect(conversations.recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'resume',
+          toState: 'bot',
+          actorType: 'system',
+        }),
+      );
+      expect(manychatControlMock.applyState).toHaveBeenCalledWith('C1', 'bot');
+      expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
+      expect(result.reply).toBe(FAKE_REPLY);
+    });
+
+    it('stays silent (no resume, no generate) when the pause window is still in the future', async () => {
+      const future = new Date(Date.now() + 60_000);
+      const conversations = makeConversationsMock('convo-fut', 'paused', null, future);
+      const service = makeService(conversations);
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(result.reply).toBe('');
+      expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
+      expect(conversations.setAiState).not.toHaveBeenCalled();
+    });
+
+    it('stays silent for an indefinite pause (pausedUntil null)', async () => {
+      const conversations = makeConversationsMock('convo-ind', 'paused', null, null);
+      const service = makeService(conversations);
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(result.reply).toBe('');
+      expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
+      expect(conversations.setAiState).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------
