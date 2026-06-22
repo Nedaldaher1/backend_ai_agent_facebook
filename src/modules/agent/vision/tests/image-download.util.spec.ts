@@ -1,3 +1,12 @@
+// downloadImage now runs an SSRF guard (audit V1) that resolves the host; the
+// test hosts ("cdn", "x") aren't real, so stub DNS to a public address. Private
+// IP LITERALS are still rejected without DNS (see the SSRF cases below).
+jest.mock('node:dns/promises', () => ({
+  lookup: jest
+    .fn()
+    .mockResolvedValue([{ address: '93.184.216.34', family: 4 }]),
+}));
+
 import { downloadImage, ImageFetchError } from '../image-download.util';
 import { ImageDecodeError } from '@/modules/embeddings/image-decode.error';
 
@@ -85,5 +94,28 @@ describe('downloadImage', () => {
     await expect(downloadImage('https://cdn/empty')).rejects.toBeInstanceOf(
       ImageDecodeError,
     );
+  });
+
+  // SSRF guard (audit V1): customer-supplied URLs must never reach internal
+  // hosts / cloud metadata. Literal private IPs are rejected before any fetch.
+  it('throws ImageFetchError for the cloud-metadata IP (SSRF guard)', async () => {
+    await expect(
+      downloadImage('http://169.254.169.254/latest/meta-data/'),
+    ).rejects.toBeInstanceOf(ImageFetchError);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('throws ImageFetchError for a loopback URL (SSRF guard)', async () => {
+    await expect(downloadImage('http://127.0.0.1:3000/x')).rejects.toBeInstanceOf(
+      ImageFetchError,
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('throws ImageFetchError for a non-http scheme (SSRF guard)', async () => {
+    await expect(downloadImage('file:///etc/passwd')).rejects.toBeInstanceOf(
+      ImageFetchError,
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

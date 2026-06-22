@@ -9,6 +9,7 @@
  */
 
 import { ImageDecodeError } from '@/modules/embeddings/image-decode.error';
+import { assertPublicHttpUrl } from '@/common/net/url-safety';
 
 /** Media types Claude vision accepts. */
 export type SupportedMediaType =
@@ -90,6 +91,18 @@ export async function downloadImage(
 ): Promise<DownloadedImage> {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  // SSRF guard: the URL is customer-supplied, so never let it reach internal
+  // hosts / cloud metadata. Surfaced as ImageFetchError so VisionService
+  // degrades gracefully (returns no attributes), like any other fetch failure.
+  try {
+    await assertPublicHttpUrl(url);
+  } catch (err) {
+    throw new ImageFetchError(
+      `blocked unsafe image URL: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
 
   let res: Response;
   try {

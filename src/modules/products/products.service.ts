@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { ListOptions, PaginatedResult } from '@/common/types/query';
 import { normalizeListOptions } from '@/common/types/query';
+import { assertPublicHttpUrl } from '@/common/net/url-safety';
 import {
   createProductSchema,
   parseOrThrow,
@@ -370,6 +371,11 @@ export class ProductsService {
     imageUrl: string,
     opts?: { limit?: number; targetColor?: string },
   ): Promise<SimilarProduct[]> {
+    // SSRF guard: imageUrl is the customer-supplied URL fed to the embedding
+    // fetch below. Validate before it reaches internal hosts / cloud metadata.
+    // The find_similar_by_image tool catches a throw and returns an empty result.
+    await assertPublicHttpUrl(imageUrl);
+
     const k = opts?.limit ?? this.config.get<number>('SIMILARITY_TOP_K') ?? 6;
     const minScore = this.config.get<number>('SIMILARITY_MIN_SCORE') ?? 0;
 

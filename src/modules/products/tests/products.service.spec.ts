@@ -15,6 +15,14 @@ jest.mock('@huggingface/transformers', () => ({
   SiglipTextModel: { from_pretrained: jest.fn() },
   SiglipVisionModel: { from_pretrained: jest.fn() },
 }));
+// findSimilarByImage now runs an SSRF guard (audit V1) that resolves the
+// customer URL host; the test hosts ("x") aren't real, so stub DNS to a public
+// address so the guard passes through to the (mocked) embedding/repo path.
+jest.mock('node:dns/promises', () => ({
+  lookup: jest
+    .fn()
+    .mockResolvedValue([{ address: '93.184.216.34', family: 4 }]),
+}));
 
 import {
   NotFoundException,
