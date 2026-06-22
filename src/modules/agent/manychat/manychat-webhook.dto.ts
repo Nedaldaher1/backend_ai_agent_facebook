@@ -27,23 +27,27 @@
 
 import { z } from 'zod';
 
+// `.max(...)` caps bound the UNTRUSTED webhook payload (reachable from the public
+// webhook). They are deliberately generous — well above any legitimate value —
+// so they never reject real traffic, but they stop an oversized `text` from being
+// amplified into LLM prompt tokens + a stored row on every turn (cost/DoS).
 export const manyChatWebhookSchema = z.object({
   /** ManyChat subscriber id ({{contact.id}}) — stable across sessions. */
-  contactId: z.string().min(1),
+  contactId: z.string().min(1).max(64),
   /** The message text the subscriber sent ({{last_input_text}}). */
-  text: z.string().min(1),
+  text: z.string().min(1).max(4000),
   /**
    * URL of an image the subscriber attached (optional).
    * Maps from the attachment URL field configured in the ManyChat flow.
    */
-  lastImageUrl: z.string().url().optional(),
+  lastImageUrl: z.string().url().max(2048).optional(),
   /**
    * Ad ref slug from {{ref}} — present only on ref-ad / comment-reply entry
    * points, absent on direct messages.
    */
-  adRef: z.string().optional(),
+  adRef: z.string().max(512).optional(),
   /** Facebook display name from {{contact.name}} — best-effort seed for working memory. */
-  name: z.string().optional(),
+  name: z.string().max(256).optional(),
   /**
    * Inbound channel — sets order.source server-side; ManyChat hardcodes this
    * in the flow body. Defaults to 'messenger' when omitted.
@@ -55,7 +59,7 @@ export const manyChatWebhookSchema = z.object({
    * content + 10-second-window hash. Map from {{last_sent_message_id}} or a
    * custom message-id field if your flow exposes one.
    */
-  messageId: z.string().optional(),
+  messageId: z.string().max(256).optional(),
 });
 
 export type ManyChatWebhookDto = z.infer<typeof manyChatWebhookSchema>;

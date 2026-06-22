@@ -196,4 +196,53 @@ describe('manyChatWebhookSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // ---------------------------------------------------------------------------
+  // Length caps on untrusted fields (audit S3)
+  // ---------------------------------------------------------------------------
+
+  it('rejects a text longer than the 4000-char cap', () => {
+    const result = manyChatWebhookSchema.safeParse({
+      contactId: 'C1',
+      text: 'a'.repeat(4001),
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((i) => i.path[0])).toContain('text');
+    }
+  });
+
+  it('accepts a text exactly at the 4000-char cap', () => {
+    const result = manyChatWebhookSchema.safeParse({
+      contactId: 'C1',
+      text: 'a'.repeat(4000),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an oversized contactId (> 64 chars)', () => {
+    const result = manyChatWebhookSchema.safeParse({
+      contactId: 'c'.repeat(65),
+      text: 'مرحبا',
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((i) => i.path[0])).toContain('contactId');
+    }
+  });
+
+  it('rejects an oversized lastImageUrl (> 2048 chars)', () => {
+    const longUrl = `https://cdn.example.com/${'a'.repeat(2048)}.jpg`;
+    const result = manyChatWebhookSchema.safeParse({
+      contactId: 'C1',
+      text: 'مرحبا',
+      lastImageUrl: longUrl,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((i) => i.path[0])).toContain(
+        'lastImageUrl',
+      );
+    }
+  });
 });
