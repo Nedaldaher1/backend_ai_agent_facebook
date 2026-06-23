@@ -265,15 +265,27 @@ export class ConversationsRepository {
 
     // Correlated subquery columns via sql`` so Drizzle doesn't need a lateral
     // join helper — this keeps the query builder typed and avoids raw SQL strings.
+    //
+    // A bare column embedded in a sql`` template (e.g. ${conversations.id}) renders
+    // UNQUALIFIED as "id". Inside these subqueries that "id" binds to the inner
+    // messages.id (nearest scope), so the correlation becomes m.conversation_id =
+    // m.id and the preview is always null. Qualify the outer column explicitly so it
+    // binds to conversations.id.
+    const convoId = sql`${sql.identifier('conversations')}.${sql.identifier('id')}`;
     const lastContent = sql<string | null>`(
       SELECT content FROM messages m
-      WHERE m.conversation_id = ${conversations.id}
+      WHERE m.conversation_id = ${convoId}
       ORDER BY m.created_at DESC
       LIMIT 1
     )`;
-    const lastCreatedAt = sql<Date | null>`(
+    // A raw sql`` expression carries no Drizzle column mapper, so the
+    // node-postgres driver hands this timestamp back as a *string* (the raw
+    // Postgres text, e.g. "2026-06-23 08:20:26.338+03") rather than a Date —
+    // unlike a mapped entity column. Type it honestly as string and convert to
+    // a Date below so the ConversationListRow contract (Date | null) holds.
+    const lastCreatedAt = sql<string | null>`(
       SELECT created_at FROM messages m
-      WHERE m.conversation_id = ${conversations.id}
+      WHERE m.conversation_id = ${convoId}
       ORDER BY m.created_at DESC
       LIMIT 1
     )`;
@@ -299,6 +311,15 @@ export class ConversationsRepository {
       .from(conversations)
       .where(where);
 
-    return { items: rows as ConversationListRow[], total: Number(total) };
+    // Normalize the raw timestamp string into a Date (see lastCreatedAt note).
+    // new Date() accepts a string or a Date, so this stays correct even if a
+    // driver/version returns the column already parsed.
+    const items: ConversationListRow[] = rows.map((row) => ({
+      ...row,
+      lastMessageAt:
+        row.lastMessageAt != null ? new Date(row.lastMessageAt) : null,
+    }));
+
+    return { items, total: Number(total) };
   }
 }
