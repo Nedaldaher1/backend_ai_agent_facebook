@@ -4,6 +4,7 @@ import {
   ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -17,6 +18,7 @@ import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 import { ZodValidationPipe } from '@/common/pipes/zod-validation.pipe';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
 import { AuthService } from './auth.service';
+import { RegistrationEnabledGuard } from './registration-enabled.guard';
 import {
   AuthResponseDto,
   LoginDto,
@@ -40,16 +42,23 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(201)
+  @UseGuards(RegistrationEnabledGuard)
   @ApiOperation({
-    summary: 'Create an admin account',
+    summary: 'Create an admin account (gated)',
     description:
-      'Open self-registration for the admin panel. Hashes the password, creates ' +
-      'the admin_users row, and returns a signed JWT plus the public user.',
+      'Self-registration for the admin panel, DISABLED by default. Enable it by ' +
+      'setting ALLOW_REGISTRATION=true to bootstrap the first admin (there is no ' +
+      'seed mechanism), then turn it back off; otherwise this returns 403. Hashes ' +
+      'the password, creates the admin_users row, and returns a signed JWT plus ' +
+      'the public user.',
   })
   @ApiBody({ type: RegisterDto })
   @ApiCreatedResponse({
     description: 'Account created; JWT issued.',
     type: AuthResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Registration is disabled (ALLOW_REGISTRATION is not "true").',
   })
   @ApiConflictResponse({ description: 'Email is already registered.' })
   register(@Body(new ZodValidationPipe(registerSchema)) dto: RegisterInput) {

@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 import { AdminModule } from '@/modules/admin/admin.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { RegistrationEnabledGuard } from './registration-enabled.guard';
 
 /**
  * Admin authentication. Reuses AdminModule's `AdminUsersService` for account
@@ -28,6 +29,6 @@ import { AuthService } from './auth.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard],
+  providers: [AuthService, JwtAuthGuard, RegistrationEnabledGuard],
 })
 export class AuthModule {}

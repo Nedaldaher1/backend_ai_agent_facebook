@@ -37,6 +37,10 @@ export const envSchema = z
     // Auth: secret for signing admin JWTs + token lifetime (e.g. '7d', '12h').
     JWT_SECRET: z.string().min(16),
     JWT_EXPIRES_IN: z.string().default('7d'),
+    // Admin self-registration gate (WS0). POST /auth/register is CLOSED unless
+    // this is exactly 'true'. Open it only to bootstrap the first admin (there is
+    // no seed mechanism), then set it back. Any other value (incl. unset) → 403.
+    ALLOW_REGISTRATION: z.string().optional(),
 
     // --- Visual search embeddings (Marqo-FashionSigLIP via Transformers.js) ---
     // Multimodal model id; images and text embed into one 768-d space. A model
