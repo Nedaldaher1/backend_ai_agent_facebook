@@ -78,6 +78,7 @@ describe('ProductsService', () => {
   const deleteById = jest.fn();
   const setPublished = jest.fn();
   const appendImageUrls = jest.fn();
+  const findPublishedBySku = jest.fn();
 
   const repo = {
     list,
@@ -88,6 +89,7 @@ describe('ProductsService', () => {
     deleteById,
     setPublished,
     appendImageUrls,
+    findPublishedBySku,
   } as unknown as ProductsRepository;
 
   const colors = {
@@ -1000,5 +1002,38 @@ describe('ProductsService', () => {
     const result = await service.resolveForOrder('null-img');
 
     expect(result.found).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // findPublishedBySku — publish gate (WS3)
+  // ---------------------------------------------------------------------------
+
+  it('findPublishedBySku returns the product when the SKU matches and is_published=true', async () => {
+    const published = makeProduct({ id: 'p-sku', sku: 'SKU-BLACK', isPublished: true });
+    findPublishedBySku.mockResolvedValue(published);
+
+    const result = await service.findPublishedBySku('SKU-BLACK');
+
+    expect(findPublishedBySku).toHaveBeenCalledWith('SKU-BLACK');
+    expect(result).toMatchObject({ id: 'p-sku', sku: 'SKU-BLACK', isPublished: true });
+  });
+
+  it('findPublishedBySku (publish gate): returns undefined when the product exists but is NOT published', async () => {
+    // The repository enforces is_published = true in its WHERE clause;
+    // an unpublished product is returned as undefined (no row).
+    findPublishedBySku.mockResolvedValue(undefined);
+
+    const result = await service.findPublishedBySku('SKU-DRAFT');
+
+    expect(findPublishedBySku).toHaveBeenCalledWith('SKU-DRAFT');
+    expect(result).toBeUndefined();
+  });
+
+  it('findPublishedBySku returns undefined when no product has the given SKU', async () => {
+    findPublishedBySku.mockResolvedValue(undefined);
+
+    const result = await service.findPublishedBySku('SKU-MISSING');
+
+    expect(result).toBeUndefined();
   });
 });

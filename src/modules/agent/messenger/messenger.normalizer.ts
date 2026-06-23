@@ -48,8 +48,12 @@ function normalizeReferral(raw: RawReferral | undefined): NormalizedReferral | u
 /**
  * Extract the referral from a raw event using the required precedence:
  *   message.referral > event.referral > postback.referral
+ *
+ * Exported so the controller can use it for content-less referral events
+ * (messaging_referrals) that normalizeEvent returns null for, but where
+ * first-touch attribution should still be persisted (WS3).
  */
-function extractReferral(event: RawMessagingEvent): NormalizedReferral | undefined {
+export function extractReferral(event: RawMessagingEvent): NormalizedReferral | undefined {
   const raw =
     event.message?.referral ??
     event.referral ??

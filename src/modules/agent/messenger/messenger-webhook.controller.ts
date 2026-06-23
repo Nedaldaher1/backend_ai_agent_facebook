@@ -44,14 +44,15 @@ import { ConfigService } from '@nestjs/config';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { ProductsService } from '@/modules/products/products.service';
+import { ConversationsService } from '@/modules/conversations/conversations.service';
 import { AgentService, type IncomingMessage } from '../agent.service';
 import { DebounceService } from '../debounce/debounce.service';
 import { mergeTurns } from '../debounce/merge-turns';
 import { MessengerSignatureGuard } from './messenger-signature.guard';
 import { MessengerClient } from './messenger.client';
 import { formatMessengerReply, type MessengerCardProduct } from './messenger.formatter';
-import { normalizeEvent } from './messenger.normalizer';
-import type { InboundMessage, RawMessagingEvent } from './messenger.types';
+import { extractReferral, normalizeEvent } from './messenger.normalizer';
+import type { InboundMessage, NormalizedReferral, RawMessagingEvent } from './messenger.types';
 import {
   messengerVerifyQuerySchema,
   messengerWebhookBodySchema,
@@ -71,6 +72,7 @@ export class MessengerWebhookController {
   constructor(
     private readonly agent: AgentService,
     private readonly products: ProductsService,
+    private readonly conversations: ConversationsService,
     private readonly debounce: DebounceService,
     private readonly messengerClient: MessengerClient,
     private readonly config: ConfigService,
@@ -164,7 +166,23 @@ export class MessengerWebhookController {
 
       for (const event of messaging as RawMessagingEvent[]) {
         const normalized = normalizeEvent(event);
-        if (!normalized) continue;
+
+        if (!normalized) {
+          // Content-less event (delivery receipt, read receipt, or a pure
+          // messaging_referrals event with no message/postback text). If the
+          // event carries a referral, persist first-touch attribution without
+          // starting an agent turn.
+          const referral = extractReferral(event);
+          if (referral && Object.keys(referral).length > 0) {
+            const psid = event.sender.id;
+            void this.persistAttributionOnly(psid, referral).catch((err) =>
+              this.logger.warn(
+                `Attribution-only persist failed for PSID ${psid}: ${String(err)}`,
+              ),
+            );
+          }
+          continue;
+        }
 
         // Dedupe by mid within this batch (AgentService has the DB-level backstop).
         if (normalized.mid) {
@@ -291,11 +309,54 @@ export class MessengerWebhookController {
       contactId: msg.psid,
       text: msg.text,
       ...(msg.imageUrl ? { lastImageUrl: msg.imageUrl } : {}),
+      // adRef: carry the ref slug so the search_products tool can surface
+      // ad-linked products even on turns where the full referral is present.
       ...(msg.referral?.ref ? { adRef: msg.referral.ref } : {}),
       ...(msg.name ? { name: msg.name } : {}),
       channel: 'messenger',
       ...(msg.mid ? { externalMessageId: msg.mid } : {}),
+      // WS3 — full referral for first-touch attribution in AgentService.
+      ...(msg.referral && Object.keys(msg.referral).length > 0
+        ? {
+            referral: {
+              ...(msg.referral.ref ? { ref: msg.referral.ref } : {}),
+              ...(msg.referral.adId ? { adId: msg.referral.adId } : {}),
+              ...(msg.referral.source ? { adSource: msg.referral.source } : {}),
+              ...(msg.referral.adsContext?.product_id
+                ? { adProductId: msg.referral.adsContext.product_id }
+                : {}),
+              ...(msg.referral.adsContext
+                ? { adContext: msg.referral.adsContext }
+                : {}),
+            },
+          }
+        : {}),
     };
+  }
+
+  /**
+   * Persist first-touch attribution for a content-less Messenger referral event
+   * (WS3). Handles messaging_referrals events that carry no text/image/postback,
+   * which normalizeEvent returns null for — they still need attribution written.
+   *
+   * Runs best-effort (void + catch at call site). Race note: if a content-bearing
+   * event for the same PSID is processed concurrently (debounce flush vs. this
+   * path both calling findOrCreateByPsid), both paths write the same conversation
+   * row and the attribution UPDATE's WHERE attributed_at IS NULL guard ensures
+   * only the first one commits.
+   */
+  private async persistAttributionOnly(
+    psid: string,
+    referral: NormalizedReferral,
+  ): Promise<void> {
+    const convo = await this.conversations.findOrCreateByPsid(psid);
+    await this.conversations.recordFirstTouchAttribution(convo.id, {
+      adId: referral.adId,
+      adRef: referral.ref,
+      adSource: referral.source,
+      adProductId: referral.adsContext?.product_id,
+      adContext: referral.adsContext,
+    });
   }
 
   /**

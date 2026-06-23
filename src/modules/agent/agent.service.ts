@@ -54,6 +54,19 @@ export interface IncomingMessage {
    * Optional today; AgentService falls back to a content+time-window hash.
    */
   externalMessageId?: string;
+  /**
+   * First-touch referral data extracted from the Messenger event (WS3).
+   * Passed from the controller's normalizeEvent/extractReferral; used by
+   * AgentService to persist first-touch attribution after findOrCreateByPsid.
+   * Only the Messenger transport populates this field; ManyChat uses adRef only.
+   */
+  referral?: {
+    ref?: string;
+    adId?: string;
+    adSource?: string;
+    adProductId?: string;
+    adContext?: unknown;
+  };
 }
 
 /**
@@ -259,6 +272,20 @@ export class AgentService implements OnModuleInit {
       threadId,
       adRef: input.adRef,
     });
+
+    // WS3 — First-touch attribution: if the inbound message carries referral
+    // data (Messenger transport only), persist it best-effort. The repository
+    // UPDATE is atomic (WHERE attributed_at IS NULL) so only the first call
+    // writes; duplicates are silent no-ops. We then attempt product resolution
+    // by SKU (publish gate enforced) and merge the result into conversation
+    // state so the agent knows which advertised product the customer came from.
+    if (input.referral) {
+      void this.persistAttribution(convo.id, input.referral).catch((err) =>
+        this.logger.warn(
+          `First-touch attribution failed for conversation ${convo.id}: ${String(err)}`,
+        ),
+      );
+    }
 
     // Idempotency: ignore a re-delivered inbound turn (webhook retry / double
     // tap). The key is the provider message id when present, else a content +
@@ -636,6 +663,57 @@ export class AgentService implements OnModuleInit {
       );
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Persist first-touch attribution for a Messenger turn (WS3).
+   *
+   * Called best-effort (void + catch at the call site) immediately after
+   * findOrCreateByPsid — never blocks or errors the reply path.
+   *
+   * Steps:
+   *  1. recordFirstTouchAttribution — atomic single UPDATE WHERE attributed_at
+   *     IS NULL.  If this returns undefined the conversation was already
+   *     attributed and we stop here (idempotent).
+   *  2. SKU product resolution — if adProductId is present, look up the
+   *     published product by SKU.  On a match, merge `{ adProduct: { id, name,
+   *     priceJod } }` into the conversation state so the agent knows which
+   *     advertised product the customer came from.  On no match (unpublished,
+   *     wrong SKU, catalog miss) we keep the raw adProductId and do nothing
+   *     extra.
+   */
+  private async persistAttribution(
+    conversationId: string,
+    referral: NonNullable<IncomingMessage['referral']>,
+  ): Promise<void> {
+    const updated = await this.conversations.recordFirstTouchAttribution(
+      conversationId,
+      {
+        adId: referral.adId,
+        adRef: referral.ref,
+        adSource: referral.adSource,
+        adProductId: referral.adProductId,
+        adContext: referral.adContext,
+      },
+    );
+
+    // updated is undefined when already attributed — stop here.
+    if (!updated) return;
+
+    // SKU-based product resolution (publish gate enforced by the repo query).
+    if (referral.adProductId) {
+      const product = await this.products.findPublishedBySku(referral.adProductId);
+      if (product) {
+        // Merge into conversation state so the agent picks it up on its next turn.
+        await this.conversations.mergeState(conversationId, {
+          adProduct: {
+            id: product.id,
+            name: product.name,
+            priceJod: product.priceJod, // string (numeric(10,3) → string end-to-end)
+          },
+        });
+      }
     }
   }
 

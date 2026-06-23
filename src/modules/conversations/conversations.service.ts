@@ -193,4 +193,29 @@ export class ConversationsService {
   ): Promise<{ items: ConversationListRow[]; total: number }> {
     return this.repo.listConversationsWithPreview(filters);
   }
+
+  /**
+   * Persist first-touch ad-attribution on a conversation (WS3).
+   * Delegates to the repository's atomic WHERE attributed_at IS NULL UPDATE.
+   * Returns the updated row on the first write, undefined on subsequent calls
+   * (already attributed — idempotent no-op).
+   */
+  recordFirstTouchAttribution(
+    conversationId: string,
+    attrib: Parameters<ConversationsRepository['recordFirstTouchAttribution']>[1],
+  ): Promise<Conversation | undefined> {
+    return this.repo.recordFirstTouchAttribution(conversationId, attrib);
+  }
+
+  /**
+   * Atomically shallow-merge `patch` into the `state` jsonb column (WS3 — and
+   * other callers). Delegates to the repository's `coalesce || patch` statement
+   * so no read-modify-write is needed. Returns undefined when the row is gone.
+   */
+  mergeState(
+    conversationId: string,
+    patch: Record<string, unknown>,
+  ): Promise<Conversation | undefined> {
+    return this.repo.mergeConversationState(conversationId, patch);
+  }
 }

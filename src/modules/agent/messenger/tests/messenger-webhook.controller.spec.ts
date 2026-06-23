@@ -78,6 +78,13 @@ function makeController(opts: MakeControllerOpts) {
     getMedia: jest.fn(async (id: string) => opts.media?.[id] ?? []),
   } as unknown as ProductsService;
 
+  // Minimal ConversationsService stub — the existing tests don't exercise WS3
+  // paths so they just need the service to exist without throwing.
+  const conversations = {
+    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: 'conv-stub', aiState: 'bot' }),
+    recordFirstTouchAttribution: jest.fn().mockResolvedValue(undefined),
+  } as unknown as import('@/modules/conversations/conversations.service').ConversationsService;
+
   // Debounce stand-in: invoke the flush immediately so tests can await async work
   let lastFlush: Promise<void> | undefined;
   const debounce = {
@@ -109,6 +116,7 @@ function makeController(opts: MakeControllerOpts) {
   const controller = new MessengerWebhookController(
     agent,
     products,
+    conversations,
     debounce,
     messengerClient,
     config,

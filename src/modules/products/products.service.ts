@@ -215,6 +215,17 @@ export class ProductsService {
   }
 
   /**
+   * Find a published product by its SKU (WS3 — ad-attribution product resolver).
+   *
+   * Publish gate is enforced (is_published = true). Returns undefined for
+   * unpublished or missing SKUs. Raw product (keys, not URLs) — the WS3
+   * attribution path reads only id/name/priceJod from the result.
+   */
+  findPublishedBySku(sku: string): Promise<Product | undefined> {
+    return this.repo.findPublishedBySku(sku);
+  }
+
+  /**
    * Fuzzy-text search over the published catalog; falls back to structured
    * search when `query` is empty/absent.
    * Returns raw products (keys, not URLs) — imageUrls are not in the tool output.

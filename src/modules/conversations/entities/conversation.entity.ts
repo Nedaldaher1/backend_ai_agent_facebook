@@ -31,6 +31,16 @@ export const conversations = pgTable(
     psid: text('psid').notNull(),
     threadId: text('thread_id'),
     adRef: text('ad_ref'),
+    // --- First-touch ad-attribution (set once, never overwritten) ---
+    // attributed_at is the no-overwrite guard: the data-path layer writes these
+    // columns in a single UPDATE WHERE attributed_at IS NULL, so they must all
+    // stay nullable with no server-side default.
+    adId: text('ad_id'),
+    adSource: text('ad_source'),
+    adProductId: text('ad_product_id'),
+    adContext: jsonb('ad_context'),
+    attributedAt: timestamp('attributed_at', { withTimezone: true }),
+    // --- end ad-attribution ---
     state: jsonb('state'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

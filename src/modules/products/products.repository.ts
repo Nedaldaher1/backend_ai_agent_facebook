@@ -218,6 +218,27 @@ export class ProductsRepository {
   }
 
   /**
+   * Find a published product by its SKU.
+   *
+   * Publish gate is enforced by this query (is_published = true). Returns
+   * undefined when no published product matches the SKU (including when the
+   * SKU belongs to an unpublished product). Used by the WS3 ad-attribution
+   * product resolver so the agent never surfaces unpublished products via ads.
+   *
+   * SKU convention: the admin assigns one SKU per product variant (each color
+   * is its own product row). The ad's `product_id` field in ads_context_data
+   * is expected to match this SKU exactly (case-sensitive, as stored).
+   */
+  async findPublishedBySku(sku: string): Promise<Product | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(products)
+      .where(and(eq(products.sku, sku), eq(products.isPublished, true)))
+      .limit(1);
+    return row;
+  }
+
+  /**
    * Return all published products linked to the given ad reference, ordered by
    * the position column so the agent surfaces them in the admin-configured order.
    * Only active ad links (is_active = true) are followed.

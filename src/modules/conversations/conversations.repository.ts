@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, desc, eq, ilike, isNotNull, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
@@ -183,6 +183,59 @@ export class ConversationsRepository {
       .where(and(eq(messages.role, 'agent'), isNotNull(messages.attributes)))
       .orderBy(desc(messages.createdAt))
       .limit(limit);
+  }
+
+  // --- WS3 — first-touch ad-attribution ---
+
+  /**
+   * Attribution payload carried from the Messenger referral event (WS3).
+   * All fields are optional — only those present on the event are set.
+   */
+  // (defined inline where used; extracted here for the return type below)
+
+  /**
+   * Write first-touch attribution in a single atomic UPDATE.
+   *
+   * The WHERE clause includes `attributed_at IS NULL` so this is idempotent:
+   * only the first call that wins the race sets the attribution; subsequent
+   * calls for the same conversation row silently no-op (0 rows updated → returns
+   * undefined). This guarantees "set once, never overwritten" semantics without
+   * a separate SELECT before the UPDATE.
+   *
+   * @param conversationId  UUID of the conversation to attribute.
+   * @param attrib          Partial attribution data (only keys present are set).
+   * @returns               The updated row (first touch written) or undefined (already attributed).
+   */
+  async recordFirstTouchAttribution(
+    conversationId: string,
+    attrib: {
+      adId?: string;
+      adRef?: string;
+      adSource?: string;
+      adProductId?: string;
+      adContext?: unknown;
+    },
+  ): Promise<Conversation | undefined> {
+    const set: Partial<typeof conversations.$inferInsert> = {
+      attributedAt: new Date(),
+    };
+    if (attrib.adId !== undefined) set.adId = attrib.adId;
+    if (attrib.adRef !== undefined) set.adRef = attrib.adRef;
+    if (attrib.adSource !== undefined) set.adSource = attrib.adSource;
+    if (attrib.adProductId !== undefined) set.adProductId = attrib.adProductId;
+    if (attrib.adContext !== undefined) set.adContext = attrib.adContext;
+
+    const [row] = await this.db
+      .update(conversations)
+      .set(set)
+      .where(
+        and(
+          eq(conversations.id, conversationId),
+          isNull(conversations.attributedAt),
+        ),
+      )
+      .returning();
+    return row; // undefined when already attributed (0 rows updated)
   }
 
   // --- conversation state (WS4 — AIA-34) ---
