@@ -106,6 +106,24 @@ export const envSchema = z
     // arriving (milliseconds). Must be < ManyChat's 10-second timeout.
     DEBOUNCE_MAX_MS: z.coerce.number().int().positive().default(8000),
 
+    // --- Meta Messenger Platform (direct Graph API, v25.0) ---
+    // Token echoed during webhook verification (GET /webhook/messenger):
+    // hub.verify_token must equal this. You choose the value and set the same
+    // string in the Meta App dashboard webhook config. Required in production.
+    MESSENGER_VERIFY_TOKEN: z.string().optional(),
+    // App Secret (Meta App → Settings → Basic). Validates the X-Hub-Signature-256
+    // HMAC on every inbound POST. Required in production.
+    MESSENGER_APP_SECRET: z.string().optional(),
+    // The Facebook Page id this app sends from (POST /{PAGE_ID}/messages).
+    MESSENGER_PAGE_ID: z.string().optional(),
+    // Long-lived Page access token (Meta App → Messenger → Generate token).
+    // Authorizes Send API calls. Required in production.
+    MESSENGER_PAGE_ACCESS_TOKEN: z.string().optional(),
+    // Graph API version — the SINGLE pin for every Graph call. Bump here only.
+    MESSENGER_GRAPH_VERSION: z.string().default('v25.0'),
+    // Optional ads token to resolve ad_id → name/adset/campaign for attribution.
+    META_ADS_ACCESS_TOKEN: z.string().optional(),
+
     // --- Cloudflare R2 (required when STORAGE_DRIVER='r2') ---
     // Account ID (encoded in the endpoint; included here for documentation).
     R2_ACCOUNT_ID: z.string().optional(),
@@ -142,6 +160,28 @@ export const envSchema = z
           code: z.ZodIssueCode.custom,
           path: [key],
           message: `Required when STORAGE_DRIVER is 'r2'`,
+        });
+      }
+    }
+  })
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV !== 'production') return;
+
+    // The direct Messenger transport cannot run without these secrets. Fail fast
+    // in production so a misconfigured deploy never silently drops messages. In
+    // dev/test they stay optional (the webhook is exercised via tests/tunnel).
+    const required: Array<keyof typeof env> = [
+      'MESSENGER_VERIFY_TOKEN',
+      'MESSENGER_APP_SECRET',
+      'MESSENGER_PAGE_ID',
+      'MESSENGER_PAGE_ACCESS_TOKEN',
+    ];
+    for (const key of required) {
+      if (!env[key]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `Required when NODE_ENV is 'production'`,
         });
       }
     }
