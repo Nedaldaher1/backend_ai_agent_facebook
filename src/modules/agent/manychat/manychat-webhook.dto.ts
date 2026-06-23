@@ -10,10 +10,12 @@
  *  ─────────────────────────────────────────────────────
  *  contactId         ← {{contact.id}}          (numeric subscriber id, stable)
  *  text              ← {{last_input_text}}      (the message the subscriber sent)
- *  lastImageUrl      ← {{last_input_attachment_url}} or a custom attachment field
- *                       (URL of the last image/file the subscriber sent; optional)
- *  adRef             ← {{ref}}                 (ad ref slug from the entry point;
- *                       only present when the contact entered via a Comment/Ref ad)
+ *  lastImageUrl      ← a Custom User Field you populate via a User Input step that
+ *                       captures the image as TEXT — ManyChat has NO system field
+ *                       for the last attachment URL. Empty '' → undefined. Optional.
+ *  adRef             ← a Custom User Field you populate via the Messenger Ref URL /
+ *                       Facebook Ads trigger "save payload" — NO system {{ref}}
+ *                       field exists; present only on ad/ref entry points. Optional.
  *  name              ← {{contact.name}}         (Facebook display name; optional)
  *  channel           ← hardcoded in the flow   ('messenger' | 'whatsapp'; defaults
  *                       to messenger if omitted)
@@ -38,9 +40,18 @@ export const manyChatWebhookSchema = z.object({
   text: z.string().min(1).max(4000),
   /**
    * URL of an image the subscriber attached (optional).
-   * Maps from the attachment URL field configured in the ManyChat flow.
+   *
+   * Sourced from a Custom User Field populated in the flow (ManyChat has no system
+   * field for the last attachment URL — see docs/manychat-quick-start.md). ManyChat
+   * substitutes an EMPTY string for an unset custom field, so we coerce '' →
+   * undefined here: a text-only turn must NOT trip the `.url()` check. That 400
+   * fires in the validation pipe, BEFORE the controller's never-5xx fallback, so
+   * the subscriber would otherwise get nothing on every imageless message.
    */
-  lastImageUrl: z.string().url().max(2048).optional(),
+  lastImageUrl: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().url().max(2048).optional(),
+  ),
   /**
    * Ad ref slug from {{ref}} — present only on ref-ad / comment-reply entry
    * points, absent on direct messages.

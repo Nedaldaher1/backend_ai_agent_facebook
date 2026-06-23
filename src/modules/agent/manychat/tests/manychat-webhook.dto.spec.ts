@@ -153,13 +153,19 @@ describe('manyChatWebhookSchema', () => {
     }
   });
 
-  it('rejects an empty string for lastImageUrl (fails URL check)', () => {
+  // ManyChat substitutes '' for an unset Custom User Field, so a text-only turn
+  // posts lastImageUrl: ''. The DTO coerces that to undefined (treated as "no
+  // image") instead of rejecting it — otherwise every imageless message 400s.
+  it('coerces an empty string for lastImageUrl to undefined (no image)', () => {
     const result = manyChatWebhookSchema.safeParse({
       contactId: 'C1',
       text: 'مرحبا',
       lastImageUrl: '',
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lastImageUrl).toBeUndefined();
+    }
   });
 
   it('accepts a valid https URL for lastImageUrl', () => {
