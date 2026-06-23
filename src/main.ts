@@ -19,9 +19,16 @@ import {
 } from '@/core/storage/storage.constants';
 
 async function bootstrap() {
+  // rawBody: true — enables NestJS's built-in raw-body capture for Fastify.
+  // The Fastify adapter registers a JSON content-type parser that, when this
+  // option is true, copies the raw Buffer to req.rawBody BEFORE the parsed
+  // JSON lands in req.body. Required for MessengerSignatureGuard to validate
+  // the X-Hub-Signature-256 HMAC (HMAC must be computed over the raw bytes).
+  // See: @nestjs/platform-fastify FastifyAdapter.registerJsonContentParser.
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({ logger: true }),
+    { rawBody: true },
   );
   const config = app.get(ConfigService);
 

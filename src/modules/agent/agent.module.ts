@@ -16,6 +16,9 @@ import { ManyChatControlService } from './manychat/manychat-control.service';
 import { ManyChatSecretGuard } from './manychat/manychat-secret.guard';
 import { ManyChatSenderService } from './manychat/manychat-sender.service';
 import { ManyChatWebhookController } from './manychat/manychat-webhook.controller';
+import { MessengerClient } from './messenger/messenger.client';
+import { MessengerSignatureGuard } from './messenger/messenger-signature.guard';
+import { MessengerWebhookController } from './messenger/messenger-webhook.controller';
 import { VisionService } from './vision/vision.service';
 
 /**
@@ -39,7 +42,12 @@ import { VisionService } from './vision/vision.service';
     KnowledgeModule,
     SizingModule,
   ],
-  controllers: [AgentController, ManyChatWebhookController, ConversationsAdminController],
+  controllers: [
+    AgentController,
+    ManyChatWebhookController,
+    MessengerWebhookController,
+    ConversationsAdminController,
+  ],
   providers: [
     AgentService,
     AgentBehaviorService,
@@ -49,8 +57,10 @@ import { VisionService } from './vision/vision.service';
     ManyChatSenderService,
     ManyChatControlService,
     ManyChatSecretGuard,
+    MessengerClient,
+    MessengerSignatureGuard,
     ConversationControlService,
   ],
-  exports: [AgentService, AgentBehaviorService, ManyChatControlService],
+  exports: [AgentService, AgentBehaviorService, ManyChatControlService, MessengerClient],
 })
 export class AgentModule {}

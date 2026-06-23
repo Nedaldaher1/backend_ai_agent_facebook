@@ -57,7 +57,7 @@ export interface IncomingMessage {
 }
 
 /**
- * Agent reply returned to the controller and eventually to ManyChat.
+ * Agent reply returned to the controller and eventually to ManyChat / Messenger.
  *
  * `price` is a STRING (JOD notation) to honour the money-as-string rule
  * (CLAUDE.md §3 — never use float for prices).  Phase 4 formats it for the
@@ -65,12 +65,31 @@ export interface IncomingMessage {
  *
  * `productOverflow` carries the count of matched products that exceeded the
  * rendered cap (8). When > 0 the formatter appends an Arabic overflow note.
+ *
+ * `ran` indicates whether the agent actually ran generate() for this turn:
+ *  - true  → the generate() path executed (aiState === 'bot').
+ *  - false → the turn was skipped (dedup early-return OR ai_state !== 'bot').
+ * Callers (Messenger controller) use this to decide whether to send a reply.
+ *
+ * `aiState` reflects the conversation's ai_state at the time of the return:
+ *  - 'bot'    → normal active conversation.
+ *  - 'human'  → conversation is under human handling.
+ *  - 'paused' → conversation is temporarily paused.
+ * Populated on all three return paths so callers can react accordingly.
  */
 export interface AgentReply {
   reply: string;
   products?: Array<{ id: string; name: string; price: string }>;
   /** Number of matched products beyond the rendered cap. 0 when nothing overflows. */
   productOverflow?: number;
+  /**
+   * Whether the agent ran generate() this turn.
+   * false on dedup early-return and on not-bot gate returns.
+   * true on the normal end-of-turn path.
+   */
+  ran: boolean;
+  /** The conversation's ai_state at the time of the return. */
+  aiState?: 'bot' | 'human' | 'paused';
 }
 
 // ---------------------------------------------------------------------------
@@ -251,8 +270,8 @@ export class AgentService implements OnModuleInit {
       dedupKey,
     );
     if (alreadyProcessed) {
-      // Duplicate — do nothing. Empty reply is dropped by the (future) adapter.
-      return { reply: '' };
+      // Duplicate — do nothing. Empty reply is dropped by the adapter.
+      return { reply: '', ran: false, aiState: convo.aiState as 'bot' | 'human' | 'paused' };
     }
 
     // Timed-pause expiry (auto-resume): a pause created with `durationMinutes`
@@ -300,7 +319,7 @@ export class AgentService implements OnModuleInit {
         externalId: dedupKey,
         ...(input.lastImageUrl ? { imageUrl: input.lastImageUrl } : {}),
       });
-      return { reply: '' };
+      return { reply: '', ran: false, aiState: aiState as 'bot' | 'human' | 'paused' };
     }
 
     // Build the trusted RequestContext that write tools read for identity.
@@ -428,6 +447,8 @@ export class AgentService implements OnModuleInit {
       reply: result.text,
       products: extractedProducts,
       ...(overflow > 0 ? { productOverflow: overflow } : {}),
+      ran: true,
+      aiState: 'bot',
     };
   }
 
