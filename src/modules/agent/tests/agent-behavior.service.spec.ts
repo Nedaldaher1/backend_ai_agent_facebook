@@ -284,6 +284,26 @@ describe('AgentBehaviorService', () => {
       expect(out).toContain('capture_order');
     });
 
+    it('order-capture guidance confirms color + size per item and reads back a summary', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(makeBehavior()),
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const out = await svc.getInstructions();
+
+      // A multi-model/multi-color order is treated as separate items, each confirmed.
+      expect(out).toContain('كأصناف منفصلة');
+      // The agent reads back an itemized summary before capturing the order.
+      expect(out).toContain('ملخص');
+    });
+
     it('contains escalation guidance referencing escalate_to_human', async () => {
       const freshRepo = {
         list,
