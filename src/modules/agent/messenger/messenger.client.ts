@@ -2,14 +2,15 @@
  * MessengerClient — sends messages and sender-actions to the Meta Messenger
  * Platform via the Graph API Send API (v25.0).
  *
- * Token/page-id absent → log and skip (dev-friendly, mirrors ManyChat sender).
+ * Token/page-id absent → log and skip (dev-friendly; set the env vars in production).
  * Non-2xx Graph response → throw MessengerSendError (callers decide whether to
  * swallow). Network / timeout failures → throw as-is (callers handle).
  *
  * CRITICAL (constraint #3 — no deprecated tags):
  *  - In-window RESPONSE replies:    messaging_type:"RESPONSE", NO tag.
  *  - Human-agent out-of-window:     messaging_type:"MESSAGE_TAG", tag:"HUMAN_AGENT".
- *  - NEVER use ACCOUNT_UPDATE, CONFIRMED_EVENT_UPDATE, or POST_PURCHASE_UPDATE.
+ *  - Deprecated / restricted message_tags are forbidden. Only HUMAN_AGENT
+ *    is allowed (humanAgent=true path). All other tags are rejected by Meta.
  *
  * Graph API version is read from MESSENGER_GRAPH_VERSION via ConfigService so
  * the pin is a single config entry (constraint #6).
@@ -166,8 +167,8 @@ export class MessengerClient {
   /**
    * POST a body to the Graph API Send endpoint.
    *
-   * Skips silently (with a warn log) when credentials are absent — matches the
-   * dev-skip pattern in ManyChatSenderService.
+   * Skips silently (with a warn log) when credentials are absent — set
+   * MESSENGER_PAGE_ID and MESSENGER_PAGE_ACCESS_TOKEN in production.
    *
    * Auth: the Page access token is sent in the Authorization header
    * (`Bearer <token>`) rather than the URL query string. The Graph API

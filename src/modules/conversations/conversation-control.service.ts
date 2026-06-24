@@ -1,18 +1,19 @@
 /**
  * ConversationControlService — admin-side handoff and conversation control.
  *
- * Lives in AgentModule (it imports ConversationsModule and provides the ManyChat
- * services, so placing this service here avoids any new cross-module edge).
+ * Lives in AgentModule (it imports ConversationsModule and provides MessengerClient,
+ * so placing this service here avoids any new cross-module edge).
  *
- * Every mutating method follows the same five-step pattern:
+ * Every state-mutating method follows the same pattern:
  *   1. Load via ConversationsService.getById (404 if missing).
  *   2. Capture fromState.
  *   3. setAiState via ConversationsService.
  *   4. recordEvent via ConversationsService.
- *   5. Fire-and-forget ManyChatControlService.applyState (never blocks the request).
  *
  * Human-message delivery (WS6) also passes through here so that idempotency,
- * gating, message persistence, and ManyChat delivery are all co-located.
+ * gating, message persistence, and Messenger delivery are all co-located.
+ * Messages are sent via MessengerClient.sendText(..., true) — the HUMAN_AGENT tag
+ * allows out-of-window replies (within 7 days of the last customer message).
  */
 
 import {
@@ -31,9 +32,7 @@ import { ConversationsService } from './conversations.service';
 import type { AiState } from './conversations.repository';
 import type { Conversation } from './entities/conversation.entity';
 import type { Message } from './entities/message.entity';
-import { ManyChatControlService } from '@/modules/agent/manychat/manychat-control.service';
-import { ManyChatSenderService } from '@/modules/agent/manychat/manychat-sender.service';
-import { toDynamicBlock } from '@/modules/agent/manychat/manychat.formatter';
+import { MessengerClient } from '@/modules/agent/messenger/messenger.client';
 import type {
   AssignConversationInput,
   HandoffConversationInput,
@@ -69,8 +68,7 @@ export class ConversationControlService {
 
   constructor(
     private readonly conversations: ConversationsService,
-    private readonly manychatControl: ManyChatControlService,
-    private readonly manychatSender: ManyChatSenderService,
+    private readonly messengerClient: MessengerClient,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -131,8 +129,9 @@ export class ConversationControlService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Pause the AI on this conversation. Sets ai_state=paused, records the event,
-   * and mirrors the state into ManyChat fire-and-forget.
+   * Pause the AI on this conversation. Sets ai_state=paused and records
+   * the event. The Messenger transport's ai_state column is the source of
+   * truth — no external call is needed.
    */
   async pause(
     id: string,
@@ -169,12 +168,6 @@ export class ConversationControlService {
         : null,
     });
 
-    void this.manychatControl.applyState(convo.psid, 'paused').catch((err) => {
-      this.logger.warn(
-        `ManyChatControlService.applyState failed for pause on ${id}: ${String(err)}`,
-      );
-    });
-
     return updated;
   }
 
@@ -207,22 +200,14 @@ export class ConversationControlService {
       toState: 'bot',
     });
 
-    void this.manychatControl.applyState(convo.psid, 'bot').catch((err) => {
-      this.logger.warn(
-        `ManyChatControlService.applyState failed for resume on ${id}: ${String(err)}`,
-      );
-    });
-
     return updated;
   }
 
   /**
    * Assign (or unassign) the conversation.
    *
-   * - If assignedTo is non-null: flip ai_state to 'human' and set assignedTo,
-   *   then mirror 'human' into ManyChat.
-   * - If assignedTo is null: clear the field only (ai_state stays unchanged,
-   *   no ManyChat call).
+   * - If assignedTo is non-null: flip ai_state to 'human' and set assignedTo.
+   * - If assignedTo is null: clear the field only (ai_state stays unchanged).
    */
   async assign(
     id: string,
@@ -251,12 +236,6 @@ export class ConversationControlService {
         toState: 'human',
         metadata: { assignedTo: input.assignedTo },
       });
-
-      void this.manychatControl.applyState(convo.psid, 'human').catch((err) => {
-        this.logger.warn(
-          `ManyChatControlService.applyState failed for assign on ${id}: ${String(err)}`,
-        );
-      });
     } else {
       updated = await this.conversations.setAiState(id, {
         assignedTo: null,
@@ -272,7 +251,6 @@ export class ConversationControlService {
         toState: fromState, // state unchanged on unassign
         metadata: { assignedTo: null },
       });
-      // No ManyChat call on unassign-only.
     }
 
     return updated;
@@ -280,7 +258,7 @@ export class ConversationControlService {
 
   /**
    * Escalate the conversation to a human agent (admin-initiated handoff).
-   * Sets ai_state=human, records the handoff event, mirrors to ManyChat.
+   * Sets ai_state=human and records the handoff event.
    */
   async handoff(
     id: string,
@@ -307,12 +285,6 @@ export class ConversationControlService {
       reason: input.reason,
     });
 
-    void this.manychatControl.applyState(convo.psid, 'human').catch((err) => {
-      this.logger.warn(
-        `ManyChatControlService.applyState failed for handoff on ${id}: ${String(err)}`,
-      );
-    });
-
     return updated;
   }
 
@@ -321,7 +293,7 @@ export class ConversationControlService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Send a human-agent message to the customer via ManyChat.
+   * Send a human-agent message to the customer via Messenger (HUMAN_AGENT tag).
    *
    * Gate: the conversation must NOT be in ai_state='bot'. If the AI is active,
    * the admin must pause or hand off first.
@@ -329,6 +301,12 @@ export class ConversationControlService {
    * Idempotency: a provided `idempotencyKey` (or a computed hash of the text
    * within a 1-minute window) short-circuits duplicates — the message is NOT
    * re-inserted or re-sent. Returns `delivered: false` on idempotent no-op.
+   *
+   * Delivery: MessengerClient.sendText(psid, text, true) sends with the
+   * HUMAN_AGENT message tag which allows out-of-window replies within 7 days
+   * of the last customer message. sendText throws MessengerSendError on any
+   * non-2xx Graph API response; the error is caught here and mapped to
+   * delivered=false so the message row is always persisted even on send failure.
    */
   async sendHumanMessage(
     id: string,
@@ -358,7 +336,7 @@ export class ConversationControlService {
       return { message: existing, delivered: false };
     }
 
-    // Persist the message first so it is never lost even if ManyChat is down.
+    // Persist the message first so it is never lost even if Messenger is down.
     const msg = await this.conversations.addMessage({
       conversationId: convo.id,
       role: 'human',
@@ -366,11 +344,17 @@ export class ConversationControlService {
       externalId,
     });
 
-    // Fire-and-forget delivery; capture result for the audit event.
-    const delivered = await this.manychatSender.sendReply(
-      convo.psid,
-      toDynamicBlock({ reply: input.text }),
-    );
+    // Deliver via Messenger Send API with HUMAN_AGENT tag (humanAgent=true).
+    // sendText throws MessengerSendError on non-2xx; catch and map to delivered=false.
+    let delivered = false;
+    try {
+      await this.messengerClient.sendText(convo.psid, input.text, true);
+      delivered = true;
+    } catch (err) {
+      this.logger.warn(
+        `Human-agent message send failed for conversation ${convo.id} (PSID ${convo.psid}): ${String(err)}`,
+      );
+    }
 
     await this.conversations.recordEvent({
       conversationId: convo.id,

@@ -3,8 +3,9 @@
  *
  * WRITE tool. Sets the conversation's ai_state column to 'human' (with the
  * escalation reason) and records a handoff event, so the admin panel and the
- * code gate route it to a human agent. AgentService mirrors the state into
- * ManyChat after the turn completes.
+ * code gate route it to a human agent. The ai_state column is the source of
+ * truth; subsequent turns from the same customer are silently dropped by the
+ * bot-pause gate in AgentService until an admin resumes the conversation.
  *
  * Customer identity (conversationId) comes ONLY from requestContext — never
  * from the tool input.

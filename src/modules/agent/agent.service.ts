@@ -15,8 +15,7 @@ import { SizingService } from '@/modules/sizing/sizing.service';
 import { createHash } from 'node:crypto';
 import { buildMastra } from './mastra/mastra.factory';
 import { VisionService, type VisionExtractResult } from './vision/vision.service';
-import { MAX_GALLERY_CARDS } from './manychat/manychat.formatter';
-import { ManyChatControlService } from './manychat/manychat-control.service';
+import { MAX_GALLERY_CARDS } from './messenger/messenger.formatter';
 
 /** Window for the content-hash idempotency fallback when no provider id exists. */
 const DEDUP_WINDOW_MS = 10_000;
@@ -26,22 +25,22 @@ const DEDUP_WINDOW_MS = 10_000;
 // ---------------------------------------------------------------------------
 
 /**
- * Incoming message from ManyChat (via POST /agent/message).
+ * Incoming message from the Meta Messenger transport (via POST /agent/message).
  *
- * `contactId` is the ManyChat contact_id, which is stored in the `psid`
- * column.  ManyChat never exposes the real Facebook PSID; contact_id is
- * our stable subscriber identifier across all of this customer's threads.
+ * `contactId` carries the Facebook PSID, which is stored in the `psid` column
+ * and used as the stable subscriber identifier (`resourceId`) across all of
+ * this customer's threads.
  */
 export interface IncomingMessage {
-  /** ManyChat contact_id → resourceId (NOT the real Facebook PSID). */
+  /** Facebook PSID → resourceId. */
   contactId: string;
   /** Customer message text. */
   text: string;
   /** Customer-sent image URL — accepted now; processing deferred to the vision phase. */
   lastImageUrl?: string;
-  /** Self-controlled ref slug captured by ManyChat (e.g. "spring-ad-1"). */
+  /** Self-controlled ref slug from the Messenger referral payload (e.g. "spring-ad-1"). */
   adRef?: string;
-  /** ManyChat FB profile name — optional best-effort seed for working memory. */
+  /** Facebook profile name — optional best-effort seed for working memory. */
   name?: string;
   /**
    * Inbound channel — sets the order `source` server-side (write tools read it
@@ -50,15 +49,14 @@ export interface IncomingMessage {
    */
   channel?: 'messenger' | 'whatsapp';
   /**
-   * Provider message id (ManyChat) used as the idempotency key for this turn.
-   * Optional today; AgentService falls back to a content+time-window hash.
+   * Provider message id (Messenger mid) used as the idempotency key for this turn.
+   * Optional; AgentService falls back to a content+time-window hash when absent.
    */
   externalMessageId?: string;
   /**
    * First-touch referral data extracted from the Messenger event (WS3).
    * Passed from the controller's normalizeEvent/extractReferral; used by
    * AgentService to persist first-touch attribution after findOrCreateByPsid.
-   * Only the Messenger transport populates this field; ManyChat uses adRef only.
    */
   referral?: {
     ref?: string;
@@ -70,11 +68,10 @@ export interface IncomingMessage {
 }
 
 /**
- * Agent reply returned to the controller and eventually to ManyChat / Messenger.
+ * Agent reply returned to the controller and sent via the Meta Messenger API.
  *
  * `price` is a STRING (JOD notation) to honour the money-as-string rule
- * (CLAUDE.md §3 — never use float for prices).  Phase 4 formats it for the
- * Dynamic Block card.
+ * (CLAUDE.md §3 — never use float for prices).
  *
  * `productOverflow` carries the count of matched products that exceeded the
  * rendered cap (8). When > 0 the formatter appends an Arabic overflow note.
@@ -151,17 +148,14 @@ interface EvalInfo {
  *    `PostgresStore` + `Mastra` instance with all domain tools wired in.
  *    The store's connection pool is owned by Mastra and stays alive for
  *    the process lifetime.
- *  - `handleMessage` is the ManyChat-ready entry point. Its body mirrors what
- *    ManyChat's External Request will POST; the Dynamic Block formatting and
- *    the real webhook are AIA-32 (Phase 4).
+ *  - `handleMessage` is the Meta Messenger entry point. It receives the
+ *    normalised payload from the Messenger controller after debounce/merge.
  *
  * Memory scoping:
- *  - `resourceId` = ManyChat contact_id — scopes working memory to the
- *    individual customer across all her threads.  The contact_id is stored in
- *    the `psid` column because ManyChat never exposes the real Facebook PSID;
- *    contact_id is our stable subscriber id.
+ *  - `resourceId` = Facebook PSID (`contactId`) — scopes working memory to the
+ *    individual customer across all her threads. Stored in the `psid` column.
  *  - `threadId` = `thread:{contactId}` — one continuous Messenger DM per
- *    contact; scopes message history to that single conversation window.
+ *    PSID; scopes message history to that single conversation window.
  *
  * RequestContext:
  *  - Populated before every generate() call with `contactId`, `conversationId`,
@@ -196,7 +190,6 @@ export class AgentService implements OnModuleInit {
     private readonly knowledge: KnowledgeService,
     private readonly sizing: SizingService,
     private readonly vision: VisionService,
-    private readonly manychatControl: ManyChatControlService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -239,13 +232,13 @@ export class AgentService implements OnModuleInit {
   // ---------------------------------------------------------------------------
 
   /**
-   * Handles an inbound customer message from ManyChat and returns the agent reply.
+   * Handles an inbound customer message from the Meta Messenger transport and
+   * returns the agent reply.
    *
    * Execution order:
-   *  1. Derives `resourceId` (= contactId) and `threadId` (= `thread:{contactId}`).
+   *  1. Derives `resourceId` (= PSID / contactId) and `threadId` (= `thread:{contactId}`).
    *  2. Ensures a Conversation row exists for this contact via findOrCreateByPsid.
-   *     contactId is stored in the `psid` column because ManyChat never exposes
-   *     the real Facebook PSID; contact_id is our stable subscriber id.
+   *     The PSID is stored in the `psid` column as our stable subscriber id.
    *  2a. BOT-PAUSE GATE (code-enforced): if ai_state !== 'bot', logs the inbound
    *      message and returns silently (reply: '') — generate() is NOT called. The
    *      handoff line is delivered once on the escalation turn by the tool; all
@@ -253,7 +246,6 @@ export class AgentService implements OnModuleInit {
    *  3. Builds a RequestContext carrying `contactId`, `conversationId`, `threadId`,
    *     and `adRef` (when present) so that write tools can read customer identity
    *     without it appearing in the tool input schema (security boundary, AIA-27).
-   *     contactId + adRef are carried for the runtime/tools per AIA-27.
    *  4. Optionally seeds the FB profile name into the system context so the agent
    *     can persist it to working memory (deferred refinement: the model won't
    *     overwrite a name it already knows).
@@ -305,8 +297,7 @@ export class AgentService implements OnModuleInit {
     // stores `pausedUntil`, but the gate below only checks `aiState`. Nothing
     // else reads `pausedUntil`, so without this an elapsed *temporary* pause
     // would stay silent forever. If the window has passed, flip back to 'bot'
-    // (record a system resume event + mirror to ManyChat, best-effort) and let
-    // the turn proceed normally.
+    // (record a system resume event) and let the turn proceed normally.
     let aiState = convo.aiState;
     if (
       aiState === 'paused' &&
@@ -326,18 +317,12 @@ export class AgentService implements OnModuleInit {
         reason: 'auto-resume: pause window elapsed',
       });
       aiState = 'bot';
-      void this.manychatControl
-        .applyState(resourceId, 'bot')
-        .catch((err) =>
-          this.logger.warn(`ManyChat auto-resume sync failed: ${err}`),
-        );
     }
 
     // Secondary gate (code-enforced): the bot replies only when ai_state === 'bot'.
     // 'human'/'paused' → log the inbound for the human, skip generate(), stay silent.
     // The handoff line is delivered once on the escalation turn itself (the tool's
-    // reply); subsequent turns are silent. '' maps to an empty Dynamic Block (sync
-    // no-op) and a no-op Send (async).
+    // reply); subsequent turns are silent.
     if (aiState !== 'bot') {
       await this.logTurn({
         conversationId: convo.id,
@@ -428,7 +413,7 @@ export class AgentService implements OnModuleInit {
 
     // TODO (AIA-32 webhook): if generate() throws, the inbound row above is left
     //   without a matching reply. Handle generate failures there (idempotency +
-    //   mark/clean the orphan turn) once the real ManyChat webhook owns delivery.
+    //   mark/clean the orphan turn) once the Messenger webhook owns delivery.
     const result = (await this.salesAgent.generate(input.text, {
       memory: { resource: resourceId, thread: threadId },
       requestContext,
@@ -456,18 +441,6 @@ export class AgentService implements OnModuleInit {
       content: result.text,
       ...(evalInfo ? { attributes: { eval: evalInfo } } : {}),
     });
-
-    // Mirror escalation into ManyChat (fire-and-forget) when this turn escalated.
-    // The DB is the source of truth; ManyChat sync is best-effort and must never
-    // delay or break the reply to the customer. Only AgentService calls this
-    // (ConversationsService and the tool stay ManyChat-free to avoid module cycles).
-    if (this.didEscalate(result)) {
-      void this.manychatControl
-        .applyState(resourceId, 'human')
-        .catch((err) =>
-          this.logger.warn(`ManyChat escalation sync failed: ${err}`),
-        );
-    }
 
     const { products: extractedProducts, overflow } = this.extractProducts(result);
     return {
@@ -559,16 +532,14 @@ export class AgentService implements OnModuleInit {
   /**
    * Idempotency key for an inbound turn.
    *
-   * WHY: ManyChat has no stable per-message id on all entry points (an
-   * External Request fires once per customer message, but webhook retries or
-   * double-taps can deliver the same content twice). We need a key that
-   * collapses re-deliveries within a short window while still letting a
-   * genuine new message with the same text through in a later window.
+   * WHY: the Meta Messenger platform may re-deliver a webhook event (retry or
+   * double-tap). We need a key that collapses re-deliveries within a short
+   * window while still letting a genuine new message with the same text through
+   * in a later window.
    *
    * RULE:
-   *  1. If the provider supplied an explicit message id (e.g. from
-   *     {{last_sent_message_id}} in the ManyChat flow body), use it as-is.
-   *     This is the most reliable key and de-dupes perfectly.
+   *  1. If the provider supplied an explicit message id (Messenger `mid`), use
+   *     it as-is. This is the most reliable key and de-dupes perfectly.
    *  2. Otherwise, hash (contactId | normalizedText | imageUrl | 10s-window).
    *     Text is normalized — trimmed, internal whitespace collapsed, lowercased —
    *     so trivially-different casing or extra spaces collapse to the same key.
@@ -642,27 +613,6 @@ export class AgentService implements OnModuleInit {
       };
     } catch {
       return undefined;
-    }
-  }
-
-  /**
-   * Returns true when the just-finished generate() turn contained a successful
-   * `escalate_to_human` tool call. Mirrors the defensive style of `extractProducts`
-   * and `buildEvalInfo`: filters `result.toolResults` by `payload.toolName` and
-   * `!payload.isError`, then checks `payload.result.escalated`. Best-effort:
-   * never throws — returns false on any malformed payload.
-   */
-  private didEscalate(result: GenerateResult): boolean {
-    try {
-      return (result.toolResults ?? []).some(
-        (c) =>
-          c.payload?.toolName === 'escalate_to_human' &&
-          !c.payload?.isError &&
-          (c.payload?.result as { escalated?: boolean } | undefined)
-            ?.escalated === true,
-      );
-    } catch {
-      return false;
     }
   }
 

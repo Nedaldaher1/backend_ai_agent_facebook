@@ -91,7 +91,7 @@ describe('MessengerClient', () => {
     expect(body.tag).toBe('HUMAN_AGENT');
   });
 
-  it('NEVER sends a deprecated tag on normal replies', async () => {
+  it('NEVER sends a deprecated tag on normal replies (tag must be absent or HUMAN_AGENT only)', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200 });
     const client = makeClient(BASE_ENV);
 
@@ -99,10 +99,9 @@ describe('MessengerClient', () => {
 
     const [, init] = (global.fetch as jest.Mock).mock.calls[0];
     const body = JSON.parse(init.body as string);
-    const forbidden = ['ACCOUNT_UPDATE', 'CONFIRMED_EVENT_UPDATE', 'POST_PURCHASE_UPDATE'];
-    for (const tag of forbidden) {
-      expect(body.tag).not.toBe(tag);
-    }
+    // On a normal (in-window) reply, no deprecated tag should appear.
+    // The only permitted tag is HUMAN_AGENT, used only when humanAgent=true.
+    expect(body.tag).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------

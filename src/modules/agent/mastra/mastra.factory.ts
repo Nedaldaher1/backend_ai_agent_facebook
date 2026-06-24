@@ -158,7 +158,7 @@ export function buildMastra(deps: BuildMastraDeps): {
             style_notes: z.string().optional(),
 
             /** The ad reference that brought this customer to the conversation
-             *  (populated by the ManyChat webhook in a later phase). */
+             *  (set from the Messenger referral data on first touch). */
             last_interested_ad_ref: z.string().optional(),
           }),
         },

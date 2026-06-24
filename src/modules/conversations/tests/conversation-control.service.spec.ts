@@ -1,24 +1,25 @@
 /**
  * Unit tests for ConversationControlService (WS5 + WS6 — AIA-34).
  *
- * ConversationsService, ManyChatControlService, and ManyChatSenderService are
- * all fully mocked. No database or network calls are made.
+ * ConversationsService and MessengerClient are fully mocked.
+ * No database or network calls are made.
  *
  * Coverage:
- *  - pause:  setAiState called with correct patch, event recorded, ManyChat
- *             mirror is fire-and-forget, never blocks on failure.
+ *  - pause:  setAiState called with correct patch, event recorded.
  *  - resume: same pattern; humanSummary included iff input.summary present.
- *  - assign: non-null → aiState='human', null → state unchanged, no applyState.
- *  - handoff: aiState='human', event 'handoff', applyState('human').
+ *  - assign: non-null → aiState='human'; null → state unchanged, no change.
+ *  - handoff: aiState='human', event 'handoff'.
  *  - sendHumanMessage: gate (ai_state=bot throws), idempotency, happy path,
- *             addMessage/sendReply/recordEvent, returns {message, delivered}.
+ *             addMessage before sendText (persist-first ordering),
+ *             sendText(psid, text, true) called with humanAgent=true,
+ *             success → delivered=true, MessengerSendError → delivered=false,
+ *             recordEvent always called with correct metadata.
  *  - getThread: returns {conversation, messages}.
  *  - listConversations: maps rows, escalated flag, unreadCount:0, ISO dates.
- *  - ManyChat fire-and-forget: applyState rejection never surfaces to caller.
  */
 
-// flydrive is ESM-only; stub it so the formatter/sender import chain doesn't
-// try to require the real module under Jest (CJS).
+// flydrive is ESM-only; stub it so the import chain doesn't try to require the
+// real module under Jest (CJS).
 jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
@@ -26,8 +27,7 @@ jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConversationControlService } from '../conversation-control.service';
 import type { ConversationsService } from '../conversations.service';
-import type { ManyChatControlService } from '@/modules/agent/manychat/manychat-control.service';
-import type { ManyChatSenderService } from '@/modules/agent/manychat/manychat-sender.service';
+import type { MessengerClient } from '@/modules/agent/messenger/messenger.client';
 import type { Conversation } from '../entities/conversation.entity';
 import type { Message } from '../entities/message.entity';
 
@@ -94,15 +94,12 @@ function makeMocks() {
     listWithPreview,
   } as unknown as ConversationsService;
 
-  const applyState = jest.fn().mockResolvedValue(undefined);
-  const manychatControl = { applyState } as unknown as ManyChatControlService;
+  const sendText = jest.fn().mockResolvedValue(undefined);
+  const messengerClient = { sendText } as unknown as MessengerClient;
 
-  const sendReply = jest.fn().mockResolvedValue(true);
-  const manychatSender = { sendReply } as unknown as ManyChatSenderService;
+  const svc = new ConversationControlService(conversations, messengerClient);
 
-  const svc = new ConversationControlService(conversations, manychatControl, manychatSender);
-
-  return { svc, getById, setAiState, recordEvent, addMessage, findMessageByExternalId, listMessages, listWithPreview, applyState, sendReply };
+  return { svc, getById, setAiState, recordEvent, addMessage, findMessageByExternalId, listMessages, listWithPreview, sendText };
 }
 
 // ---------------------------------------------------------------------------
@@ -192,32 +189,6 @@ describe('ConversationControlService', () => {
         expect.objectContaining({ metadata: null }),
       );
     });
-
-    it('calls applyState(psid, "paused") fire-and-forget', async () => {
-      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
-      getById.mockResolvedValue(makeConvo());
-      setAiState.mockResolvedValue(makeConvo({ aiState: 'paused' }));
-      recordEvent.mockResolvedValue({});
-
-      await svc.pause(CONV_ID, ACTOR, {});
-
-      // Fire-and-forget — allow the micro-task to flush before asserting.
-      await Promise.resolve();
-      expect(applyState).toHaveBeenCalledWith(PSID, 'paused');
-    });
-
-    it('still resolves even when applyState rejects (fire-and-forget does not surface)', async () => {
-      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
-      getById.mockResolvedValue(makeConvo());
-      const updatedConvo = makeConvo({ aiState: 'paused' });
-      setAiState.mockResolvedValue(updatedConvo);
-      recordEvent.mockResolvedValue({});
-      applyState.mockRejectedValue(new Error('ManyChat down'));
-
-      const result = await svc.pause(CONV_ID, ACTOR, {});
-
-      expect(result).toBe(updatedConvo);
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -271,31 +242,6 @@ describe('ConversationControlService', () => {
         }),
       );
     });
-
-    it('calls applyState(psid, "bot") fire-and-forget', async () => {
-      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
-      getById.mockResolvedValue(makeConvo({ aiState: 'paused' }));
-      setAiState.mockResolvedValue(makeConvo({ aiState: 'bot' }));
-      recordEvent.mockResolvedValue({});
-
-      await svc.resume(CONV_ID, ACTOR, {});
-
-      await Promise.resolve();
-      expect(applyState).toHaveBeenCalledWith(PSID, 'bot');
-    });
-
-    it('still resolves even when applyState rejects', async () => {
-      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
-      getById.mockResolvedValue(makeConvo());
-      const updatedConvo = makeConvo({ aiState: 'bot' });
-      setAiState.mockResolvedValue(updatedConvo);
-      recordEvent.mockResolvedValue({});
-      applyState.mockRejectedValue(new Error('ManyChat down'));
-
-      const result = await svc.resume(CONV_ID, ACTOR, {});
-
-      expect(result).toBe(updatedConvo);
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -337,18 +283,6 @@ describe('ConversationControlService', () => {
       );
     });
 
-    it('calls applyState(psid, "human") when assignedTo is non-null', async () => {
-      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
-      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
-      setAiState.mockResolvedValue(makeConvo({ aiState: 'human' }));
-      recordEvent.mockResolvedValue({});
-
-      await svc.assign(CONV_ID, ACTOR, { assignedTo: 'agent@masa.com' });
-
-      await Promise.resolve();
-      expect(applyState).toHaveBeenCalledWith(PSID, 'human');
-    });
-
     it('sets assignedTo=null only (aiState unchanged) when assignedTo is null', async () => {
       const { svc, getById, setAiState, recordEvent } = makeMocks();
       getById.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: 'agent@masa.com' }));
@@ -375,18 +309,6 @@ describe('ConversationControlService', () => {
           toState: 'human', // state unchanged on unassign
         }),
       );
-    });
-
-    it('does NOT call applyState when assignedTo is null', async () => {
-      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
-      getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
-      setAiState.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: null }));
-      recordEvent.mockResolvedValue({});
-
-      await svc.assign(CONV_ID, ACTOR, { assignedTo: null });
-
-      await Promise.resolve();
-      expect(applyState).not.toHaveBeenCalled();
     });
   });
 
@@ -429,29 +351,6 @@ describe('ConversationControlService', () => {
         }),
       );
     });
-
-    it('calls applyState(psid, "human") fire-and-forget', async () => {
-      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
-      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
-      setAiState.mockResolvedValue(makeConvo({ aiState: 'human' }));
-      recordEvent.mockResolvedValue({});
-
-      await svc.handoff(CONV_ID, ACTOR, {});
-
-      await Promise.resolve();
-      expect(applyState).toHaveBeenCalledWith(PSID, 'human');
-    });
-
-    it('still resolves even when applyState rejects', async () => {
-      const { svc, getById, setAiState, recordEvent, applyState } = makeMocks();
-      getById.mockResolvedValue(makeConvo());
-      const updatedConvo = makeConvo({ aiState: 'human' });
-      setAiState.mockResolvedValue(updatedConvo);
-      recordEvent.mockResolvedValue({});
-      applyState.mockRejectedValue(new Error('ManyChat down'));
-
-      await expect(svc.handoff(CONV_ID, ACTOR, {})).resolves.toBe(updatedConvo);
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -460,7 +359,7 @@ describe('ConversationControlService', () => {
 
   describe('sendHumanMessage', () => {
     it('throws BadRequestException when aiState is bot', async () => {
-      const { svc, getById, addMessage, sendReply } = makeMocks();
+      const { svc, getById, addMessage, sendText } = makeMocks();
       getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
 
       await expect(
@@ -468,17 +367,17 @@ describe('ConversationControlService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(addMessage).not.toHaveBeenCalled();
-      expect(sendReply).not.toHaveBeenCalled();
+      expect(sendText).not.toHaveBeenCalled();
     });
 
-    it('happy path: persists message, calls sendReply, records event, returns {message, delivered}', async () => {
-      const { svc, getById, addMessage, sendReply, recordEvent, findMessageByExternalId } = makeMocks();
+    it('happy path: persists message before send, calls sendText(psid, text, true), records event, returns {message, delivered:true}', async () => {
+      const { svc, getById, addMessage, sendText, recordEvent, findMessageByExternalId } = makeMocks();
       const convo = makeConvo({ aiState: 'human' });
       const msg = makeMsg({ id: 'new-msg-1', content: 'سيتم التوصيل غداً' });
       getById.mockResolvedValue(convo);
       findMessageByExternalId.mockResolvedValue(undefined);
       addMessage.mockResolvedValue(msg);
-      sendReply.mockResolvedValue(true);
+      sendText.mockResolvedValue(undefined); // sendText returns void
       recordEvent.mockResolvedValue({});
 
       const result = await svc.sendHumanMessage(
@@ -488,6 +387,14 @@ describe('ConversationControlService', () => {
         'idem-key-1',
       );
 
+      // addMessage must be called before sendText (persist-first ordering).
+      const addOrder = addMessage.mock.invocationCallOrder[0];
+      const sendOrder = sendText.mock.invocationCallOrder[0];
+      expect(addOrder).toBeLessThan(sendOrder);
+
+      // sendText is called with (psid, text, true) — humanAgent flag set.
+      expect(sendText).toHaveBeenCalledWith(PSID, 'سيتم التوصيل غداً', true);
+
       expect(addMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           conversationId: CONV_ID,
@@ -496,7 +403,6 @@ describe('ConversationControlService', () => {
           externalId: 'idem-key-1',
         }),
       );
-      expect(sendReply).toHaveBeenCalled();
       expect(recordEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'human_message',
@@ -506,8 +412,8 @@ describe('ConversationControlService', () => {
       expect(result).toEqual({ message: msg, delivered: true });
     });
 
-    it('idempotent: returns {message:existing, delivered:false} without calling addMessage or sendReply', async () => {
-      const { svc, getById, addMessage, sendReply, findMessageByExternalId } = makeMocks();
+    it('idempotent: returns {message:existing, delivered:false} without calling addMessage or sendText', async () => {
+      const { svc, getById, addMessage, sendText, findMessageByExternalId } = makeMocks();
       getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
       const existing = makeMsg({ id: 'existing-msg', externalId: 'idem-key-dup' });
       findMessageByExternalId.mockResolvedValue(existing);
@@ -520,7 +426,7 @@ describe('ConversationControlService', () => {
       );
 
       expect(addMessage).not.toHaveBeenCalled();
-      expect(sendReply).not.toHaveBeenCalled();
+      expect(sendText).not.toHaveBeenCalled();
       expect(result).toEqual({ message: existing, delivered: false });
     });
 
@@ -533,17 +439,28 @@ describe('ConversationControlService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('reflects sendReply=false in the returned delivered field', async () => {
-      const { svc, getById, addMessage, sendReply, recordEvent, findMessageByExternalId } = makeMocks();
+    it('delivered=false when sendText throws (MessengerSendError); message still persisted', async () => {
+      const { svc, getById, addMessage, sendText, recordEvent, findMessageByExternalId } = makeMocks();
       getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
       findMessageByExternalId.mockResolvedValue(undefined);
-      addMessage.mockResolvedValue(makeMsg({ id: 'msg-fail-send' }));
-      sendReply.mockResolvedValue(false); // ManyChat delivery failed
+      const msg = makeMsg({ id: 'msg-fail-send' });
+      addMessage.mockResolvedValue(msg);
+      // Simulate Messenger send failure (MessengerSendError is a plain Error subclass)
+      sendText.mockRejectedValue(new Error('MessengerSendError: 403'));
       recordEvent.mockResolvedValue({});
 
       const result = await svc.sendHumanMessage(CONV_ID, ACTOR, { text: 'test' }, 'k');
 
+      // Message was persisted despite send failure.
+      expect(addMessage).toHaveBeenCalledTimes(1);
+      // Event records delivered=false.
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ delivered: false }),
+        }),
+      );
       expect(result.delivered).toBe(false);
+      expect(result.message).toBe(msg);
     });
   });
 

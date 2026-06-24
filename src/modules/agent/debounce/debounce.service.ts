@@ -8,9 +8,8 @@
  *
  * In-process and single-instance by design (matches the current deployment); a
  * Redis/BullMQ-backed buffer would be needed to debounce across multiple app
- * processes. Used only by the ASYNC ManyChat path (which ACKs 202 and delivers
- * the reply later via the Send API), never by the synchronous request/response
- * surface.
+ * processes. Used by the Messenger webhook controller, which ACKs 200 immediately
+ * and delivers the agent reply asynchronously after the debounce window closes.
  */
 
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';

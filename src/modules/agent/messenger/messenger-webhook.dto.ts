@@ -4,9 +4,9 @@
  *  - messengerWebhookBodySchema  — POST /webhook/messenger (inbound events)
  *
  * Security: this is an untrusted public webhook. All user-controlled string
- * fields are bounded by .max() caps exactly like manychat-webhook.dto.ts does:
- * generous enough to never reject real traffic, tight enough to stop a payload
- * amplification / DoS via the LLM prompt or DB.
+ * fields are bounded by .max() caps: generous enough to never reject real
+ * traffic, tight enough to stop a payload amplification / DoS via the LLM
+ * prompt or DB.
  *
  * Meta adds new fields over time, so we use .passthrough() (not .strict()) at
  * every level we don't fully control. We validate only what we actually read.

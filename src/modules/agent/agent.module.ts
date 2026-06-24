@@ -9,13 +9,8 @@ import { ProductsModule } from '@/modules/products/products.module';
 import { SizingModule } from '@/modules/sizing/sizing.module';
 import { AgentBehaviorRepository } from './agent-behavior.repository';
 import { AgentBehaviorService } from './agent-behavior.service';
-import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
 import { DebounceService } from './debounce/debounce.service';
-import { ManyChatControlService } from './manychat/manychat-control.service';
-import { ManyChatSecretGuard } from './manychat/manychat-secret.guard';
-import { ManyChatSenderService } from './manychat/manychat-sender.service';
-import { ManyChatWebhookController } from './manychat/manychat-webhook.controller';
 import { MessengerClient } from './messenger/messenger.client';
 import { MessengerSignatureGuard } from './messenger/messenger-signature.guard';
 import { MessengerWebhookController } from './messenger/messenger-webhook.controller';
@@ -30,8 +25,9 @@ import { VisionService } from './vision/vision.service';
  * repository/service are local providers; AgentBehaviorService is exported for
  * the admin UI to manage personas.
  *
- * AgentController is a TEMPORARY smoke-test surface (POST /agent/ping) that
- * will be replaced by the ManyChat webhook controller in a later ticket.
+ * The sole inbound transport is the Meta Messenger Platform (Graph API v25.0)
+ * via MessengerWebhookController. MessengerClient is also provided here and
+ * used by ConversationControlService for admin-initiated human-agent delivery.
  */
 @Module({
   imports: [
@@ -43,8 +39,6 @@ import { VisionService } from './vision/vision.service';
     SizingModule,
   ],
   controllers: [
-    AgentController,
-    ManyChatWebhookController,
     MessengerWebhookController,
     ConversationsAdminController,
   ],
@@ -54,13 +48,10 @@ import { VisionService } from './vision/vision.service';
     AgentBehaviorRepository,
     VisionService,
     DebounceService,
-    ManyChatSenderService,
-    ManyChatControlService,
-    ManyChatSecretGuard,
     MessengerClient,
     MessengerSignatureGuard,
     ConversationControlService,
   ],
-  exports: [AgentService, AgentBehaviorService, ManyChatControlService, MessengerClient],
+  exports: [AgentService, AgentBehaviorService, MessengerClient],
 })
 export class AgentModule {}

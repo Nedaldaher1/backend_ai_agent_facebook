@@ -32,8 +32,8 @@ export const messages = pgTable(
     imageUrl: text('image_url'),
     attributes: jsonb('attributes'),
     // Idempotency key for an inbound customer turn: the provider message id
-    // (ManyChat) or a content+time-window hash. Nullable so legacy rows and
-    // non-deduped writes are unaffected.
+    // (Messenger mid) or a content+time-window hash. Nullable so legacy rows
+    // and non-deduped writes are unaffected.
     externalId: text('external_id'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

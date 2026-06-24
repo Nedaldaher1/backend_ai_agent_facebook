@@ -21,12 +21,10 @@ export const envSchema = z
     STORAGE_DRIVER: z.enum(['fs', 'r2']).default('r2'),
     // Local directory the `fs` driver writes to (created on boot, gitignored).
     UPLOAD_DIR: z.string().default('./uploads'),
-    // Public base URL for this server. Serves two purposes:
-    //  1. `fs` storage driver: image URLs sent to the admin panel and to ManyChat
-    //     are built as `${PUBLIC_BASE_URL}/uploads/<filename>`.
-    //  2. ManyChat webhook URL in dev: copy the cloudflared tunnel HTTPS URL here
-    //     and paste the same URL into the ManyChat External Request block, e.g.
-    //     https://<tunnel-id>.trycloudflare.com/webhook/manychat
+    // Public base URL for this server. Used by the `fs` storage driver to build
+    // image URLs sent to the admin panel:
+    //   `${PUBLIC_BASE_URL}/uploads/<filename>`
+    // In production set this to the deployed API domain.
     PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
     // Max upload size per file, in bytes (default 5 MiB).
     UPLOAD_MAX_BYTES: z.coerce
@@ -62,48 +60,11 @@ export const envSchema = z
     // it the agent gets an empty result and must not invent products.
     SIMILARITY_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.6),
 
-    // --- ManyChat integration ---
-    // API token for the Send API (async path: POST /fb/sending/sendContent).
-    // Generate in ManyChat → Settings → API → Create API Key.
-    MANYCHAT_API_TOKEN: z.string().optional(),
-    // Send API endpoint. Override only if ManyChat changes the URL; the default
-    // is the documented production endpoint.
-    MANYCHAT_SEND_URL: z
-      .string()
-      .url()
-      .default('https://api.manychat.com/fb/sending/sendContent'),
-    // Set to 'false' to disable all outgoing ManyChat Send API calls (e.g.
-    // during testing). Any other value (or omitting the var) means enabled.
-    MANYCHAT_ENABLED: z.string().optional(),
-    // Public API base URL. Both the Send API and the Public API share the same
-    // account token under api.manychat.com; override only if ManyChat changes it.
-    MANYCHAT_API_BASE: z
-      .string()
-      .url()
-      .default('https://api.manychat.com'),
-    // Name of the ManyChat custom field that mirrors the agent's ai_state value
-    // (bot | human | paused). Create this field in ManyChat → Custom Fields.
-    MANYCHAT_AI_STATE_FIELD: z.string().default('ai_state'),
-    // ManyChat tag applied to subscribers whose conversation is handled by a
-    // human agent. Used to filter inboxes in ManyChat. Create the tag first.
-    MANYCHAT_HUMAN_TAG: z.string().default('ai_human'),
-    // Optional: flow namespace (flow_ns) of a ManyChat flow that pauses
-    // automation for the subscriber. Triggered on escalation / manual pause.
-    MANYCHAT_PAUSE_FLOW_ID: z.string().optional(),
-    // Optional: flow namespace (flow_ns) of a ManyChat flow that resumes
-    // automation for the subscriber. Triggered when the admin marks a
-    // conversation back to 'bot' state.
-    MANYCHAT_RESUME_FLOW_ID: z.string().optional(),
-    // Shared secret checked on every inbound webhook request via the
-    // x-manychat-secret header. Set in ManyChat → Flow → External Request →
-    // Custom Headers. When unset, the guard logs a warning and allows the
-    // request (dev-friendly). Required in production.
-    WEBHOOK_SHARED_SECRET: z.string().optional(),
     // Debounce window: how long to wait for additional messages from the same
     // subscriber before flushing the batch to the agent (milliseconds).
     DEBOUNCE_WINDOW_MS: z.coerce.number().int().positive().default(2000),
     // Hard maximum wait time for the debounce regardless of new messages
-    // arriving (milliseconds). Must be < ManyChat's 10-second timeout.
+    // arriving (milliseconds). Keep well below Meta's webhook 20-second timeout.
     DEBOUNCE_MAX_MS: z.coerce.number().int().positive().default(8000),
 
     // --- Meta Messenger Platform (direct Graph API, v25.0) ---

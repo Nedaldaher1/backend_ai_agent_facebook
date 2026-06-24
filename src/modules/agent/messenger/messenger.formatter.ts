@@ -4,19 +4,24 @@
  * Produces (in order):
  *  1. A text message carrying the reply.
  *  2. (Optional) A generic-template carousel of product cards, using the R2
- *     image URLs resolved by the controller. Cap is MAX_GALLERY_CARDS (imported
- *     from manychat.formatter so the two transports can never drift apart).
+ *     image URLs resolved by the controller. Cap is MAX_GALLERY_CARDS (8).
  *  3. (Optional) An Arabic overflow note when more products matched than fit in
  *     the carousel.
  *
  * Pure + side-effect-free — no I/O, no logging. Fully unit-testable.
  */
 
-import { MAX_GALLERY_CARDS } from '../manychat/manychat.formatter';
 import type { TemplateElement } from './messenger.client';
 
-// Re-export so the controller can import from one place.
-export { MAX_GALLERY_CARDS };
+/**
+ * Maximum number of product cards rendered in a Messenger generic-template
+ * carousel. The Messenger Platform hard-limits generic templates to 10 elements;
+ * we use 8 to leave headroom and keep the UX scannable.
+ *
+ * AgentService imports this to cap the products it surfaces so the card count
+ * and overflow math never drift between the formatter and the service.
+ */
+export const MAX_GALLERY_CARDS = 8;
 
 /** A product card to render in the carousel. */
 export interface MessengerCardProduct {
@@ -52,7 +57,7 @@ interface TemplatePayload {
   elements: TemplateElement[];
 }
 
-/** Arabic overflow note — same copy as the ManyChat formatter for consistency. */
+/** Arabic overflow note appended when more products matched than fit in the carousel. */
 function overflowNote(count: number): string {
   return `وعندي كمان ${count} تصميم — قوليلي إذا بتحبي أعرضهنّ 🌸`;
 }

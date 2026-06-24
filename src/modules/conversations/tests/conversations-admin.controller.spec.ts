@@ -1,7 +1,7 @@
 /**
  * Unit tests for ConversationsAdminController (WS5 + WS6 — AIA-34).
  *
- * ConversationControlService is fully mocked — no database or ManyChat calls.
+ * ConversationControlService is fully mocked — no database or network calls.
  * Guards are not applied (NestJS DI context is not bootstrapped). Guard/role
  * metadata is verified via Reflect.getMetadata, mirroring the pattern used in
  * other admin controller specs in this repo.

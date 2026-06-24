@@ -362,7 +362,7 @@ export class MessengerWebhookController {
   /**
    * Resolve the primary image URL for each product card. Best-effort and per-
    * product: a single media lookup failure leaves that card image-less rather
-   * than failing the whole reply. Same pattern as ManyChatWebhookController.
+   * than failing the whole reply.
    */
   private async enrichWithImages(
     products: Array<{ id: string; name: string; price: string }>,

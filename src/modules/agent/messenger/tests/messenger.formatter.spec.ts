@@ -9,11 +9,10 @@
  *  - Gallery cap: MAX_GALLERY_CARDS (8) — more products are sliced.
  *  - Empty reply with no products → empty array (dedup no-op).
  *  - Products without images → no image_url on elements.
- *  - MAX_GALLERY_CARDS is re-exported from manychat.formatter (same cap).
+ *  - MAX_GALLERY_CARDS is defined in messenger.formatter (8, the canonical value).
  */
 
 import { formatMessengerReply, MAX_GALLERY_CARDS } from '../messenger.formatter';
-import { MAX_GALLERY_CARDS as MANYCHAT_CAP } from '../../manychat/manychat.formatter';
 
 describe('formatMessengerReply', () => {
   // -------------------------------------------------------------------------
@@ -140,7 +139,7 @@ describe('formatMessengerReply', () => {
   // Shared cap invariant
   // -------------------------------------------------------------------------
 
-  it('MAX_GALLERY_CARDS equals the ManyChat cap (cap never drifts between transports)', () => {
-    expect(MAX_GALLERY_CARDS).toBe(MANYCHAT_CAP);
+  it('MAX_GALLERY_CARDS is 8 (the canonical Messenger gallery cap)', () => {
+    expect(MAX_GALLERY_CARDS).toBe(8);
   });
 });

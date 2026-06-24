@@ -74,7 +74,6 @@ import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { VisionService } from '../vision/vision.service';
-import type { ManyChatControlService } from '../manychat/manychat-control.service';
 
 // ---------------------------------------------------------------------------
 // Typed cast helpers
@@ -121,11 +120,6 @@ const visionMock = {
     .fn()
     .mockResolvedValue({ attributes: null, confidence: null }),
 } as unknown as VisionService;
-
-/** A minimal ManyChatControlService stub. */
-const manychatControlMock = {
-  applyState: jest.fn().mockResolvedValue(undefined),
-} as unknown as ManyChatControlService;
 
 /**
  * A ConversationsService stub with findOrCreateByPsid and addMessage.
@@ -206,7 +200,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
 
     service.onModuleInit();
@@ -228,7 +221,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
 
     service.onModuleInit();
@@ -249,7 +241,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
 
     service.onModuleInit();
@@ -274,7 +265,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -299,7 +289,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -326,7 +315,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -355,7 +343,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -380,7 +367,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -407,7 +393,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -433,7 +418,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -485,7 +469,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -505,7 +488,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -539,7 +521,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -567,7 +548,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -608,7 +588,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -635,7 +614,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -662,7 +640,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -693,7 +670,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -717,7 +693,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -759,7 +734,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -806,7 +780,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -855,7 +828,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -897,7 +869,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -918,7 +889,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -963,7 +933,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -990,7 +959,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -1014,7 +982,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -1036,7 +1003,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -1065,7 +1031,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -1094,7 +1059,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -1116,7 +1080,6 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
-      manychatControlMock,
     );
     service.onModuleInit();
 
@@ -1141,7 +1104,6 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
-        manychatControlMock,
       );
       service.onModuleInit();
       return service;
@@ -1165,7 +1127,6 @@ describe('AgentService', () => {
           actorType: 'system',
         }),
       );
-      expect(manychatControlMock.applyState).toHaveBeenCalledWith('C1', 'bot');
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
       expect(result.reply).toBe(FAKE_REPLY);
     });
@@ -1213,7 +1174,6 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
-        manychatControlMock,
       );
       service.onModuleInit();
 
@@ -1251,7 +1211,6 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
-        manychatControlMock,
       );
       service.onModuleInit();
 
@@ -1282,7 +1241,6 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
-        manychatControlMock,
       );
       service.onModuleInit();
 
@@ -1299,146 +1257,6 @@ describe('AgentService', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // handleMessage — escalation → ManyChat mirror (WS8 / AIA-34)
-  // -------------------------------------------------------------------------
-
-  describe('escalation ManyChat mirror', () => {
-    it('calls manychatControl.applyState(contactId, "human") fire-and-forget when escalate_to_human succeeds', async () => {
-      const conversations = makeConversationsMock();
-      const service = new AgentService(
-        makeConfigMock(),
-        productsMock,
-        conversations,
-        ordersMock,
-        agentBehaviorMock,
-        knowledgeMock,
-        sizingMock,
-        visionMock,
-        manychatControlMock,
-      );
-      service.onModuleInit();
-
-      fakeSalesAgent.generate.mockResolvedValueOnce({
-        text: 'تم تحويلك لفريق الدعم',
-        toolResults: [
-          {
-            payload: {
-              toolName: 'escalate_to_human',
-              isError: false,
-              result: { escalated: true, reason: 'size question' },
-            },
-          },
-        ],
-      });
-
-      await service.handleMessage({ contactId: 'C1', text: 'أريد مساعدة' });
-
-      // applyState must have been called (fire-and-forget resolves)
-      expect(manychatControlMock.applyState).toHaveBeenCalledWith('C1', 'human');
-    });
-
-    it('does NOT call manychatControl.applyState when no escalate_to_human tool result is present', async () => {
-      const conversations = makeConversationsMock();
-      const service = new AgentService(
-        makeConfigMock(),
-        productsMock,
-        conversations,
-        ordersMock,
-        agentBehaviorMock,
-        knowledgeMock,
-        sizingMock,
-        visionMock,
-        manychatControlMock,
-      );
-      service.onModuleInit();
-
-      // Normal reply — no escalation tool result
-      fakeSalesAgent.generate.mockResolvedValueOnce({
-        text: 'إليك المنتجات',
-        toolResults: [
-          {
-            payload: {
-              toolName: 'search_products',
-              isError: false,
-              result: { products: [] },
-            },
-          },
-        ],
-      });
-
-      await service.handleMessage({ contactId: 'C1', text: 'عبايات' });
-
-      expect(manychatControlMock.applyState).not.toHaveBeenCalled();
-    });
-
-    it('does NOT call applyState when escalate_to_human result has isError=true', async () => {
-      const conversations = makeConversationsMock();
-      const service = new AgentService(
-        makeConfigMock(),
-        productsMock,
-        conversations,
-        ordersMock,
-        agentBehaviorMock,
-        knowledgeMock,
-        sizingMock,
-        visionMock,
-        manychatControlMock,
-      );
-      service.onModuleInit();
-
-      fakeSalesAgent.generate.mockResolvedValueOnce({
-        text: 'حدث خطأ',
-        toolResults: [
-          {
-            payload: {
-              toolName: 'escalate_to_human',
-              isError: true,
-              result: { escalated: false },
-            },
-          },
-        ],
-      });
-
-      await service.handleMessage({ contactId: 'C1', text: 'مساعدة' });
-
-      expect(manychatControlMock.applyState).not.toHaveBeenCalled();
-    });
-
-    it('still returns the reply even when applyState rejects (fire-and-forget)', async () => {
-      const conversations = makeConversationsMock();
-      (manychatControlMock.applyState as jest.Mock).mockRejectedValueOnce(
-        new Error('ManyChat down'),
-      );
-      const service = new AgentService(
-        makeConfigMock(),
-        productsMock,
-        conversations,
-        ordersMock,
-        agentBehaviorMock,
-        knowledgeMock,
-        sizingMock,
-        visionMock,
-        manychatControlMock,
-      );
-      service.onModuleInit();
-
-      fakeSalesAgent.generate.mockResolvedValueOnce({
-        text: 'تم التحويل',
-        toolResults: [
-          {
-            payload: {
-              toolName: 'escalate_to_human',
-              isError: false,
-              result: { escalated: true },
-            },
-          },
-        ],
-      });
-
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مساعدة' });
-
-      expect(result.reply).toBe('تم التحويل');
-    });
-  });
+  // Escalation DB state is owned by the escalate_to_human tool via
+  // ConversationsService. The tool-level tests in the tools spec cover that path.
 });

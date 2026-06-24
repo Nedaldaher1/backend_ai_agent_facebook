@@ -39,7 +39,6 @@ import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { VisionService } from '../vision/vision.service';
-import type { ManyChatControlService } from '../manychat/manychat-control.service';
 
 const mockBuildMastra = buildMastra as jest.MockedFunction<typeof buildMastra>;
 
@@ -63,9 +62,6 @@ const visionMock: VisionService = {
     .fn()
     .mockResolvedValue({ attributes: null, confidence: null }),
 } as unknown as VisionService;
-const manychatControlMock: ManyChatControlService = {
-  applyState: jest.fn().mockResolvedValue(undefined),
-} as unknown as ManyChatControlService;
 
 const FAKE_REPLY = 'أهلاً';
 
@@ -134,7 +130,6 @@ function makeService(
     knowledgeMock,
     sizingMock,
     visionMock,
-    manychatControlMock,
   );
   svc.onModuleInit();
   return svc;

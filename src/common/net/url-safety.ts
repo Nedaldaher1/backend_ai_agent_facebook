@@ -1,7 +1,7 @@
 /**
  * SSRF guard for fetching CUSTOMER-supplied URLs server-side.
  *
- * The customer's image URL (ManyChat / Facebook CDN `lastImageUrl`) is fetched
+ * The customer's image URL (Facebook CDN `lastImageUrl`) is fetched
  * by the backend (vision pre-step + visual search). Without a guard a crafted
  * URL like `http://169.254.169.254/…` (cloud metadata) or `http://10.0.0.5/…`
  * reaches internal services from the backend's network position. This validates

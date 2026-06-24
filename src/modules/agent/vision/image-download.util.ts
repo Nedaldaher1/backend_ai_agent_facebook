@@ -1,6 +1,6 @@
 /**
- * Fetch a remote customer image (typically a TEMPORARY ManyChat/Facebook CDN
- * URL) into bytes + media type, so it can be sent to Claude vision as base64.
+ * Fetch a remote customer image (typically a temporary Facebook CDN URL) into
+ * bytes + media type, so it can be sent to Claude vision as base64.
  *
  * Anthropic cannot re-fetch an expiring URL, so we download once and inline the
  * bytes. Failures are typed so the caller (VisionService) can degrade
@@ -50,7 +50,7 @@ const HEADER_MEDIA_TYPES: Record<string, SupportedMediaType> = {
 };
 
 /**
- * Sniff the media type from magic bytes — Facebook/ManyChat CDNs sometimes serve
+ * Sniff the media type from magic bytes — Facebook CDNs sometimes serve
  * images as application/octet-stream. Returns undefined when unrecognized.
  */
 function sniffMediaType(buf: Buffer): SupportedMediaType | undefined {

@@ -154,8 +154,8 @@ export class ConversationsAdminController {
     summary: 'Pause the AI on a conversation',
     description:
       'Sets ai_state=paused and optionally records a handoffReason and a ' +
-      'pausedUntil timestamp (durationMinutes ≤ 1440). The pause is mirrored ' +
-      'into ManyChat fire-and-forget (best-effort).',
+      'pausedUntil timestamp (durationMinutes ≤ 1440). The AI gate in ' +
+      'AgentService enforces the paused state on all subsequent inbound turns.',
   })
   @ApiBody({ schema: { example: { reason: 'Customer upset', durationMinutes: 60 } } })
   @ApiOkResponse({ description: 'Conversation paused.' })
@@ -204,9 +204,8 @@ export class ConversationsAdminController {
   @ApiOperation({
     summary: 'Assign (or unassign) a conversation to a human agent',
     description:
-      'When assignedTo is non-null the conversation moves to ai_state=human and ' +
-      'ManyChat is notified. When assignedTo is null the field is cleared without ' +
-      'changing ai_state (no ManyChat call).',
+      'When assignedTo is non-null the conversation moves to ai_state=human. ' +
+      'When assignedTo is null the field is cleared without changing ai_state.',
   })
   @ApiBody({ schema: { example: { assignedTo: 'agent@masafashion.com' } } })
   @ApiOkResponse({ description: 'Assignment updated.' })
@@ -231,8 +230,8 @@ export class ConversationsAdminController {
   @ApiOperation({
     summary: 'Hand off a conversation to a human agent (admin-initiated)',
     description:
-      'Sets ai_state=human and optionally records a handoffReason. Mirrors ' +
-      'the state into ManyChat fire-and-forget.',
+      'Sets ai_state=human and optionally records a handoffReason. The bot-pause ' +
+      'gate in AgentService silences the AI on all subsequent turns.',
   })
   @ApiBody({ schema: { example: { reason: 'Customer wants custom size' } } })
   @ApiOkResponse({ description: 'Conversation handed off.' })
@@ -256,7 +255,7 @@ export class ConversationsAdminController {
   @ApiOperation({
     summary: 'Send a human-agent message to the customer',
     description:
-      'Inserts a role=human message and delivers it to the customer via ManyChat. ' +
+      'Inserts a role=human message and delivers it to the customer via Messenger. ' +
       'The conversation must NOT be in ai_state=bot — pause or hand off first. ' +
       'Pass an Idempotency-Key header to make the call safe to retry; duplicate ' +
       'requests with the same key return the original message with delivered=false.',
