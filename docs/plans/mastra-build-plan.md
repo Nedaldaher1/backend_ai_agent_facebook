@@ -1,6 +1,6 @@
 # خطة بناء الوكيل على Mastra — مرحلة Local-First
 
-خطة تنفيذية كاملة لبناء وكيل مبيعات Masa Fashion باستخدام **Mastra** كدماغ للـ Backend. مبدأ المرحلة الحالية: **كل شيء يعمل محلياً (localhost) إلا الذكاء الاصطناعي عبر Claude API**. نبني العقل ونختبره محلياً أولاً، وربط ManyChat محوّل رفيع يُضاف في النهاية.
+خطة تنفيذية كاملة لبناء وكيل مبيعات Masa Fashion باستخدام **Mastra** كدماغ للـ Backend. مبدأ المرحلة الحالية: **كل شيء يعمل محلياً (localhost) إلا الذكاء الاصطناعي عبر Claude API**. نبني العقل ونختبره محلياً أولاً، وربط Meta Messenger Platform (Graph API) — webhook موقّع للداخل و Send API للخارج — يُضاف في النهاية.
 
 > ميزة Mastra الحاسمة لهذه المرحلة: التخزين قابل للتبديل — تبدأ بـ Postgres/LibSQL محلي، ونفس الكود يتحوّل لـ Postgres سحابي في الإنتاج بتغيير سطر واحد.
 
@@ -13,9 +13,9 @@
 | تطبيق Next.js + Mastra | localhost | منصة استضافة |
 | قاعدة البيانات | **PostgreSQL محلي** (عبر Docker) | Postgres سحابي (نفس الكود) |
 | الصور | ملفات محلية (عيّنات اختبار) | R2 / Cloudinary |
-| واجهة الاختبار | **Mastra Playground** (`mastra dev`) | ManyChat فعلي |
+| واجهة الاختبار | **Mastra Playground** (`mastra dev`) | Meta Messenger فعلي |
 | الذكاء الاصطناعي | **Claude API** ← الخدمة الخارجية الوحيدة | كما هي |
-| ManyChat | غير مربوط بعد؛ لاختبار المسار الحقيقي محلياً تستخدم **نفقاً** (cloudflared/ngrok) لأن ManyChat يحتاج HTTPS عاماً | مربوط مباشرة بعد النشر |
+| Meta Messenger Platform | غير مربوط بعد؛ لاختبار المسار الحقيقي محلياً تستخدم **نفقاً** (cloudflared/ngrok) لأن webhook الـ Graph API يحتاج HTTPS عاماً | مربوط مباشرة بعد النشر |
 
 ---
 
@@ -60,7 +60,7 @@ masa-agent/
     │   ├── color-map.ts         # تقنين الألوان (نبيتي/عنابي → أحمر)
     │   └── db.ts                # وصول Postgres للكتالوج
     └── app/
-        ├── api/manychat/route.ts  # محوّل ManyChat (يُضاف بالنهاية)
+        ├── webhook/messenger/route.ts  # webhook موقّع لـ Meta Messenger Platform (يُضاف بالنهاية)
         └── admin/                  # لوحة التحكم (المعلومات + أسلوب الرد)
 ```
 
@@ -137,7 +137,7 @@ export const searchProducts = createTool({
 
 ### د. الذاكرة (تحميل السياق)
 
-Mastra يعزل الذاكرة بمعرّفين: **`resourceId`** للزبون (الـ PSID من ManyChat) و**`threadId`** لجلسة المحادثة. تمرّرهما عند كل نداء، وMastra يحمّل التاريخ ويضغطه تلقائياً (Observational Memory):
+Mastra يعزل الذاكرة بمعرّفين: **`resourceId`** للزبون (الـ PSID من Meta — `event.sender.id`) و**`threadId`** لجلسة المحادثة. تمرّرهما عند كل نداء، وMastra يحمّل التاريخ ويضغطه تلقائياً (Observational Memory):
 
 ```ts
 const res = await salesAgent.generate(userText, {
@@ -170,7 +170,7 @@ npm run index-catalog   # شغّله على بضعة منتجات أولاً ل�
 
 ---
 
-## 6. الاختبار محلياً (بدون ManyChat)
+## 6. الاختبار محلياً (بدون Meta Messenger)
 
 ```bash
 mastra dev   # يفتح Mastra Playground المحلي
@@ -182,18 +182,19 @@ mastra dev   # يفتح Mastra Playground المحلي
 
 ---
 
-## 7. محوّل ManyChat (يُضاف في النهاية)
+## 7. webhook الـ Meta Messenger Platform (يُضاف في النهاية)
 
 ```ts
-// src/app/api/manychat/route.ts
-// 1) يستقبل External Request → يستخرج { psid, text, last_image_url, ad_ref }
+// src/app/webhook/messenger/route.ts
+// 0) GET: تحقّق Meta (echo hub.challenge) ؛ POST: تحقّق توقيع X-Hub-Signature-256 ثم ACK 200
+// 1) يستقبل الحدث → يستخرج { psid (sender.id), text, image_url, referral (ref/ad_id) }
 // 2) (إن وُجدت صورة) vision → صفات
 // 3) salesAgent.generate(text, { memory: { resource: psid, thread } })
-// 4) يحوّل الرد لصيغة Dynamic Block v2 (نص + معرض cards)
-// 5) يرجّعه لـ ManyChat
+// 4) يصيغ الرد (نص + معرض generic-template cards)
+// 5) يرسله عبر Graph Send API: POST /{PAGE_ID}/messages (Bearer Page token)
 ```
 
-لاختباره محلياً من غير نشر: `cloudflared tunnel` يعطيك HTTPS عاماً مؤقتاً يشير لـ localhost، تضعينه في حقل Request URL داخل ManyChat.
+لاختباره محلياً من غير نشر: `cloudflared tunnel` يعطيك HTTPS عاماً مؤقتاً يشير لـ localhost، تضعينه كـ Callback URL في لوحة Meta. التفاصيل الكاملة في [`messenger-setup.md`](../messenger-setup.md).
 
 ---
 
@@ -204,7 +205,7 @@ mastra dev   # يفتح Mastra Playground المحلي
 - **Phase 2 — الوكيل + `search_products`:** اختبري "كل العبايات الحمراء" في الـ Playground.
 - **Phase 3 — الذاكرة:** `resourceId/threadId`؛ اختبري تماسك السياق عبر رسائل متتابعة.
 - **Phase 4 — الرؤية + بقية الأدوات:** توفّر/معرض/تصعيد/طلب + الحالات الشاذة + الحواجز.
-- **Phase 5 — محوّل ManyChat:** + اختبار E2E عبر نفق.
+- **Phase 5 — webhook موقّع لـ Meta Messenger Platform:** + اختبار E2E عبر نفق.
 - **Phase 6 (لاحقاً) — النشر:** Postgres سحابي + تخزين صور خارجي + Redis/debounce.
 
 ---

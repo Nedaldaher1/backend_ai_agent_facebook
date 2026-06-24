@@ -5,7 +5,7 @@ flowchart TB
         subgraph APP["تطبيق Next.js"]
             PLAY["Mastra Playground<br/>واجهة الاختبار المحلية"]
             UI["لوحة التحكم (Admin)"]
-            API["api/manychat — المحوّل<br/>يُضاف بالنهاية"]
+            API["webhook/messenger — الـ webhook الموقّع<br/>Meta Messenger Platform / Graph API"]
         end
         subgraph BRAIN["دماغ الوكيل — Mastra"]
             AGENT["Sales Agent<br/>instructions + tools + memory"]
@@ -18,7 +18,7 @@ flowchart TB
 
     CLAUDE["☁️ Claude API<br/>الخدمة الخارجية الوحيدة"]
     TUNNEL["نفق cloudflared / ngrok<br/>HTTPS عام مؤقت"]
-    MC["ManyChat + صفحة فيسبوك<br/>مرحلة لاحقة"]
+    MC["Meta Messenger Platform + صفحة فيسبوك<br/>Graph API webhook"]
 
     PLAY --> AGENT
     UI --> DB

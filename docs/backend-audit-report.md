@@ -1,6 +1,15 @@
 # Backend Audit & Hardening Report
 
-**Scope:** Full backend audit of the Masa Fashion AI-agent (NestJS + Fastify + Bun + Drizzle + PostgreSQL + Mastra + Claude + ManyChat) across the Vision pipeline, eval/guardrail, idempotency, the ManyChat adapter + Send API + Public-API control service, the async debounce worker, the evals harness, the conversation-control / human-handoff system + reply gate + self-healing resume, and the Drizzle/Postgres data layer.
+> **Historical note (post-migration):** this audit was run against the **pre-migration** Facebook
+> transport, which used a third-party middleware adapter (External Request webhook + Send API +
+> Public-API control service + custom-field/tag state mirror). That transport has since been replaced
+> by **Meta's Messenger Platform (Graph API v25.0)** directly — see `docs/messenger-setup.md`. The
+> file names and integration-specific findings below describe the old adapter and are retained for
+> historical context; the transport-specific mechanics (custom-field `ai_state` mirror, sync/async
+> dual routes, dynamic-block response shape) no longer apply. The agent-core, vision, idempotency,
+> data-layer, and security findings remain relevant.
+
+**Scope:** Full backend audit of the Masa Fashion AI-agent (NestJS + Fastify + Bun + Drizzle + PostgreSQL + Mastra + Claude) across the Vision pipeline, eval/guardrail, idempotency, the Facebook transport adapter + Send API + control service, the async debounce worker, the evals harness, the conversation-control / human-handoff system + reply gate + self-healing resume, and the Drizzle/Postgres data layer.
 
 **Method:** Five read-only auditors (concurrency, resilience, data-integrity, correctness, security) scanned the tree; every finding below was then re-validated by the orchestrator against the real source before inclusion. Both *confirmed bugs* (defects in code as written) and *anticipated failures* (unhandled production scenarios) are reported.
 
@@ -16,7 +25,7 @@
 |---|---|---|---|
 | Agent turn / reply gate / handoff | 1 | 2 | 1 |
 | Conversation control & state | 0 | 2 | 1 |
-| ManyChat adapter / sender / async worker | 2 | 3 | 1 |
+| Transport adapter / sender / async worker | 2 | 3 | 1 |
 | Idempotency & concurrency | 0 | 3 | 2 |
 | Vision & visual search | 1 (SSRF) | 1 | 1 |
 | Data layer / schema / migrations | 0 | 2 | 3 |
@@ -34,7 +43,7 @@ Status tags: **[FIX NOW]** applied in this pass · **[REC]** recommendation awai
 - location: gate at `agent.service.ts:263` (checks only `convo.aiState !== 'bot'`); `pausedUntil` written at `conversation-control.service.ts:146-156`; cleared only by manual `resume()` (`:196`). No scheduler reads it (no `@Cron`/`setInterval` anywhere).
 - scenario: an admin pauses with `durationMinutes` (e.g. 30). After the window elapses, the next inbound message still sees `ai_state='paused'` and nothing compares `pausedUntil` to now.
 - impact: a *temporary* pause becomes **permanent silence** — the bot never replies again until a human manually resumes. The `durationMinutes` API (and its ≤1440 validation) is effectively dead. Independently found by 3 auditors.
-- fix: in `handleMessage`, before the gate, if `aiState==='paused' && pausedUntil <= now` → flip to `bot` (clear `pausedUntil`, record a `resume`/`system` event, mirror `bot` to ManyChat) and let the turn proceed.
+- fix: in `handleMessage`, before the gate, if `aiState==='paused' && pausedUntil <= now` → flip to `bot` (clear `pausedUntil`, record a `resume`/`system` event) and let the turn proceed.
 
 **A2 · [should-fix] [confirmed-bug] One-shot `humanSummary` is cleared BEFORE `generate()`; lost if the turn throws · [FIX NOW]**
 - location: inject + fire-and-forget clear at `agent.service.ts:329-339`; `generate()` at `:357`.
@@ -50,10 +59,10 @@ Status tags: **[FIX NOW]** applied in this pass · **[REC]** recommendation awai
 - impact: handoff summary fed to the model more than once (token waste, repeated "re-learning"). Lower frequency than A2.
 - fix: clear-and-claim atomically (`UPDATE … SET human_summary=NULL WHERE id=? AND human_summary IS NOT NULL RETURNING human_summary`) and inject only when this turn won the claim. (Conflicts with A2's "clear after success"; needs deliberate design — hence REC.)
 
-**A4 · [should-fix] [anticipated-failure] Escalation mirror to ManyChat is fire-and-forget with no retry/reconcile · [REC]**
+**A4 · [should-fix] [anticipated-failure] Escalation mirror to the transport is fire-and-forget with no retry/reconcile · [REC] · [OBSOLETE post-migration]**
 - location: `agent.service.ts:378-384` (`void applyState(...).catch(...)`).
-- scenario: `applyState` fails (ManyChat 429/5xx/timeout/`MANYCHAT_ENABLED=false`); DB says `human`, ManyChat field/tag still say `bot`.
-- impact: split-brain between DB source-of-truth and ManyChat automations; no retry/outbox/reconcile. (Same root cause as R4/D4.)
+- scenario: `applyState` fails (transport 429/5xx/timeout/integration disabled); DB says `human`, the external field/tag still say `bot`.
+- impact: split-brain between DB source-of-truth and the external automations; no retry/outbox/reconcile. (Same root cause as R4/D4.) **Note:** the Meta Messenger transport has no external state store to mirror, so this entire finding is obsolete post-migration — the DB `ai_state` is the sole source of truth.
 - fix: persist a mirror-pending marker / enqueue a bounded retry; reconcile on next inbound. (Larger — see R4.)
 
 ### Nits
@@ -90,47 +99,52 @@ Status tags: **[FIX NOW]** applied in this pass · **[REC]** recommendation awai
 
 ---
 
-## 3. ManyChat adapter / Send API / async debounce worker
+## 3. Transport adapter / Send API / async debounce worker
+
+> The findings below describe the **pre-migration** middleware adapter. Under the current Meta
+> Messenger transport (`docs/messenger-setup.md`) the equivalents are the signed
+> `POST /webhook/messenger` controller, `MessengerClient` (Send API), and the same `DebounceService`.
+> Where a finding hinges on the old sync/async dual route or the external state mirror, it is flagged.
 
 ### Confirmed bugs
 
 **R1 · [blocker] [confirmed-bug] Async path: a failed turn delivers NOTHING to the customer · [FIX NOW]**
-- location: `manychat-webhook.controller.ts:126-138` (`processBatch` has no try/catch); the rejection only hits `debounce.service.ts:70-82`, which logs a warning.
-- scenario: on `POST /webhook/manychat/async`, the agent runs out-of-band after the 202 ACK. If `handleMessage` throws (Claude 429/5xx, DB drop) or `sendReply` fails, there is no fallback send.
-- impact: the customer on the recommended async (image/slow) path gets **total silence**; the inbound row was persisted so it *looks* answered in the admin panel. The sync handler has the never-5xx fallback; the async path has no equivalent.
-- fix: wrap `processBatch`; on failure deliver `FALLBACK_ARABIC` via `sender.sendReply` (mirroring the sync catch at `:74-84`).
+- location: the transport webhook controller `processBatch` had no try/catch; the rejection only hit `debounce.service.ts:70-82`, which logs a warning.
+- scenario: after the webhook ACK, the agent runs out-of-band. If `handleMessage` throws (Claude 429/5xx, DB drop) or the send fails, there is no fallback send.
+- impact: the customer on the async (image/slow) path gets **total silence**; the inbound row was persisted so it *looks* answered in the admin panel.
+- fix: wrap `processBatch`; on failure deliver `FALLBACK_ARABIC` via the Send client. **Carried into the Messenger controller**, whose `processBatch` now catches and sends the Arabic fallback text.
 
 ### Anticipated failures
 
-**R2 · [should-fix] [confirmed-bug→anticipated] Send API `200` treated as proof of delivery; response body status ignored · [REC]**
-- location: `manychat-sender.service.ts:60-63` (returns `true` on `res.ok`, never parses body); consumed as `delivered` at `conversation-control.service.ts:370-381`.
-- scenario: ManyChat returns HTTP 200 with `{"status":"error",…}` (invalid subscriber, 24h-window/tag policy). `res.ok` is true → `sendReply` returns true.
-- impact: a human-agent message is recorded `delivered:true` and shown as sent though ManyChat rejected it — silent partial failure on the manual-handoff path.
-- fix: parse the body and require `status==='success'` before returning true. **REC, not auto-fixed:** the sender file itself states the ManyChat Send API response contract is *unconfirmed* ("MUST be confirmed against the ManyChat account before going live"); hard-coding a body shape now risks breaking delivery detection. Confirm the real response shape first.
+**R2 · [should-fix] [confirmed-bug→anticipated] Send API `200` treated as proof of delivery; response body status ignored · [REC] · [SUPERSEDED post-migration]**
+- location: the old sender returned `true` on `res.ok` without parsing the body; consumed as `delivered` at `conversation-control.service.ts:370-381`.
+- scenario: the middleware returned HTTP 200 with an `{"status":"error",…}` body (invalid subscriber, 24h-window/tag policy). `res.ok` true → treated as delivered.
+- impact: a human-agent message recorded `delivered:true` though the transport rejected it — silent partial failure on the manual-handoff path.
+- fix: parse the body and require success before returning true. **Superseded:** the Graph Send API instead signals failure via a non-2xx HTTP status, which `MessengerClient` already surfaces by throwing `MessengerSendError` — so a rejected send is no longer mistaken for delivery.
 
-**R3 · [should-fix] [confirmed-bug] Sync webhook can exceed ManyChat's ~10s timeout (Vision + Claude run inline) · [REC]**
-- location: sync handler `manychat-webhook.controller.ts:63-73` → `agent.service.ts` runs `vision.extractAttributes` (`:304`, image download up to 8s) then `generate()` (`:357`, up to ~10 tool round-trips), all on the request thread.
-- scenario: a customer sends a photo on the SYNC route.
-- impact: ManyChat aborts at 10s; the socket is already closed so the never-5xx fallback never arrives; the customer sees nothing.
-- fix: don't run the inline vision pre-step on the sync path (image turns belong on async), or bound the whole turn with an overall deadline returning `FALLBACK_ARABIC` well under 10s. **REC** — touches the sync/async routing contract.
+**R3 · [should-fix] [confirmed-bug] Sync webhook can exceed the middleware's ~10s timeout (Vision + Claude run inline) · [REC] · [OBSOLETE post-migration]**
+- location: the old sync handler ran `vision.extractAttributes` (`agent.service.ts:304`, image download up to 8s) then `generate()` (`:357`, up to ~10 tool round-trips) on the request thread.
+- scenario: a customer sent a photo on the inline (synchronous-response) route.
+- impact: the middleware aborted at its ~10s timeout; the customer saw nothing.
+- fix: don't run vision inline on a response-bound request. **Obsolete:** the Meta Messenger transport has a **single** route — `POST /webhook/messenger` ACKs 200 immediately and does ALL agent work (vision + generate) asynchronously off the request thread, so no inline-response deadline exists.
 
-**R4 · [should-fix] [anticipated-failure] No retry/backoff on any ManyChat call; one blip → permanent state divergence · [REC]**
-- location: `manychat-control.service.ts:54-85` (`post`), `:182-217` (`getInfo`); `manychat-sender.service.ts:46-71`. All single-shot.
-- scenario: ManyChat 429/503 during `applyState` mirroring (escalation, pause/resume/assign/handoff).
-- impact: DB and ManyChat `ai_state` field/tag diverge with no reconciliation; ManyChat-side flows misroute.
-- fix: bounded retry-with-backoff (honor `Retry-After`) in the shared `post()`/`sendReply`; and/or a periodic reconcile of recently-changed conversations. Larger — REC.
+**R4 · [should-fix] [anticipated-failure] No retry/backoff on any transport call; one blip → permanent state divergence · [REC] · [OBSOLETE post-migration]**
+- location: the old control service `post()`/`getInfo` and sender. All single-shot.
+- scenario: transport 429/503 during `applyState` mirroring (escalation, pause/resume/assign/handoff).
+- impact: DB and the external `ai_state` field/tag diverge with no reconciliation; external flows misroute.
+- fix: bounded retry-with-backoff. **Obsolete:** with no external state store under Meta Messenger, there is nothing to mirror or reconcile — DB `ai_state` is authoritative.
 
-**R5 · [should-fix] [anticipated-failure] `applyState` mirror is partial-failure-prone (field-set ignored, tag/flow via `allSettled`) · [REC]**
-- location: `manychat-control.service.ts:238-273` (step-1 `setCustomFieldByName` boolean ignored; step-2 ops via `Promise.allSettled`, `applyState` resolves `void`).
+**R5 · [should-fix] [anticipated-failure] `applyState` mirror is partial-failure-prone (field-set ignored, tag/flow via `allSettled`) · [REC] · [OBSOLETE post-migration]**
+- location: the old control service `applyState` (step-1 field-set boolean ignored; step-2 ops via `Promise.allSettled`, resolving `void`).
 - scenario: the field write fails but tag/flow succeed (or vice versa).
-- impact: ManyChat half-applied (tag present, `ai_state` field stale) and no caller can detect it.
-- fix: inspect the step-1 boolean + `allSettled` results; log at error and (with R4) retry on partial application.
+- impact: the external state half-applied (tag present, field stale) and no caller can detect it.
+- fix: inspect the results and retry on partial application. **Obsolete:** no external multi-step mirror exists under Meta Messenger.
 
 ### Nits
 
 **R6 · [nit] [anticipated-failure] Async reply persisted but not delivered (saved-but-not-sent) is invisible · [REC]**
-- location: `manychat-webhook.controller.ts:130-137` (the `sendReply` boolean is discarded).
-- fix: capture the boolean; on false, log + record a delivery-failure event (folds into R1).
+- location: the old async controller discarded the send-success boolean.
+- fix: capture send success; on failure, log + record a delivery-failure event (folds into R1). Still applicable to the Messenger controller's send path.
 
 ---
 
@@ -164,7 +178,7 @@ Status tags: **[FIX NOW]** applied in this pass · **[REC]** recommendation awai
 - fix: shared lock/queue (Redis/BullMQ keyed by `contactId`) before multi-instance deploy, or enforce + document single-instance.
 
 **I5 · [nit] [anticipated-failure] Debounce flush deletes the batch before async `generate()` completes · [REC]**
-- location: `debounce.service.ts` fire path; driven by `manychat-webhook.controller.ts:103-138`.
+- location: `debounce.service.ts` fire path; driven by the transport webhook controller's batch flush.
 - scenario: a new inbound for the same contact arrives while a prior slow turn is still generating; a second batch fires concurrently.
 - impact: two turns in parallel for one customer (overlaps I1). 
 - fix: per-key serialization (chain the next batch behind the previous `handleMessage` settle).
@@ -208,7 +222,7 @@ Status tags: **[FIX NOW]** applied in this pass · **[REC]** recommendation awai
 
 ### Anticipated failures
 
-**D2 · [should-fix] [anticipated-failure] DB `ai_state` and ManyChat custom field drift on a failed mirror (no reconciliation) · [REC]** — same root cause as A4/R4/R5; consolidated there.
+**D2 · [should-fix] [anticipated-failure] DB `ai_state` and the external custom field drift on a failed mirror (no reconciliation) · [REC] · [OBSOLETE post-migration]** — same root cause as A4/R4/R5; consolidated there. Obsolete under Meta Messenger (no external state store).
 
 ### Nits
 
@@ -232,8 +246,8 @@ Status tags: **[FIX NOW]** applied in this pass · **[REC]** recommendation awai
 **S1 · [blocker] [confirmed-bug] Unauthenticated `POST /agent/message` bypasses the webhook secret guard · [FIX NOW]**
 - location: `agent.controller.ts:26-55` — NO `@UseGuards`; registered unconditionally in `agent.module.ts:42`.
 - scenario: anyone who can reach the host POSTs `{contactId,text,…}` to `/agent/message` with no shared-secret check.
-- impact: anonymous access to the full agent pipeline — invoke Claude (cost/abuse), trigger write tools (`capture_order`, `escalate_to_human`), poison any contact's history (attacker-chosen `contactId`), and drive the server-side image fetch (S/V1). The `ManyChatSecretGuard` on `/webhook/manychat` is fully sidestepped.
-- fix: add `@UseGuards(ManyChatSecretGuard)` to `AgentController` (matches the webhook; dev with no secret still allowed, prod fails closed). Minimal and reuses the existing guard.
+- impact: anonymous access to the full agent pipeline — invoke Claude (cost/abuse), trigger write tools (`capture_order`, `escalate_to_human`), poison any contact's history (attacker-chosen `contactId`), and drive the server-side image fetch (S/V1). The inbound webhook auth guard is fully sidestepped.
+- fix: add the webhook auth guard to `AgentController` (matches the webhook; dev with no secret still allowed, prod fails closed). Minimal and reuses the existing guard. (Post-migration the webhook guard is `MessengerSignatureGuard`, validating `X-Hub-Signature-256`.)
 
 **S2 · [should-fix→blocker] [confirmed-bug] Open admin self-registration mints an admin account · [REC — product decision]**
 - location: `auth.controller.ts:41-57` (`POST /auth/register`, no guard, "Open self-registration"); `auth.service.ts:35-47` issues a JWT; `normalizeRole` collapses unknown roles to `admin` (`:82-85`).
@@ -244,13 +258,13 @@ Status tags: **[FIX NOW]** applied in this pass · **[REC]** recommendation awai
 ### Anticipated failures
 
 **S3 · [should-fix] [anticipated-failure] Unbounded webhook payload: no field length caps · [FIX NOW (caps) + REC (bodyLimit)]**
-- location: `manychat-webhook.dto.ts:30-59` (`text: z.string().min(1)` — no `.max`; url/adRef/name/contactId/messageId uncapped); `main.ts:22-25` constructs `FastifyAdapter` with no explicit `bodyLimit`; the webhook schema is not `.strict()`.
+- location: the transport webhook DTO (`text: z.string().min(1)` — no `.max`; url/adRef/name/contactId/messageId uncapped); `main.ts:22-25` constructs `FastifyAdapter` with no explicit `bodyLimit`; the webhook schema is not `.strict()`.
 - scenario: a caller POSTs a near-1MB `text`; it passes validation, is fed to `generate()` and persisted, amplifying LLM cost + memory on every turn (reachable anonymously via S1).
 - impact: resource/cost DoS amplification; oversized strings stored and re-sent to the model.
 - fix: add `.max(...)` caps to the DTO fields **[FIX NOW]** (precise, safe). An explicit app-wide `bodyLimit` on the FastifyAdapter is **[REC]** — choosing a value safe for admin JSON payloads needs their size profile.
 
 **S4 · [should-fix] [anticipated-failure] Prompt-injection can drive `escalate_to_human`; customer FB `name` injected as a `system` message · [REC]**
-- location: `escalate-to-human.tool.ts:18-51` (`reason` is free LLM text); `agent.service.ts:317-325` (customer `name` injected verbatim as `role:'system'`), `:357-361` (customer `text` is the prompt), mirrored to ManyChat at `:378-384`.
+- location: `escalate-to-human.tool.ts:18-51` (`reason` is free LLM text); `agent.service.ts:317-325` (customer `name` injected verbatim as `role:'system'`), `:357-361` (customer `text` is the prompt), with escalation state written at `:378-384`.
 - scenario: a crafted message/display-name steers the model to escalate with attacker-authored reasons or spam handoffs.
 - impact: customer-triggered state flips + operational noise. **Bounded:** the sensitive boundary (identity/source for `capture_order`) is correctly read from `requestContext`, never tool input (`capture-order.tool.ts:96-109`), and `get_order_status` scopes foreign orders to empty — so data-exfiltration/privilege-escalation via tools is NOT achievable. Residual risk is state-flip + spam.
 - fix: don't elevate the customer `name` to a `system` message (pass it as untrusted data / persist to working memory out-of-band); add a per-conversation escalation rate-guard; treat `reason` as display-only untrusted text in the admin UI.
@@ -289,7 +303,7 @@ Status tags: **[FIX NOW]** applied in this pass · **[REC]** recommendation awai
 | A1 | Honor `pausedUntil` → timed pauses auto-resume on the inbound path | confirmed-bug blocker |
 | A2 | Inject one-shot `humanSummary` only after a successful `generate()` | confirmed-bug should-fix |
 | R1 | Async path delivers `FALLBACK_ARABIC` when the turn fails | confirmed-bug blocker |
-| S1 | `@UseGuards(ManyChatSecretGuard)` on the temp `/agent/message` surface | confirmed-bug blocker |
+| S1 | webhook auth guard on the temp `/agent/message` surface | confirmed-bug blocker |
 | V1 | SSRF guard on the two customer image sinks (`downloadImage`, `findSimilarByImage`) | anticipated-failure blocker (safe) |
 | S3 | `.max(...)` length caps on the webhook DTO fields | anticipated-failure should-fix (safe) |
 
@@ -308,9 +322,9 @@ Each lands as its own commit with a regression test; suite + build kept green.
 ### Awaiting your go-ahead (recommendations / scope-guard stops)
 - **I1 [STOP]** insert-first inbound dedup (restructures the hot path; must match the partial-index predicate) — fix specified above.
 - **S2 [REC]** lock down open admin self-registration (product/onboarding decision).
-- **R2 [REC]** Send-API delivery check (needs the confirmed ManyChat response contract).
+- **R2 [REC]** Send-API delivery check (superseded — the Graph API signals failure via non-2xx, surfaced by `MessengerClient`).
 - **R3 [REC]** sync-path 10s deadline / no inline vision on sync.
-- **R4 / R5 / A4 / D2 [REC]** ManyChat retry-with-backoff + state reconciliation; surface partial `applyState`.
+- **R4 / R5 / A4 / D2 [REC]** transport retry-with-backoff + state reconciliation (obsolete under Meta Messenger — no external state store to reconcile).
 - **I2 / I3 [REC + migration on go-ahead]** UNIQUE on `conversations.psid` and partial UNIQUE on `orders(conversation_id) WHERE status='draft'` (generate migration `0013`, do not apply).
 - **B1 / B2 / B3 [REC]** atomic/conditional conversation-state transitions; re-check `ai_state` before delivery.
 - **A3 [REC]** atomic claim for `humanSummary`.

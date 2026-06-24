@@ -14,7 +14,7 @@ We are building the **backend for an AI sales agent** that answers customer mess
 - Never invent prices or availability — only state facts retrieved from the database.
 - Capture cash-on-delivery (COD) order drafts and hand off to a human when needed.
 
-This repository is the **backend only**. The admin panel (Next.js) and the Facebook integration (ManyChat) are separate concerns. The backend exposes a REST API and houses the AI agent logic (Mastra). The database is the single source of truth that the agent reads from and the admin panel writes to.
+This repository is the **backend only**. The admin panel (Next.js) and the Facebook integration (Meta Messenger Platform / Graph API) are separate concerns. The backend exposes a REST API and houses the AI agent logic (Mastra). The database is the single source of truth that the agent reads from and the admin panel writes to.
 
 ---
 

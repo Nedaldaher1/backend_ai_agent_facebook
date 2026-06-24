@@ -1,22 +1,22 @@
 %%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
 flowchart TD
     A["👤 الزبون يرسل رسالة<br/>على صفحة الفيسبوك"]
-    B["Messenger Platform<br/>Webhook رسمي من Meta"]
+    B["Meta Messenger Platform<br/>Graph API v25.0 — Webhook رسمي"]
 
-    subgraph MC["ManyChat — طبقة الربط المدعومة رسمياً"]
+    subgraph MC["Meta Messenger Platform — طبقة النقل الرسمية"]
         direction TB
-        C["تشغيل Default Reply<br/>أو Keyword Trigger"]
-        D["External Request — ميزة Pro<br/>POST: نص الرسالة + معرّف المشترك"]
-        E["حفظ الرد في Custom Field"]
-        F["إرسال الرد للزبون"]
+        C["حدث وارد<br/>messages / postbacks / referrals"]
+        D["POST /webhook/messenger — موقّع<br/>X-Hub-Signature-256 (HMAC-SHA256)"]
+        E["Graph Send API<br/>POST /{PAGE_ID}/messages"]
+        F["إرسال الرد للزبون<br/>messaging_type: RESPONSE"]
     end
 
-    subgraph BE["الـ Backend — الوكيل اليدوي (Next.js API)"]
+    subgraph BE["الـ Backend — الوكيل (NestJS + Mastra)"]
         direction TB
-        G["نقطة api/webhook<br/>التحقق من صحة الطلب"]
+        G["نقطة webhook/messenger<br/>التحقق من التوقيع + ACK 200"]
         H["جلب قاعدة المعرفة<br/>+ إعدادات أسلوب الرد"]
         I["بناء الـ Prompt<br/>واستدعاء Claude API"]
-        J["إرجاع رد بصيغة JSON"]
+        J["صياغة الرد + إرساله عبر Send API"]
     end
 
     K["🤖 Claude<br/>يولّد الرد المناسب"]

@@ -1,7 +1,7 @@
 %%{init: {'theme':'base', 'themeVariables': {'fontFamily':'Tahoma, Arial, sans-serif'}}}%%
 flowchart TD
-    A["رسالة الزبون تصل<br/>Playground الآن / ManyChat لاحقاً"]
-    B["المحوّل يستخرج:<br/>psid, text, last_image_url, ad_ref"]
+    A["رسالة الزبون تصل<br/>Playground / webhook الموقّع من Meta Messenger Platform"]
+    B["المُطبِّع يستخرج:<br/>psid, text, image_url, referral (ref/ad_id)"]
     C{"فيه صورة؟"}
     D["vision.ts → Claude<br/>استخراج صفات الصورة"]
     E["agent.generate(text + الصفات,<br/>memory: resource=psid, thread)"]
@@ -9,7 +9,7 @@ flowchart TD
     G{"Claude يقرّر:<br/>أي أداة؟"}
     H["تنفيذ الأدوات<br/>search_products / availability / media<br/>استعلام Postgres"]
     I["Claude يصيغ الرد النهائي<br/>+ المنتجات المعروضة"]
-    J["تنسيق الرد<br/>Playground / Dynamic Block v2 (cards)"]
+    J["تنسيق الرد<br/>Playground / Graph Send API (نص + معرض cards)"]
     K["حفظ الدور في الذاكرة"]
     L["الرد يصل الزبون"]
 

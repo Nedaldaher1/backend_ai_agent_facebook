@@ -1,6 +1,11 @@
 # مشروع وكيل ماسة — ملفات التخطيط والمخططات
 
-هذه حزمة ملفات التخطيط الكاملة لبناء وكيل مبيعات ذكي لصفحة عبايات Masa Fashion على فيسبوك (ManyChat + Mastra + Claude API + Next.js + PostgreSQL).
+هذه حزمة ملفات التخطيط الكاملة لبناء وكيل مبيعات ذكي لصفحة عبايات Masa Fashion على فيسبوك (Meta Messenger Platform / Graph API + Mastra + Claude API + Next.js + PostgreSQL).
+
+## أدلّة التشغيل (runbooks)
+
+- **messenger-setup.md** — دليل المشغّل لربط الـ Backend بصفحة فيسبوك عبر Meta Messenger Platform (Graph API v25.0): إنشاء تطبيق Meta، إعداد الـ webhook الموقّع، توكن الصفحة، اشتراك الحقول، ونسب إعلانات Click-to-Messenger.
+- **handoff-design.md** — تصميم التحكم بالمحادثة والتحويل لإنسان (نموذج حالة `ai_state` داخل الـ Backend).
 
 
 ## الخطط (plans/)
@@ -11,7 +16,7 @@
 
 ## المخططات (diagrams/)
 
-- **masa-ai-agent-workflow.mermaid** — سير العمل العام (ManyChat ↔ Backend ↔ Claude).
+- **masa-ai-agent-workflow.mermaid** — سير العمل العام (Meta Messenger Platform ↔ Backend ↔ Claude).
 - **01-local-architecture.mermaid** — معمارية المرحلة المحلية (Claude API هو الخارجي الوحيد).
 - **02-mastra-agent-composition.mermaid** — تركيب وكيل Mastra (Agent + Memory + Tools + Model).
 - **03-message-flow.mermaid** — مسار معالجة الرسالة لحظياً.

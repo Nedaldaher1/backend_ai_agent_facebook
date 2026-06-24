@@ -128,7 +128,7 @@ normalizeColor(term):
 ### 2.2 مسار الزبونة/الوكيل (قراءة)
 
 ```
-ManyChat → Backend → Agent (search_products) → normalizeColor() → color_synonyms
+Meta Messenger (webhook) → Backend → Agent (search_products) → normalizeColor() → color_synonyms
                                               → products WHERE color_family = family AND is_published = true
 ```
 
