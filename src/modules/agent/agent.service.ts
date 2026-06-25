@@ -17,7 +17,8 @@ import { createHash } from 'node:crypto';
 import { buildMastra } from './mastra/mastra.factory';
 import { VisionService, type VisionExtractResult } from './vision/vision.service';
 import { MAX_GALLERY_CARDS } from './messenger/messenger.formatter';
-import { stripImageMarkup } from './reply-sanitize.util';
+import { stripEmojis, stripImageMarkup } from './reply-sanitize.util';
+import { FALLBACK_REPLY } from './customer-reply.constants';
 
 /** Window for the content-hash idempotency fallback when no provider id exists. */
 const DEDUP_WINDOW_MS = 10_000;
@@ -118,6 +119,13 @@ export interface AgentReply {
 /** Minimal local interface over the generate() return value for toolResults access. */
 interface GenerateResult {
   text: string;
+  /**
+   * Why generation stopped ('stop' | 'length' | 'tool-calls' | …). Read
+   * defensively (may be absent on some provider paths). Surfaced in the per-turn
+   * log so an empty reply can be diagnosed — 'length' means the step was
+   * truncated by the token cap.
+   */
+  finishReason?: string;
   toolResults?: Array<{
     payload?: {
       toolName?: string;
@@ -240,7 +248,7 @@ export class AgentService implements OnModuleInit {
       temperature: Number(this.config.get<string>('AGENT_TEMPERATURE') ?? '0.5'),
       topP: Number(this.config.get<string>('AGENT_TOP_P') ?? '0.8'),
       maxOutputTokens: Number(
-        this.config.get<string>('AGENT_MAX_OUTPUT_TOKENS') ?? '512',
+        this.config.get<string>('AGENT_MAX_OUTPUT_TOKENS') ?? '2048',
       ),
     };
     // Mastra framework logger level (validated enum, defaults to 'info' in the
@@ -387,6 +395,12 @@ export class AgentService implements OnModuleInit {
         externalId: dedupKey,
         ...(input.lastImageUrl ? { imageUrl: input.lastImageUrl } : {}),
       });
+      // Make the silence explainable: without this line a paused/handed-off
+      // conversation looks identical to a broken agent in the logs. Now the
+      // operator can see WHY no reply went out (e.g. it was left paused).
+      this.logger.log(
+        `agent turn [${resourceId}] skipped: ai_state=${aiState} (no reply sent — resume to re-enable the bot)`,
+      );
       return { reply: '', ran: false, aiState: aiState as 'bot' | 'human' | 'paused' };
     }
 
@@ -493,16 +507,49 @@ export class AgentService implements OnModuleInit {
     // TODO (AIA-32 webhook): if generate() throws, the inbound row above is left
     //   without a matching reply. Handle generate failures there (idempotency +
     //   mark/clean the orphan turn) once the Messenger webhook owns delivery.
-    const result = (await this.salesAgent.generate(input.text, {
+    const genOptions = {
       memory: { resource: resourceId, thread: threadId },
       requestContext,
       // Generation tuning (temperature/topP/maxOutputTokens) applied to every
       // turn. Mastra forwards it to the model as AI SDK v5 CallSettings. Set on
-      // each generate() — the single call site — since v1.42's Agent ctor has no
-      // top-level modelSettings (it lives on execution options / fallback array).
+      // each generate() since v1.42's Agent ctor has no top-level modelSettings
+      // (it lives on execution options / fallback array).
       modelSettings: this.modelSettings,
       ...(context ? { context } : {}),
-    })) as GenerateResult;
+    };
+
+    let result = (await this.salesAgent.generate(
+      input.text,
+      genOptions,
+    )) as GenerateResult;
+
+    // Sanitise the reply DETERMINISTICALLY (the prompt/tools are not trusted):
+    // strip image markup (photos go out as carousel cards, never as text links)
+    // and strip emoji (the brand voice forbids them, so a slipped-in emoji is
+    // removed here regardless of what the persona says).
+    let replyText = stripEmojis(stripImageMarkup(result.text ?? ''));
+
+    // Empty-generation guard. Gemini occasionally returns no text (a step
+    // truncated by the token cap, or a transient blip). An empty reply is sent as
+    // SILENCE — the Messenger worker only delivers when reply.reply is non-empty —
+    // which the customer experiences as "the bot stopped" and the operator has to
+    // restart it from the panel. Retry once; if still empty, fall back to a short
+    // clean line so she always gets something. The write tools (capture_order,
+    // escalate_to_human) are idempotent, so the retry never double-writes.
+    // finishReason is logged (see logToolCalls) to reveal the cause.
+    if (!replyText.trim()) {
+      this.logger.warn(
+        `agent turn [${resourceId}] empty reply (finishReason=${result.finishReason ?? 'unknown'}) — retrying once`,
+      );
+      result = await this.salesAgent.generate(input.text, genOptions);
+      replyText = stripEmojis(stripImageMarkup(result.text ?? ''));
+      if (!replyText.trim()) {
+        this.logger.warn(
+          `agent turn [${resourceId}] still empty after retry (finishReason=${result.finishReason ?? 'unknown'}) — using fallback`,
+        );
+        replyText = FALLBACK_REPLY;
+      }
+    }
 
     // Per-turn observability: log which tools the agent called this turn, with the
     // args it supplied and a short result hint. Without this the backend gives no
@@ -524,11 +571,7 @@ export class AgentService implements OnModuleInit {
     // Persist the agent reply — best-effort business-log row, now carrying eval
     // metadata (matched products + tool + image_led) for the admin panel and the
     // evals harness (diagram node T). A logging failure never denies the reply.
-    // Photos reach the customer as carousel cards, never as text links — strip
-    // any image markup the model pasted into the reply (Messenger renders it as
-    // ugly raw URLs). Deterministic; the prompt/tool descriptions are not trusted.
-    const replyText = stripImageMarkup(result.text);
-
+    // replyText was sanitised (image markup + emoji stripped) at generation time.
     const evalInfo = this.buildEvalInfo(result, Boolean(input.lastImageUrl));
     await this.logTurn({
       conversationId: convo.id,
@@ -665,9 +708,14 @@ export class AgentService implements OnModuleInit {
    */
   private logToolCalls(result: GenerateResult, resourceId: string): void {
     try {
+      // finishReason + reply length make a truncated/empty turn diagnosable: an
+      // empty turn now logs e.g. "finishReason=length textLen=0" instead of a
+      // bare "(none)" that hides why no reply went out.
+      const meta = `finishReason=${result.finishReason ?? 'unknown'} textLen=${(result.text ?? '').length}`;
+
       const calls = result.toolResults ?? [];
       if (calls.length === 0) {
-        this.logger.log(`agent turn [${resourceId}] tools: (none)`);
+        this.logger.log(`agent turn [${resourceId}] tools: (none) ${meta}`);
         return;
       }
       const summary = calls
@@ -684,20 +732,35 @@ export class AgentService implements OnModuleInit {
             args = ` ${s.length > 120 ? `${s.slice(0, 117)}...` : s}`;
           }
 
-          // Result hint: surface product/image counts when the tool returned a
-          // list, so the log shows whether the call actually found anything.
+          // Result hint. Product/image tools: the count found. capture_order: the
+          // OUTCOME — a refusal returns { ok:false } (NOT isError), so without this
+          // an order that never persisted would look like a normal ✓ call. Surface
+          // the new order id on success, or the refusal reason on failure.
           const r = c.payload?.result as
-            | { products?: unknown[]; images?: unknown[] }
+            | {
+                products?: unknown[];
+                images?: unknown[];
+                ok?: boolean;
+                order_id?: string;
+                reason?: string;
+              }
             | undefined;
           let hint = '';
-          if (Array.isArray(r?.products)) hint = ` → ${r.products.length} products`;
-          else if (Array.isArray(r?.images)) hint = ` → ${r.images.length} images`;
+          if (name === 'capture_order' && r) {
+            hint = r.ok
+              ? ` → order ${r.order_id ?? '?'} created`
+              : ` → NOT created: ${r.reason ?? 'unknown'}`;
+          } else if (Array.isArray(r?.products)) {
+            hint = ` → ${r.products.length} products`;
+          } else if (Array.isArray(r?.images)) {
+            hint = ` → ${r.images.length} images`;
+          }
 
           return `${name} ${mark}${args}${hint}`;
         })
         .join(', ');
       this.logger.log(
-        `agent turn [${resourceId}] tools(${calls.length}): ${summary}`,
+        `agent turn [${resourceId}] tools(${calls.length}): ${summary} ${meta}`,
       );
     } catch {
       // Observability must never break the customer reply.

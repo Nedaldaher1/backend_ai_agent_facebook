@@ -1,4 +1,4 @@
-import { stripImageMarkup } from '../reply-sanitize.util';
+import { stripEmojis, stripImageMarkup } from '../reply-sanitize.util';
 
 describe('stripImageMarkup', () => {
   it('removes a markdown image embed and keeps the surrounding text', () => {
@@ -68,5 +68,53 @@ describe('stripImageMarkup', () => {
 
   it('returns empty/falsy input unchanged', () => {
     expect(stripImageMarkup('')).toBe('');
+  });
+});
+
+describe('stripEmojis', () => {
+  // \u escapes (not literal emoji) so the source is unambiguous about codepoints.
+  const HEART = '\u{1F5A4}'; // 🖤
+  const SPARKLES = '\u2728'; // sparkles
+  const FLOWER = '\u{1F338}'; // 🌸
+  const OK_HAND = '\u{1F44C}'; // 👌
+  const FAMILY = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'; // ZWJ sequence (family emoji)
+  const THUMB_TONE = '\u{1F44D}\u{1F3FD}'; // 👍🏽 (skin-tone modifier)
+  const FLAG_JO = '\u{1F1EF}\u{1F1F4}'; // 🇯🇴 (regional-indicator pair)
+
+  it('removes an inline emoji and collapses the leftover double space', () => {
+    expect(stripEmojis(`سعرها 22 دينار ${HEART} والتوصيل 2 دينار`)).toBe(
+      'سعرها 22 دينار والتوصيل 2 دينار',
+    );
+  });
+
+  it('removes several different emoji in one string', () => {
+    expect(stripEmojis(`${SPARKLES}مرحبا ${FLOWER} كيفك ${OK_HAND}`)).toBe(
+      'مرحبا كيفك',
+    );
+  });
+
+  it('removes ZWJ sequences, skin-tone modifiers, and flag pairs', () => {
+    expect(stripEmojis(`أهلا ${FAMILY}${THUMB_TONE}${FLAG_JO} بيكي`)).toBe(
+      'أهلا بيكي',
+    );
+  });
+
+  it('keeps Arabic-Indic and ASCII numerals (digits are not stripped)', () => {
+    expect(stripEmojis(`الطلب رقم #3 بسعر ٢٢ و 22 دينار ${OK_HAND}`)).toBe(
+      'الطلب رقم #3 بسعر ٢٢ و 22 دينار',
+    );
+  });
+
+  it('preserves newlines so bubble boundaries survive', () => {
+    expect(stripEmojis(`سطر ${HEART}\n\nسطر تاني`)).toBe('سطر\n\nسطر تاني');
+  });
+
+  it('leaves emoji-free Arabic text unchanged', () => {
+    const input = 'اللون أخضر، السعر 12 دينار، الفئة يومي';
+    expect(stripEmojis(input)).toBe(input);
+  });
+
+  it('returns empty/falsy input unchanged', () => {
+    expect(stripEmojis('')).toBe('');
   });
 });

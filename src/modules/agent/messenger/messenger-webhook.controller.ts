@@ -59,10 +59,7 @@ import {
   messengerWebhookBodySchema,
   type MessengerWebhookBody,
 } from './messenger-webhook.dto';
-
-/** Graceful Arabic fallback when the async agent worker fails. */
-const FALLBACK_ARABIC =
-  'لحظة من فضلك 🌸 عم نجهّزلك الرد، جرّبي تبعتي رسالتك بعد شوي.';
+import { FALLBACK_REPLY } from '../customer-reply.constants';
 
 @ApiTags('Messenger')
 @Controller('webhook')
@@ -333,7 +330,7 @@ export class MessengerWebhookController {
         err instanceof Error ? err.stack : undefined,
       );
       try {
-        await this.messengerClient.sendText(psid, FALLBACK_ARABIC);
+        await this.messengerClient.sendText(psid, FALLBACK_REPLY);
       } catch (sendErr) {
         this.logger.error(
           `Messenger fallback send also failed for PSID ${psid}: ${

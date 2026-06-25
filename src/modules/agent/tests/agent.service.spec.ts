@@ -63,7 +63,9 @@ jest.mock('@mastra/core/di', () => {
   return { RequestContext: MockRequestContext };
 });
 
+import { Logger } from '@nestjs/common';
 import { AgentService } from '../agent.service';
+import { FALLBACK_REPLY } from '../customer-reply.constants';
 import { buildMastra } from '../mastra/mastra.factory';
 import { RequestContext } from '@mastra/core/di';
 import type { ConfigService } from '@nestjs/config';
@@ -348,7 +350,7 @@ describe('AgentService', () => {
     );
   });
 
-  it('applies the default modelSettings (temp 0.5 / topP 0.8 / maxOutputTokens 512) to generate', async () => {
+  it('applies the default modelSettings (temp 0.5 / topP 0.8 / maxOutputTokens 2048) to generate', async () => {
     const service = new AgentService(
       makeConfigMock(),
       productsMock,
@@ -366,7 +368,7 @@ describe('AgentService', () => {
     expect(fakeSalesAgent.generate).toHaveBeenCalledWith(
       'مرحبا',
       expect.objectContaining({
-        modelSettings: { temperature: 0.5, topP: 0.8, maxOutputTokens: 512 },
+        modelSettings: { temperature: 0.5, topP: 0.8, maxOutputTokens: 2048 },
       }),
     );
   });
@@ -796,6 +798,147 @@ describe('AgentService', () => {
     const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
 
     expect(result.reply).toBe(FAKE_REPLY);
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — empty-generation guard + reply sanitisation
+  // -------------------------------------------------------------------------
+
+  describe('empty-generation guard + sanitisation', () => {
+    const make = (conversations: ConversationsService) => {
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+      return service;
+    };
+
+    it('retries once and falls back to a clean line when generate returns empty text twice', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+
+      fakeSalesAgent.generate
+        .mockResolvedValueOnce({ text: '   ', finishReason: 'length' })
+        .mockResolvedValueOnce({ text: '', finishReason: 'length' });
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(2);
+      expect(result.reply).toBe(FALLBACK_REPLY);
+      // The outbound business-log row carries the fallback, never an empty string.
+      const outbound = (conversations.addMessage as jest.Mock).mock.calls[1][0];
+      expect(outbound.content).toBe(FALLBACK_REPLY);
+    });
+
+    it('retries once and uses the retry text when the second generate succeeds', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+
+      fakeSalesAgent.generate
+        .mockResolvedValueOnce({ text: '' })
+        .mockResolvedValueOnce({ text: 'رجعت بنص هالمرة' });
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(2);
+      expect(result.reply).toBe('رجعت بنص هالمرة');
+    });
+
+    it('does NOT retry when the first generation already has text', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+
+      fakeSalesAgent.generate.mockResolvedValueOnce({ text: 'رد مباشر' });
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
+      expect(result.reply).toBe('رد مباشر');
+    });
+
+    it('strips emoji from the reply deterministically', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+
+      // \u{1F60D} = 😍. The reply must come back emoji-free and double-space-tidied.
+      fakeSalesAgent.generate.mockResolvedValueOnce({ text: 'تمام \u{1F60D} حياتي' });
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(result.reply).toBe('تمام حياتي');
+    });
+
+    it('logs the capture_order outcome (new order id) in the per-turn tool line', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+      const logSpy = jest
+        .spyOn(Logger.prototype, 'log')
+        .mockImplementation(() => undefined);
+
+      fakeSalesAgent.generate.mockResolvedValueOnce({
+        text: 'تم تسجيل طلبك',
+        toolResults: [
+          {
+            payload: {
+              toolName: 'capture_order',
+              isError: false,
+              result: { ok: true, order_id: 'ord-9' },
+            },
+          },
+        ],
+      });
+
+      await service.handleMessage({ contactId: 'C1', text: 'بدي اطلب' });
+
+      const lines = logSpy.mock.calls.map((c) => String(c[0]));
+      expect(
+        lines.some(
+          (l) => l.includes('capture_order') && l.includes('order ord-9 created'),
+        ),
+      ).toBe(true);
+      logSpy.mockRestore();
+    });
+
+    it('logs the capture_order refusal reason (ok:false is not isError)', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+      const logSpy = jest
+        .spyOn(Logger.prototype, 'log')
+        .mockImplementation(() => undefined);
+
+      fakeSalesAgent.generate.mockResolvedValueOnce({
+        text: 'اللون مش متوفر',
+        toolResults: [
+          {
+            payload: {
+              toolName: 'capture_order',
+              isError: false,
+              result: { ok: false, reason: 'اللون غير متوفر' },
+            },
+          },
+        ],
+      });
+
+      await service.handleMessage({ contactId: 'C1', text: 'بدي اطلب' });
+
+      const lines = logSpy.mock.calls.map((c) => String(c[0]));
+      expect(
+        lines.some(
+          (l) =>
+            l.includes('capture_order') &&
+            l.includes('NOT created') &&
+            l.includes('اللون غير متوفر'),
+        ),
+      ).toBe(true);
+      logSpy.mockRestore();
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -165,6 +165,27 @@ describe('AgentBehaviorService', () => {
       expect(result).toContain('لا تخترعي أسعاراً');
     });
 
+    it('default persona is emoji-free and instructs no-emoji + greet-once', async () => {
+      const freshRepo = {
+        list,
+        findActive: jest.fn().mockResolvedValue(undefined), // → DEFAULT_PERSONA
+        findById,
+        insert,
+        updateById,
+        setActive,
+        deleteById,
+      } as unknown as AgentBehaviorRepository;
+      const svc = new AgentBehaviorService(freshRepo);
+
+      const out = await svc.getInstructions();
+
+      // Brand voice: the persona text must not itself contain any emoji.
+      expect(out).not.toMatch(/\p{Extended_Pictographic}/u);
+      // And it must instruct: no emoji at all, and greet only once at the start.
+      expect(out).toContain('بدون أي إيموجي');
+      expect(out).toContain('الترحيب مرة وحدة');
+    });
+
     it('guardrails are present even when active row has persona content', async () => {
       const freshRepo = {
         list,

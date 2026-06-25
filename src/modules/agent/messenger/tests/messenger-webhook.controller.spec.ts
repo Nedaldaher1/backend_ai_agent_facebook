@@ -476,7 +476,7 @@ describe('MessengerWebhookController — async processBatch worker', () => {
   it('splits a multi-paragraph reply into separate message bubbles, in order', async () => {
     const { controller, messengerClient, flush } = makeController({
       reply: {
-        reply: 'أهلاً وسهلاً 🌸\n\nبتدوري على لون معيّن؟\n\nعندنا أحمر وأسود',
+        reply: 'أهلاً وسهلاً\n\nبتدوري على لون معيّن؟\n\nعندنا أحمر وأسود',
         ran: true,
         aiState: 'bot',
       },
@@ -490,7 +490,7 @@ describe('MessengerWebhookController — async processBatch worker', () => {
     expect(messengerClient.sendText).toHaveBeenNthCalledWith(
       1,
       'PSID-1',
-      'أهلاً وسهلاً 🌸',
+      'أهلاً وسهلاً',
     );
     expect(messengerClient.sendText).toHaveBeenNthCalledWith(
       2,

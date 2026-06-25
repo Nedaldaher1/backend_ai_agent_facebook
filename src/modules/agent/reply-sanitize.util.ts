@@ -6,13 +6,25 @@
  * every chat transport here) renders neither as a picture; they appear as ugly
  * raw links. Product photos reach the customer ONLY through the carousel cards,
  * never the reply text, so we strip them DETERMINISTICALLY here instead of
- * trusting the prompt/tool descriptions.
+ * trusting the prompt/tool descriptions. The same posture applies to emoji,
+ * which the brand voice forbids (see stripEmojis).
  */
+
+// Emoji + their modifiers. `Extended_Pictographic` covers every standard emoji
+// (hearts, faces, flowers, hands…) WITHOUT matching ASCII digits / `#` / `*`
+// (those are `Emoji` but not `Extended_Pictographic`) or Arabic letters — so the
+// reply text and numerals survive. We also match: a regional-indicator pair (a
+// flag), skin-tone modifiers (U+1F3FB–U+1F3FF), the emoji/text variation
+// selectors (U+FE0E/U+FE0F), and ZWJ-joined sequences (family/profession emoji)
+// so no orphaned joiner is left behind.
+const EMOJI_SEQUENCE =
+  /[\u{1F1E6}-\u{1F1FF}]{2}|\p{Extended_Pictographic}(?:[\u{1F3FB}-\u{1F3FF}]|\uFE0E|\uFE0F|\u200D\p{Extended_Pictographic})*/gu;
 
 // Markdown image embed: ![alt](url) and ![alt](url "title").
 const MD_IMAGE = /!\[[^\]]*\]\([^)]*\)/g;
 // Bare image URL: http(s)://… ending in a common image extension (+ optional query).
-const BARE_IMAGE_URL = /https?:\/\/\S+\.(?:jpe?g|png|webp|gif|bmp|svg)(?:\?\S*)?/gi;
+const BARE_IMAGE_URL =
+  /https?:\/\/\S+\.(?:jpe?g|png|webp|gif|bmp|svg)(?:\?\S*)?/gi;
 const SEPARATOR = /^-{3,}$/; // markdown horizontal rule line
 
 /**
@@ -63,4 +75,26 @@ export function stripImageMarkup(text: string): string {
   while (out.length && isEdge(out[out.length - 1])) out.pop();
 
   return out.join('\n');
+}
+
+/**
+ * Remove ALL emoji (and their skin-tone / variation-selector / ZWJ modifiers)
+ * from a reply, then tidy the horizontal whitespace the removal leaves behind
+ * (e.g. the double space where an inline emoji sat). Newlines are preserved so
+ * the blank-line bubble boundaries the Messenger pacing relies on are untouched;
+ * Arabic text, numerals, Latin, and punctuation are kept. Pure and best-effort.
+ *
+ * WHY deterministic: the brand voice forbids emoji, but the model can still slip
+ * one in. We strip here rather than trust the prompt — same posture as
+ * stripImageMarkup.
+ */
+export function stripEmojis(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(EMOJI_SEQUENCE, '')
+    .split('\n')
+    .map((line) =>
+      line.replace(/[ \t]{2,}/g, ' ').replace(/^[ \t]+|[ \t]+$/g, ''),
+    )
+    .join('\n');
 }

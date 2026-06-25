@@ -38,9 +38,14 @@ export const envSchema = z
     // Nucleus sampling [0..1]. (Provider note: prefer tuning either temperature
     // or topP, not both; Gemini accepts both simultaneously.)
     AGENT_TOP_P: z.coerce.number().min(0).max(1).default(0.8),
-    // Hard cap on tokens generated per step. Sales replies are short (carousels
-    // carry the imagery), so 512 is ample headroom while bounding cost/latency.
-    AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(512),
+    // Hard cap on tokens generated PER STEP (AI SDK v5). This budget must hold the
+    // visible Arabic reply (Arabic is ~2-3x more tokens than English) AND any
+    // tool-call JSON the step emits (e.g. a multi-item capture_order payload). The
+    // old 512 truncated tool calls and long order-confirmation turns, which Gemini
+    // surfaced as empty/cut-off replies — so the agent fell silent. 2048 gives
+    // ample headroom; replies still stay short via the persona, so cost/latency
+    // impact is negligible. Tunable per-env.
+    AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(2048),
 
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).

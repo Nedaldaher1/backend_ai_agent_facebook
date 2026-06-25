@@ -59,7 +59,7 @@ interface TemplatePayload {
 
 /** Arabic overflow note appended when more products matched than fit in the carousel. */
 function overflowNote(count: number): string {
-  return `وعندي كمان ${count} تصميم — قوليلي إذا بتحبي أعرضهنّ 🌸`;
+  return `وعندي كمان ${count} تصميم — قوليلي إذا بتحبي أعرضهنّ.`;
 }
 
 /**
