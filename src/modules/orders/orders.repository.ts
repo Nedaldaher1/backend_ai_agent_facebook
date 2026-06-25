@@ -53,9 +53,10 @@ export class OrdersRepository {
 
   /**
    * Returns the most-recent open draft for a conversation, or undefined when
-   * none exists. Used for idempotent re-capture: re-submitting the same order
-   * for an active conversation returns the existing draft rather than inserting
-   * a duplicate.
+   * none exists. Used so a re-capture edits the conversation's existing open
+   * draft in place (one editable cart per conversation) instead of inserting a
+   * duplicate order. The status is re-checked under a row lock inside
+   * replaceDraftContents before the draft is mutated.
    */
   async findOpenDraftByConversation(
     conversationId: string,
@@ -132,6 +133,57 @@ export class OrdersRepository {
               .returning()
           : [];
       return { order: createdOrder, items: createdItems };
+    });
+  }
+
+  /**
+   * Overwrite the contents of an OPEN DRAFT in one transaction. Under a row lock
+   * it re-checks the order is still a draft, then drops its line items, inserts
+   * the new ones, and updates the header totals/destination (same id;
+   * status/source/conversationId/createdAt untouched). Returns null when the row
+   * is no longer an open draft — e.g. an admin confirmed/canceled it between the
+   * lookup and here — so the caller inserts a fresh order instead of clobbering a
+   * committed one (the destructive delete below must never touch a non-draft).
+   *
+   * Reached by the agent re-capture path, and by POST /admin/orders when a
+   * conversationId that already has an open draft is supplied; in both cases the
+   * still-open cart is edited in place rather than duplicated.
+   */
+  async replaceDraftContents(
+    orderId: string,
+    header: Pick<
+      NewOrder,
+      'phone' | 'address' | 'unifiedSize' | 'subtotal' | 'deliveryFee' | 'total'
+    >,
+    items: NewOrderItemInput[],
+  ): Promise<{ order: Order; items: OrderItem[] } | null> {
+    return this.db.transaction(async (tx) => {
+      // Lock the row and re-assert it is still an open draft; a concurrent admin
+      // confirm/cancel must not be clobbered by the delete/overwrite below.
+      const [locked] = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1)
+        .for('update');
+      if (!locked || locked.status !== 'draft') {
+        return null;
+      }
+
+      await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
+      const createdItems =
+        items.length > 0
+          ? await tx
+              .insert(orderItems)
+              .values(items.map((item) => ({ ...item, orderId })))
+              .returning()
+          : [];
+      const [order] = await tx
+        .update(orders)
+        .set(header)
+        .where(eq(orders.id, orderId))
+        .returning();
+      return { order, items: createdItems };
     });
   }
 }

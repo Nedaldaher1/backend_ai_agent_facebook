@@ -46,6 +46,7 @@ describe('OrdersService', () => {
   const insertItems = jest.fn();
   const listItemsByOrder = jest.fn();
   const createWithItems = jest.fn();
+  const replaceDraftContents = jest.fn();
   const findOpenDraftByConversation = jest.fn();
 
   const repo = {
@@ -57,6 +58,7 @@ describe('OrdersService', () => {
     insertItems,
     listItemsByOrder,
     createWithItems,
+    replaceDraftContents,
     findOpenDraftByConversation,
   } as unknown as OrdersRepository;
 
@@ -198,6 +200,26 @@ describe('OrdersService', () => {
             ...it,
           })),
         }),
+      );
+    }
+
+    /** replaceDraftContents echoes the updated header+items as if persisted. */
+    function mockReplace() {
+      replaceDraftContents.mockImplementation(
+        (orderId: string, header: Record<string, unknown>, items: unknown[]) =>
+          Promise.resolve({
+            order: {
+              id: orderId,
+              status: 'draft',
+              source: 'messenger',
+              ...header,
+            },
+            items: (items as Record<string, unknown>[]).map((it, i) => ({
+              id: `i${i}`,
+              orderId,
+              ...it,
+            })),
+          }),
       );
     }
 
@@ -488,48 +510,132 @@ describe('OrdersService', () => {
       expect(createWithItems).not.toHaveBeenCalled();
     });
 
-    // --- idempotency ---
+    // --- re-capture edits the open draft in place (one cart per conversation) ---
 
-    it('returns the existing open draft without inserting when conversationId matches', async () => {
+    it('updates the existing open draft in place when a new capture differs (no duplicate insert)', async () => {
+      mockCatalog();
+      mockReplace();
+
       const existingOrder = makeOrder({
         id: 'o-existing',
         conversationId: 'conv-1',
         status: 'draft',
         source: 'messenger',
-        phone: '+962791234567',
-        address: 'عمّان',
-        subtotal: '45.000',
-        deliveryFee: '2.000',
-        total: '47.000',
-        currency: 'JOD',
       });
-      const existingItem = {
-        id: 'i-existing',
-        orderId: 'o-existing',
-        productId: PRODUCT_ID,
-        storageKey: 'img-1.jpg',
-        productName: 'عباية كلاسيك',
-        colorName: 'أسود',
-        size: 'M',
-        qty: 1,
-        unitPrice: '45.000',
-        lineTotal: '45.000',
-      };
-
       findOpenDraftByConversation.mockResolvedValue(existingOrder);
-      listItemsByOrder.mockResolvedValue([existingItem]);
+
+      // baseInput() resolves to size 'M', qty 2 → 90 + 2 delivery = 92.
+      const result = await service.captureCodOrder(baseInput());
+
+      // The open draft is edited in place; no duplicate order is inserted.
+      expect(createWithItems).not.toHaveBeenCalled();
+      expect(replaceDraftContents).toHaveBeenCalledTimes(1);
+
+      // Called with the existing draft id, the freshly-derived header, and the
+      // NEW items — never the stale ones.
+      const [orderId, header, itemRows] = replaceDraftContents.mock.calls[0];
+      expect(orderId).toBe('o-existing');
+      expect(header).toMatchObject({
+        phone: '+962791234567',
+        subtotal: '90.000',
+        deliveryFee: '2.000',
+        total: '92.000',
+      });
+      expect(itemRows).toEqual([
+        {
+          productId: PRODUCT_ID,
+          storageKey: 'img-1.jpg',
+          size: 'M',
+          qty: 2,
+          unitPrice: '45.000',
+          lineTotal: '90.000',
+          productName: 'عباية كلاسيك',
+          colorName: 'أسود',
+        },
+      ]);
+
+      // Confirmation keeps the same order id but reflects the new contents.
+      expect(result.order.id).toBe('o-existing');
+      expect(result.confirmation.orderId).toBe('o-existing');
+      expect(result.confirmation.total).toBe('92.000');
+      expect(result.confirmation.lines[0].size).toBe('M');
+      expect(result.confirmation.lines[0].quantity).toBe(2);
+    });
+
+    it('regression: a revised order (new colours + size) overwrites the stale draft', async () => {
+      // Mirrors the field report: an old draft (أسود/بنفسجي, size 1) must NOT be
+      // returned when the customer now wants أحمر/أخضر at size 2.
+      const product = makeProduct({
+        sizes: ['1', '2'],
+        imageUrls: ['img-red.jpg', 'img-black.jpg', 'img-green.jpg'],
+      });
+      checkAvailability.mockResolvedValue({ available: true, product });
+      resolveOrderImageKeyByColor.mockImplementation(
+        (_id: string, color: string) =>
+          Promise.resolve(
+            color === 'أحمر'
+              ? 'img-red.jpg'
+              : color === 'أخضر'
+                ? 'img-green.jpg'
+                : null,
+          ),
+      );
+      getImageColorName.mockImplementation((_id: string, key: string) =>
+        Promise.resolve(key === 'img-red.jpg' ? 'أحمر' : 'أخضر'),
+      );
+      mockReplace();
+
+      const staleDraft = makeOrder({
+        id: 'o-stale',
+        conversationId: 'conv-1',
+        status: 'draft',
+        source: 'messenger',
+      });
+      findOpenDraftByConversation.mockResolvedValue(staleDraft);
+
+      const result = await service.captureCodOrder({
+        conversationId: 'conv-1',
+        source: 'messenger',
+        phone: '0791234567',
+        address: 'عمّان، الصويفية',
+        items: [
+          { productId: PRODUCT_ID, color: 'أحمر', size: '2', qty: 1 },
+          { productId: PRODUCT_ID, color: 'أخضر', size: '2', qty: 1 },
+        ],
+      });
+
+      expect(createWithItems).not.toHaveBeenCalled();
+      expect(replaceDraftContents).toHaveBeenCalledTimes(1);
+
+      // The lines reflect the NEW colours and size 2 — never the stale draft.
+      expect(result.order.id).toBe('o-stale');
+      expect(result.confirmation.lines).toHaveLength(2);
+      expect(result.confirmation.lines.map((l) => l.size)).toEqual(['2', '2']);
+      expect(result.confirmation.lines.map((l) => l.colorName)).toEqual([
+        'أحمر',
+        'أخضر',
+      ]);
+    });
+
+    it('falls back to a new order when the open draft was confirmed concurrently (replace returns null)', async () => {
+      mockCatalog();
+      mockPersist();
+      const existingOrder = makeOrder({
+        id: 'o-existing',
+        conversationId: 'conv-1',
+        status: 'draft',
+        source: 'messenger',
+      });
+      findOpenDraftByConversation.mockResolvedValue(existingOrder);
+      // The row is no longer an open draft under the lock → replace bails (null).
+      replaceDraftContents.mockResolvedValue(null);
 
       const result = await service.captureCodOrder(baseInput());
 
-      // Must NOT insert a new order
-      expect(createWithItems).not.toHaveBeenCalled();
-      // Returns the existing order's confirmation
-      expect(result.order.id).toBe('o-existing');
-      expect(result.confirmation.orderId).toBe('o-existing');
-      expect(result.confirmation.subtotal).toBe('45.000');
-      expect(result.confirmation.total).toBe('47.000');
-      expect(result.confirmation.lines[0].productName).toBe('عباية كلاسيك');
-      expect(result.confirmation.lines[0].quantity).toBe(1);
+      expect(replaceDraftContents).toHaveBeenCalledTimes(1);
+      expect(createWithItems).toHaveBeenCalledTimes(1);
+      // Inserted as a fresh order (mockPersist → 'o1'), not the stale draft.
+      expect(result.order.id).toBe('o1');
     });
 
     it('creates a new order when no open draft exists for the conversation', async () => {
