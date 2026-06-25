@@ -49,8 +49,9 @@ import { AgentService, type IncomingMessage } from '../agent.service';
 import { DebounceService } from '../debounce/debounce.service';
 import { mergeTurns } from '../debounce/merge-turns';
 import { MessengerSignatureGuard } from './messenger-signature.guard';
-import { MessengerClient } from './messenger.client';
+import { MessengerClient, type SenderAction } from './messenger.client';
 import { formatMessengerReply, type MessengerCardProduct } from './messenger.formatter';
+import { splitIntoBubbles, typingDelayMs, sleep } from './reply-pacing.util';
 import { extractReferral, normalizeEvent } from './messenger.normalizer';
 import type { InboundMessage, NormalizedReferral, RawMessagingEvent } from './messenger.types';
 import {
@@ -68,6 +69,14 @@ const FALLBACK_ARABIC =
 export class MessengerWebhookController {
   private readonly logger = new Logger(MessengerWebhookController.name);
   private readonly verifyToken: string | undefined;
+  /** Human-like reply pacing config (resolved once; see env.schema). */
+  private readonly pacing: {
+    enabled: boolean;
+    msPerChar: number;
+    minMs: number;
+    maxMs: number;
+    maxBubbles: number;
+  };
 
   constructor(
     private readonly agent: AgentService,
@@ -79,6 +88,23 @@ export class MessengerWebhookController {
   ) {
     this.verifyToken =
       config.get<string>('MESSENGER_VERIFY_TOKEN') || undefined;
+    // Read a numeric env robustly: ConfigService returns numbers in prod (zod
+    // coercion) but plain strings under test stubs — coerce + fall back.
+    const numEnv = (key: string, def: number): number => {
+      const raw = config.get(key);
+      if (raw == null) return def;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : def;
+    };
+    this.pacing = {
+      // Default ON: only the literal 'false' disables (single-message mode).
+      enabled:
+        config.get<string>('MESSENGER_HUMAN_PACING_ENABLED') !== 'false',
+      msPerChar: numEnv('MESSENGER_TYPING_MS_PER_CHAR', 45),
+      minMs: numEnv('MESSENGER_TYPING_MIN_MS', 700),
+      maxMs: numEnv('MESSENGER_TYPING_MAX_MS', 2500),
+      maxBubbles: numEnv('MESSENGER_MAX_BUBBLES', 4),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -224,9 +250,7 @@ export class MessengerWebhookController {
   ): Promise<void> {
     try {
       // Step 1: mark_seen (best-effort)
-      await this.messengerClient.senderAction(psid, 'mark_seen').catch((e) =>
-        this.logger.warn(`mark_seen failed for ${psid}: ${e}`),
-      );
+      await this.safeTyping(psid, 'mark_seen');
 
       // Step 2: run the agent
       const reply = await this.agent.handleMessage(mergeTurns(items));
@@ -238,15 +262,19 @@ export class MessengerWebhookController {
       }
 
       if (reply.reply) {
-        // typing_on (best-effort)
-        await this.messengerClient.senderAction(psid, 'typing_on').catch((e) =>
-          this.logger.warn(`typing_on failed for ${psid}: ${e}`),
-        );
+        // Deliver the reply as human-like bubbles: split on blank lines and send
+        // each as its own message with a typing pause before it. When pacing is
+        // disabled the whole reply goes out as one message (legacy behavior).
+        const bubbles = this.pacing.enabled
+          ? splitIntoBubbles(reply.reply, this.pacing.maxBubbles)
+          : [reply.reply];
+        for (const bubble of bubbles) {
+          await this.safeTyping(psid, 'typing_on');
+          if (this.pacing.enabled) await sleep(this.bubbleDelay(bubble.length));
+          await this.messengerClient.sendText(psid, bubble);
+        }
 
-        // Send reply text
-        await this.messengerClient.sendText(psid, reply.reply);
-
-        // Send product carousel (if any)
+        // Send product carousel (if any), after the text bubbles.
         if (reply.products && reply.products.length > 0) {
           const cards = await this.enrichWithImages(reply.products);
           const payloads = formatMessengerReply({
@@ -275,9 +303,26 @@ export class MessengerWebhookController {
         }
 
         // typing_off (best-effort)
-        await this.messengerClient.senderAction(psid, 'typing_off').catch((e) =>
-          this.logger.warn(`typing_off failed for ${psid}: ${e}`),
-        );
+        await this.safeTyping(psid, 'typing_off');
+      }
+
+      // Deliver product photos as standalone image messages (one per photo).
+      // The agent calls get_product_media to SHOW the customer a product's
+      // pictures; we send each here (Meta fetches the public image URL). Gated on
+      // reply.images only (independent of reply.reply). Per-image best-effort: a
+      // single failed image is logged and the remaining photos still send. Each
+      // photo gets a typing pause too, for consistent human pacing.
+      if (reply.images && reply.images.length > 0) {
+        for (const url of reply.images) {
+          await this.safeTyping(psid, 'typing_on');
+          if (this.pacing.enabled) await sleep(this.bubbleDelay(0));
+          try {
+            await this.messengerClient.sendImage(psid, url);
+          } catch (e) {
+            this.logger.warn(`sendImage failed for ${psid}: ${e}`);
+          }
+        }
+        await this.safeTyping(psid, 'typing_off');
       }
     } catch (err) {
       // Never leave the customer silent — try the graceful Arabic fallback.
@@ -302,6 +347,25 @@ export class MessengerWebhookController {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Best-effort sender action (mark_seen / typing_on / typing_off): a failure is
+   * logged and never blocks the actual message send.
+   */
+  private async safeTyping(psid: string, action: SenderAction): Promise<void> {
+    await this.messengerClient
+      .senderAction(psid, action)
+      .catch((e) => this.logger.warn(`${action} failed for ${psid}: ${e}`));
+  }
+
+  /** Typing-simulation delay (ms) for a message of the given char length. */
+  private bubbleDelay(length: number): number {
+    return typingDelayMs(length, {
+      perChar: this.pacing.msPerChar,
+      min: this.pacing.minMs,
+      max: this.pacing.maxMs,
+    });
+  }
 
   /** Map an InboundMessage to AgentService IncomingMessage. */
   private toIncoming(msg: InboundMessage): IncomingMessage {

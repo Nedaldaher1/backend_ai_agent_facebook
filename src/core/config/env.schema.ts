@@ -67,6 +67,13 @@ export const envSchema = z
     // arriving (milliseconds). Keep well below Meta's webhook 20-second timeout.
     DEBOUNCE_MAX_MS: z.coerce.number().int().positive().default(8000),
 
+    // Mastra framework logger level. 'info' is quiet; 'debug' surfaces Mastra's
+    // internal step / tool-registration traces. Per-turn tool-call summary lines
+    // are logged by AgentService regardless of this. 'silent' disables Mastra logs.
+    MASTRA_LOG_LEVEL: z
+      .enum(['debug', 'info', 'warn', 'error', 'silent'])
+      .default('info'),
+
     // --- Meta Messenger Platform (direct Graph API, v25.0) ---
     // Token echoed during webhook verification (GET /webhook/messenger):
     // hub.verify_token must equal this. You choose the value and set the same
@@ -84,6 +91,26 @@ export const envSchema = z
     MESSENGER_GRAPH_VERSION: z.string().default('v25.0'),
     // Optional ads token to resolve ad_id → name/adset/campaign for attribution.
     META_ADS_ACCESS_TOKEN: z.string().optional(),
+
+    // --- Human-like reply pacing (Messenger bubbles) ---
+    // Deliver the agent's reply as several short bubbles (split on blank lines)
+    // with a typing pause between them, so it reads human. Set to 'false' to send
+    // one message (the legacy behavior). Any other value (or unset) = enabled.
+    MESSENGER_HUMAN_PACING_ENABLED: z.string().optional(),
+    // Typing-simulation speed: delay per character of the next bubble (ms).
+    MESSENGER_TYPING_MS_PER_CHAR: z.coerce
+      .number()
+      .int()
+      .nonnegative()
+      .default(45),
+    // Clamp for the per-bubble typing delay (ms): floor (also used per image).
+    MESSENGER_TYPING_MIN_MS: z.coerce.number().int().nonnegative().default(700),
+    // Clamp ceiling for the per-bubble typing delay (ms) — keeps the total
+    // delivery time bounded even for long replies.
+    MESSENGER_TYPING_MAX_MS: z.coerce.number().int().positive().default(2500),
+    // Max bubbles per reply; extra paragraphs fold into the last bubble so we
+    // never spam the customer.
+    MESSENGER_MAX_BUBBLES: z.coerce.number().int().positive().default(4),
 
     // --- Cloudflare R2 (required when STORAGE_DRIVER='r2') ---
     // Account ID (encoded in the endpoint; included here for documentation).

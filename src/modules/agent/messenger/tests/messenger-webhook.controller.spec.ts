@@ -57,6 +57,7 @@ interface MakeControllerOpts {
     reply: string;
     products?: Array<{ id: string; name: string; price: string }>;
     productOverflow?: number;
+    images?: string[];
     ran?: boolean;
     aiState?: 'bot' | 'human' | 'paused';
   };
@@ -64,6 +65,8 @@ interface MakeControllerOpts {
   /** Pass null to explicitly omit MESSENGER_VERIFY_TOKEN from config. */
   verifyToken?: string | null;
   agentThrows?: boolean;
+  /** Set false to disable human pacing (single-message mode). Default: enabled. */
+  pacingEnabled?: boolean;
 }
 
 function makeController(opts: MakeControllerOpts) {
@@ -103,13 +106,24 @@ function makeController(opts: MakeControllerOpts) {
     sendText: jest.fn().mockResolvedValue(undefined),
     senderAction: jest.fn().mockResolvedValue(undefined),
     sendTemplate: jest.fn().mockResolvedValue(undefined),
+    sendImage: jest.fn().mockResolvedValue(undefined),
   } as unknown as MessengerClient;
 
-  // Build the config env: verifyToken=null means omit the key entirely.
-  const configEnv: Record<string, string | undefined> =
-    opts.verifyToken === null
-      ? {}
-      : { MESSENGER_VERIFY_TOKEN: opts.verifyToken ?? VERIFY_TOKEN };
+  // Build the config env. Zero-delay pacing by default so the async batch
+  // resolves instantly (we still exercise the split + send choreography).
+  const configEnv: Record<string, string | undefined> = {
+    MESSENGER_TYPING_MS_PER_CHAR: '0',
+    MESSENGER_TYPING_MIN_MS: '0',
+    MESSENGER_TYPING_MAX_MS: '0',
+    MESSENGER_MAX_BUBBLES: '10',
+  };
+  // verifyToken=null means omit the key entirely.
+  if (opts.verifyToken !== null) {
+    configEnv.MESSENGER_VERIFY_TOKEN = opts.verifyToken ?? VERIFY_TOKEN;
+  }
+  if (opts.pacingEnabled === false) {
+    configEnv.MESSENGER_HUMAN_PACING_ENABLED = 'false';
+  }
 
   const config = makeConfig(configEnv);
 
@@ -467,6 +481,59 @@ describe('MessengerWebhookController — async processBatch worker', () => {
     expect(messengerClient.sendText).toHaveBeenCalledWith('PSID-1', 'أهلاً');
   });
 
+  it('splits a multi-paragraph reply into separate message bubbles, in order', async () => {
+    const { controller, messengerClient, flush } = makeController({
+      reply: {
+        reply: 'أهلاً وسهلاً 🌸\n\nبتدوري على لون معيّن؟\n\nعندنا أحمر وأسود',
+        ran: true,
+        aiState: 'bot',
+      },
+    });
+
+    const req = makeBody() as unknown as FastifyRequest;
+    controller.handleWebhook(req);
+    await flush();
+
+    expect(messengerClient.sendText).toHaveBeenCalledTimes(3);
+    expect(messengerClient.sendText).toHaveBeenNthCalledWith(
+      1,
+      'PSID-1',
+      'أهلاً وسهلاً 🌸',
+    );
+    expect(messengerClient.sendText).toHaveBeenNthCalledWith(
+      2,
+      'PSID-1',
+      'بتدوري على لون معيّن؟',
+    );
+    expect(messengerClient.sendText).toHaveBeenNthCalledWith(
+      3,
+      'PSID-1',
+      'عندنا أحمر وأسود',
+    );
+    // Each bubble is preceded by its own typing_on (one per bubble).
+    const typingOns = (
+      messengerClient.senderAction as jest.Mock
+    ).mock.calls.filter((c: unknown[]) => c[1] === 'typing_on');
+    expect(typingOns.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('sends the whole reply as one message when pacing is disabled', async () => {
+    const { controller, messengerClient, flush } = makeController({
+      reply: { reply: 'سطر أول\n\nسطر ثاني', ran: true, aiState: 'bot' },
+      pacingEnabled: false,
+    });
+
+    const req = makeBody() as unknown as FastifyRequest;
+    controller.handleWebhook(req);
+    await flush();
+
+    expect(messengerClient.sendText).toHaveBeenCalledTimes(1);
+    expect(messengerClient.sendText).toHaveBeenCalledWith(
+      'PSID-1',
+      'سطر أول\n\nسطر ثاني',
+    );
+  });
+
   it('does NOT call sendText when ran=false (ai_state is not bot)', async () => {
     const { controller, messengerClient, flush } = makeController({
       reply: { reply: '', ran: false, aiState: 'human' },
@@ -527,6 +594,66 @@ describe('MessengerWebhookController — async processBatch worker', () => {
     );
     const [[, elements]] = (messengerClient.sendTemplate as jest.Mock).mock.calls;
     expect((elements as Array<{ image_url?: string }>)[0].image_url).toBeUndefined();
+  });
+
+  it('sends each product photo as its own image message when reply.images is present', async () => {
+    const { controller, messengerClient, flush } = makeController({
+      reply: {
+        reply: 'تفضلي صور العباية',
+        images: ['https://pub.r2.dev/a.jpeg', 'https://pub.r2.dev/b.jpeg'],
+        ran: true,
+        aiState: 'bot',
+      },
+    });
+
+    const req = makeBody() as unknown as FastifyRequest;
+    controller.handleWebhook(req);
+    await flush();
+
+    expect(messengerClient.sendImage).toHaveBeenCalledTimes(2);
+    expect(messengerClient.sendImage).toHaveBeenNthCalledWith(
+      1,
+      'PSID-1',
+      'https://pub.r2.dev/a.jpeg',
+    );
+    expect(messengerClient.sendImage).toHaveBeenNthCalledWith(
+      2,
+      'PSID-1',
+      'https://pub.r2.dev/b.jpeg',
+    );
+  });
+
+  it('does NOT call sendImage when reply.images is absent', async () => {
+    const { controller, messengerClient, flush } = makeController({
+      reply: { reply: 'أهلاً', ran: true, aiState: 'bot' },
+    });
+
+    const req = makeBody() as unknown as FastifyRequest;
+    controller.handleWebhook(req);
+    await flush();
+
+    expect(messengerClient.sendImage).not.toHaveBeenCalled();
+  });
+
+  it('keeps sending the remaining photos when one sendImage fails (per-image best-effort)', async () => {
+    const { controller, messengerClient, flush } = makeController({
+      reply: {
+        reply: 'صور',
+        images: ['https://pub.r2.dev/a.jpeg', 'https://pub.r2.dev/b.jpeg'],
+        ran: true,
+        aiState: 'bot',
+      },
+    });
+    (messengerClient.sendImage as jest.Mock)
+      .mockRejectedValueOnce(new Error('image 1 down'))
+      .mockResolvedValueOnce(undefined);
+
+    const req = makeBody() as unknown as FastifyRequest;
+    controller.handleWebhook(req);
+    // The turn must not reject even though one image send failed.
+    await expect(flush()).resolves.toBeUndefined();
+
+    expect(messengerClient.sendImage).toHaveBeenCalledTimes(2);
   });
 
   it('sends the fallback Arabic text when the agent throws', async () => {
