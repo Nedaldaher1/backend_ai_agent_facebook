@@ -46,6 +46,13 @@ export const envSchema = z
     // ample headroom; replies still stay short via the persona, so cost/latency
     // impact is negligible. Tunable per-env.
     AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(2048),
+    // Max sequential tool-calling round-trips per customer message (Mastra
+    // maxSteps). Each step re-sends the full prompt (instructions + 12 tool
+    // schemas + history), so this directly multiplies per-message token cost.
+    // Mastra's default is 5; a normal flow (search → media → reply) fits in ~3.
+    // Lower = cheaper but can truncate a complex multi-item turn (finishReason
+    // then shows the step limit) — tune from the per-turn usage log. Per-env.
+    AGENT_MAX_STEPS: z.coerce.number().int().positive().default(4),
 
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).

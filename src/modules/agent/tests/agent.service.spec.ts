@@ -863,6 +863,35 @@ describe('AgentService', () => {
       expect(result.reply).toBe('رد مباشر');
     });
 
+    it('does NOT retry on a clean empty stop — goes straight to fallback (token-saving)', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+
+      // finishReason 'stop' with empty text = the model deliberately said nothing;
+      // a retry would just burn another full generation, so use the fallback.
+      fakeSalesAgent.generate.mockResolvedValueOnce({
+        text: '',
+        finishReason: 'stop',
+      });
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
+      expect(result.reply).toBe(FALLBACK_REPLY);
+    });
+
+    it('forwards the configured maxSteps to generate()', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+
+      fakeSalesAgent.generate.mockResolvedValueOnce({ text: 'تمام' });
+
+      await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      const opts = fakeSalesAgent.generate.mock.calls[0][1];
+      expect(opts.maxSteps).toBe(4);
+    });
+
     it('strips emoji from the reply deterministically', async () => {
       const conversations = makeConversationsMock();
       const service = make(conversations);

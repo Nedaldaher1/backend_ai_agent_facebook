@@ -135,6 +135,22 @@ interface GenerateResult {
       args?: unknown;
     };
   }>;
+  /**
+   * Token usage for the turn. Field names vary across AI SDK versions/providers
+   * (v5: inputTokens/outputTokens/totalTokens; some report prompt/completion).
+   * `cachedInputTokens` reflects the Gemini implicit cache (billed 0.25x via
+   * OpenRouter). All optional — read defensively for the per-turn usage log.
+   */
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    cachedInputTokens?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+  };
+  /** LLM round-trips (tool-calling steps) the turn took, when the SDK reports it. */
+  steps?: unknown[];
 }
 
 /**
@@ -212,6 +228,13 @@ export class AgentService implements OnModuleInit {
   };
 
   /**
+   * Max sequential tool-calling round-trips per customer message (Mastra
+   * maxSteps). Each step re-sends the full prompt, so this bounds per-message
+   * token cost. Config-driven (AGENT_MAX_STEPS); set in onModuleInit.
+   */
+  private maxSteps!: number;
+
+  /**
    * The Mastra Memory instance (working memory + thread/message store). Held so
    * the admin "reset conversation" action can clear a customer's memory.
    */
@@ -251,6 +274,9 @@ export class AgentService implements OnModuleInit {
         this.config.get<string>('AGENT_MAX_OUTPUT_TOKENS') ?? '2048',
       ),
     };
+    // Cap on tool-calling round-trips per message (see field doc). Number()
+    // guards a string slipping through the mocked-config path in tests.
+    this.maxSteps = Number(this.config.get<string>('AGENT_MAX_STEPS') ?? '4');
     // Mastra framework logger level (validated enum, defaults to 'info' in the
     // env schema). Controls Mastra's own diagnostics; per-turn tool-call lines
     // are logged by logToolCalls regardless.
@@ -275,7 +301,7 @@ export class AgentService implements OnModuleInit {
 
     const { temperature, topP, maxOutputTokens } = this.modelSettings;
     this.logger.log(
-      `Mastra ready: schema=mastra, model=${modelId}, temp=${temperature}, topP=${topP}, maxOutputTokens=${maxOutputTokens}, logLevel=${logLevel}, workingMemory=resource, tools=11, instructions=dynamic`,
+      `Mastra ready: schema=mastra, model=${modelId}, temp=${temperature}, topP=${topP}, maxOutputTokens=${maxOutputTokens}, maxSteps=${this.maxSteps}, logLevel=${logLevel}, workingMemory=resource, tools=11, instructions=dynamic`,
     );
   }
 
@@ -515,6 +541,9 @@ export class AgentService implements OnModuleInit {
       // each generate() since v1.42's Agent ctor has no top-level modelSettings
       // (it lives on execution options / fallback array).
       modelSettings: this.modelSettings,
+      // Bound the tool-calling round-trips for this message; each step re-sends
+      // the full prompt, so this directly caps per-message token cost.
+      maxSteps: this.maxSteps,
       ...(context ? { context } : {}),
     };
 
@@ -538,14 +567,21 @@ export class AgentService implements OnModuleInit {
     // escalate_to_human) are idempotent, so the retry never double-writes.
     // finishReason is logged (see logToolCalls) to reveal the cause.
     if (!replyText.trim()) {
-      this.logger.warn(
-        `agent turn [${resourceId}] empty reply (finishReason=${result.finishReason ?? 'unknown'}) — retrying once`,
-      );
-      result = await this.salesAgent.generate(input.text, genOptions);
-      replyText = stripEmojis(stripImageMarkup(result.text ?? ''));
+      const reason = result.finishReason ?? 'unknown';
+      // Retry only for failure modes a re-run can fix (length truncation, a
+      // tool-call step, or a transient blip). A clean 'stop' with empty text
+      // means the model deliberately produced nothing — retrying would just burn
+      // another full generation, so skip straight to the fallback.
+      if (reason !== 'stop') {
+        this.logger.warn(
+          `agent turn [${resourceId}] empty reply (finishReason=${reason}) — retrying once`,
+        );
+        result = await this.salesAgent.generate(input.text, genOptions);
+        replyText = stripEmojis(stripImageMarkup(result.text ?? ''));
+      }
       if (!replyText.trim()) {
         this.logger.warn(
-          `agent turn [${resourceId}] still empty after retry (finishReason=${result.finishReason ?? 'unknown'}) — using fallback`,
+          `agent turn [${resourceId}] empty reply (finishReason=${result.finishReason ?? 'unknown'}) — using fallback`,
         );
         replyText = FALLBACK_REPLY;
       }
@@ -711,7 +747,20 @@ export class AgentService implements OnModuleInit {
       // finishReason + reply length make a truncated/empty turn diagnosable: an
       // empty turn now logs e.g. "finishReason=length textLen=0" instead of a
       // bare "(none)" that hides why no reply went out.
-      const meta = `finishReason=${result.finishReason ?? 'unknown'} textLen=${(result.text ?? '').length}`;
+      // Per-turn token usage makes consumption visible (the dominant cost is the
+      // re-sent prompt × steps). Field names vary by SDK/provider, so read
+      // defensively; cached input tokens (Gemini implicit cache, 0.25x) show when
+      // the provider reports them.
+      const u = result.usage;
+      const usageStr = u
+        ? ` tokens(in=${u.inputTokens ?? u.promptTokens ?? '?'}${
+            u.cachedInputTokens ? ` cached=${u.cachedInputTokens}` : ''
+          } out=${u.outputTokens ?? u.completionTokens ?? '?'} total=${u.totalTokens ?? '?'})`
+        : '';
+      const stepsStr = Array.isArray(result.steps)
+        ? ` steps=${result.steps.length}`
+        : '';
+      const meta = `finishReason=${result.finishReason ?? 'unknown'} textLen=${(result.text ?? '').length}${stepsStr}${usageStr}`;
 
       const calls = result.toolResults ?? [];
       if (calls.length === 0) {
