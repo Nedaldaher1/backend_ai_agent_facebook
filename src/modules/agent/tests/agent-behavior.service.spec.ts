@@ -190,6 +190,9 @@ describe('AgentBehaviorService', () => {
       expect(result).toContain('احفظيها في الـ working memory');
       expect(result).toContain('لا تخترعي أسعاراً');
       expect(result).toContain('لا تدّعي أن الطلب اكتمل');
+      // Knowledge-first directive: consult get_knowledge before answering/acting.
+      expect(result).toContain('المعرفة أولاً');
+      expect(result).toContain('get_knowledge');
     });
 
     it('caches the result and calls findActive only once on two calls', async () => {
@@ -302,6 +305,11 @@ describe('AgentBehaviorService', () => {
       expect(out).toContain('كأصناف منفصلة');
       // The agent reads back an itemized summary before capturing the order.
       expect(out).toContain('ملخص');
+      // Each item's colour is passed BY NAME to capture_order — the selector that
+      // pins the right variant image (fixes all-items-take-the-primary-colour).
+      expect(out).toContain('(color)');
+      // And the agent must never guess a colour.
+      expect(out).toContain('لا تخمّني لوناً');
     });
 
     it('contains escalation guidance referencing escalate_to_human', async () => {

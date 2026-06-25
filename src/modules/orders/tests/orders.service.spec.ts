@@ -62,9 +62,11 @@ describe('OrdersService', () => {
 
   const checkAvailability = jest.fn();
   const getImageColorName = jest.fn();
+  const resolveOrderImageKeyByColor = jest.fn();
   const products = {
     checkAvailability,
     getImageColorName,
+    resolveOrderImageKeyByColor,
   } as unknown as ProductsService;
 
   const service = new OrdersService(repo, products);
@@ -548,6 +550,144 @@ describe('OrdersService', () => {
 
       expect(findOpenDraftByConversation).not.toHaveBeenCalled();
       expect(createWithItems).toHaveBeenCalledTimes(1);
+    });
+
+    // --- per-item colour resolution (color → variant image) ---
+
+    /** Multi-colour product, one image per colour — the reported-bug shape. */
+    const multiColorProduct = () =>
+      makeProduct({
+        name: 'عباية صيفي تطريز زهور',
+        imageUrls: ['red.jpg', 'blue.jpg', 'green.jpg'],
+        sizes: ['1', '2'],
+      });
+
+    it('maps each item to its chosen colour image (different colours → different images/colours)', async () => {
+      checkAvailability.mockResolvedValue({
+        available: true,
+        product: multiColorProduct(),
+        colors: ['أحمر', 'أزرق غامق', 'أخضر'],
+      });
+      resolveOrderImageKeyByColor.mockImplementation((_pid, color) =>
+        Promise.resolve(
+          color === 'أحمر'
+            ? 'red.jpg'
+            : color === 'أزرق غامق'
+              ? 'blue.jpg'
+              : null,
+        ),
+      );
+      getImageColorName.mockImplementation((_pid, key) =>
+        Promise.resolve(key === 'red.jpg' ? 'أحمر' : 'ازرق غامق'),
+      );
+      mockPersist();
+
+      const result = await service.captureCodOrder({
+        ...baseInput(),
+        items: [
+          { productId: PRODUCT_ID, color: 'أحمر', size: '1', qty: 1 },
+          { productId: PRODUCT_ID, color: 'أزرق غامق', size: '2', qty: 1 },
+        ],
+      });
+
+      const [, itemRows] = createWithItems.mock.calls[0];
+      expect(
+        itemRows.map((r: Record<string, unknown>) => r.storageKey),
+      ).toEqual(['red.jpg', 'blue.jpg']);
+      expect(
+        itemRows.map((r: Record<string, unknown>) => r.colorName),
+      ).toEqual(['أحمر', 'ازرق غامق']);
+      expect(result.confirmation.lines.map((l) => l.colorName)).toEqual([
+        'أحمر',
+        'ازرق غامق',
+      ]);
+    });
+
+    it('refuses (no primary-colour fallback) when the chosen colour is unavailable', async () => {
+      checkAvailability.mockResolvedValue({
+        available: true,
+        product: multiColorProduct(),
+        colors: ['أحمر', 'أزرق غامق', 'أخضر'],
+      });
+      resolveOrderImageKeyByColor.mockResolvedValue(null);
+      mockPersist();
+
+      await expect(
+        service.captureCodOrder({
+          ...baseInput(),
+          items: [{ productId: PRODUCT_ID, color: 'ذهبي', size: '1', qty: 1 }],
+        }),
+      ).rejects.toThrow(/اللون "ذهبي" غير متوفر/);
+      expect(createWithItems).not.toHaveBeenCalled();
+    });
+
+    it('lets colour take precedence over an explicit storage_key', async () => {
+      checkAvailability.mockResolvedValue({
+        available: true,
+        product: multiColorProduct(),
+        colors: ['أحمر', 'أزرق غامق'],
+      });
+      resolveOrderImageKeyByColor.mockResolvedValue('blue.jpg');
+      getImageColorName.mockResolvedValue('ازرق غامق');
+      mockPersist();
+
+      await service.captureCodOrder({
+        ...baseInput(),
+        items: [
+          // Agent also (wrongly) sent the primary red key — colour must win.
+          {
+            productId: PRODUCT_ID,
+            color: 'أزرق غامق',
+            storageKey: 'red.jpg',
+            size: '1',
+            qty: 1,
+          },
+        ],
+      });
+
+      const [, itemRows] = createWithItems.mock.calls[0];
+      expect(itemRows[0].storageKey).toBe('blue.jpg');
+      expect(resolveOrderImageKeyByColor).toHaveBeenCalledWith(
+        PRODUCT_ID,
+        'أزرق غامق',
+      );
+    });
+
+    it('refuses a multi-image product when neither colour nor storage_key is given', async () => {
+      checkAvailability.mockResolvedValue({
+        available: true,
+        product: multiColorProduct(),
+        colors: ['أحمر', 'أزرق غامق'],
+      });
+      mockPersist();
+
+      await expect(
+        service.captureCodOrder({
+          ...baseInput(),
+          items: [{ productId: PRODUCT_ID, size: '1', qty: 1 }],
+        }),
+      ).rejects.toThrow(/يرجى تحديد لون/);
+      expect(createWithItems).not.toHaveBeenCalled();
+      expect(resolveOrderImageKeyByColor).not.toHaveBeenCalled();
+    });
+
+    it('uses the only image for a single-image product with no colour (back-compat)', async () => {
+      checkAvailability.mockResolvedValue({
+        available: true,
+        product: makeProduct({ imageUrls: ['only.jpg'], sizes: ['M'] }),
+      });
+      getImageColorName.mockResolvedValue('أسود');
+      mockPersist();
+
+      const result = await service.captureCodOrder({
+        ...baseInput(),
+        items: [{ productId: PRODUCT_ID, size: 'M', qty: 1 }],
+      });
+
+      const [, itemRows] = createWithItems.mock.calls[0];
+      expect(itemRows[0].storageKey).toBe('only.jpg');
+      expect(result.confirmation.lines[0].colorName).toBe('أسود');
+      expect(resolveOrderImageKeyByColor).not.toHaveBeenCalled();
     });
   });
 

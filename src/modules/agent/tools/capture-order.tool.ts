@@ -10,9 +10,11 @@
  *    channel to the order `source`, and delegates ALL business logic to
  *    OrdersService.captureCodOrder (per-item catalog resolution, size validation,
  *    price snapshots, delivery fee, totals, atomic persistence).
- *  - The agent picks each item by `storage_key` (the chosen product image), which
- *    identifies the exact model + its color via product_image_colors. No color or
- *    price is accepted from the agent — both are resolved/snapshotted server-side.
+ *  - The agent picks each item's colour by NAME (`color`) — the primary selector.
+ *    The service resolves it to the matching variant image via product_image_colors
+ *    and snapshots the canonical colour. `storage_key` is an optional fallback
+ *    (admin / image-led). Price is never accepted from the agent — snapshotted
+ *    server-side. An unresolvable colour is refused (no primary-colour fallback).
  *  - All money is returned as JOD strings (numeric, never float). On ANY
  *    validation failure the service throws a clear Arabic error and NO order is
  *    written — partial orders are never created.
@@ -27,9 +29,18 @@ const inputSchema = z.object({
     .array(
       z.object({
         product_id: z.string().describe('معرّف المنتج (UUID)'),
+        color: z
+          .string()
+          .optional()
+          .describe(
+            'اسم اللون الذي اختارته الزبونة لهذا الصنف كما لفظته (مثلاً "أزرق غامق"). هذا هو المُحدِّد الأساسي للون — مرّريه بدل مفتاح الصورة؛ النظام يطابقه مع صورة هذا اللون ويثبّت اللون تلقائياً. مطلوب للموديلات متعددة الألوان.',
+          ),
         storage_key: z
           .string()
-          .describe('مفتاح صورة المنتج المختارة (يحدد الموديل ولونه)'),
+          .optional()
+          .describe(
+            'مفتاح صورة المنتج (اختياري، للحالات المتقدمة فقط مثل تثبيت صورة بعينها). على المسار العادي مرّري color بدلاً منه.',
+          ),
         size: z
           .string()
           .optional()
@@ -88,7 +99,7 @@ export function buildCaptureOrderTool(orders: OrdersService) {
   return createTool({
     id: 'capture_order',
     description:
-      'سجّلي طلب دفع عند الاستلام (COD) بعد التأكد من اختيار المنتجات والمقاسات والعنوان. الأسعار والمجاميع تُحسب تلقائياً من الكتالوج — لا تذكري سعراً من عندك. لا تدّعي أن الطلب اكتمل إذا فشلت الأداة.',
+      'سجّلي طلب دفع عند الاستلام (COD) بعد التأكد من اختيار المنتجات والمقاسات والعنوان. مرّري لكل صنف اسم اللون الذي اختارته الزبونة (color) كما لفظته. الأسعار والمجاميع تُحسب تلقائياً من الكتالوج — لا تذكري سعراً من عندك. لا تدّعي أن الطلب اكتمل إذا فشلت الأداة.',
     inputSchema,
     outputSchema,
 
@@ -116,6 +127,7 @@ export function buildCaptureOrderTool(orders: OrdersService) {
         unifiedSize: input.unified_size,
         items: input.items.map((i) => ({
           productId: i.product_id,
+          color: i.color,
           storageKey: i.storage_key,
           size: i.size,
           // `.default(1)` is applied by zod on the parsed input; default again

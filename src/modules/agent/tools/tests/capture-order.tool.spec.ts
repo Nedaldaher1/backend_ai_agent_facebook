@@ -85,6 +85,36 @@ describe('buildCaptureOrderTool', () => {
       });
     });
 
+    it('passes the per-item colour through to the service (colour is the selector)', async () => {
+      const safeCapture = jest.fn().mockResolvedValue(HAPPY_SAFE_RESULT);
+      const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
+
+      await tool.execute(
+        {
+          items: [
+            { product_id: 'p1', color: 'أزرق غامق', size: '1', quantity: 1 },
+          ],
+          phone: '0791234567',
+          address: 'عمّان',
+        },
+        HAPPY_CTX,
+      );
+
+      expect(safeCapture).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [
+            {
+              productId: 'p1',
+              color: 'أزرق غامق',
+              storageKey: undefined,
+              size: '1',
+              qty: 1,
+            },
+          ],
+        }),
+      );
+    });
+
     it('maps the service confirmation to snake_case output with ok:true', async () => {
       const safeCapture = jest.fn().mockResolvedValue(HAPPY_SAFE_RESULT);
       const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
@@ -196,6 +226,24 @@ describe('buildCaptureOrderTool', () => {
       expect(keys).not.toContain('source');
       expect(keys).not.toContain('governorate');
       expect(keys).not.toContain('customer_name');
+    });
+
+    it('exposes an optional per-item colour selector and makes storage_key optional', () => {
+      const tool = buildCaptureOrderTool(makeOrdersMock(jest.fn())) as any;
+      const itemShape = tool.inputSchema.shape.items.element.shape;
+
+      expect(Object.keys(itemShape)).toEqual(
+        expect.arrayContaining([
+          'product_id',
+          'color',
+          'storage_key',
+          'size',
+          'quantity',
+        ]),
+      );
+      // Colour is the primary selector; storage_key is now an optional fallback.
+      expect(itemShape.color.isOptional()).toBe(true);
+      expect(itemShape.storage_key.isOptional()).toBe(true);
     });
 
     it('does NOT let the agent supply prices or totals', () => {

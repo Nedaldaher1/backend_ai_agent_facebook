@@ -26,11 +26,21 @@ import { OrderCaptureError } from './order-capture.error';
 import { normalizeJordanMobile } from './phone.util';
 import { orderStatusLabelAr } from './status-labels';
 
-/** One item the customer chose: a product + the exact image (model/color) variant. */
+/** One item the customer chose: a product + the chosen colour (or explicit image). */
 export interface CaptureOrderItemInput {
   productId: string;
-  /** A key in products.image_urls — pins the chosen model + color variant. */
-  storageKey: string;
+  /**
+   * Customer-chosen colour term (any dialect). The PRIMARY selector on the agent
+   * path: resolved server-side to the matching variant image, whose canonical
+   * colour is then snapshotted. Takes precedence over `storageKey` when both set.
+   */
+  color?: string;
+  /**
+   * A key in products.image_urls — pins the chosen model + colour variant
+   * directly. Optional fallback used by the admin path and when no colour is
+   * given (single-image models). On the agent path prefer `color`.
+   */
+  storageKey?: string;
   /** Per-item size; falls back to the order-level unifiedSize when absent. */
   size?: string;
   qty: number;
@@ -302,8 +312,39 @@ export class OrdersService {
           `المنتج "${product.name}" غير متوفر حالياً. لا يمكن إتمام الطلب.`,
         );
       }
+      // Resolve the chosen image key. Colour is the PRIMARY selector (agent
+      // path): mapped server-side to the matching variant image. An explicit
+      // storageKey is the fallback (admin / image-led). NEVER fall back to the
+      // primary image when a colour can't be resolved — refuse the line instead.
+      const productImages = product.imageUrls ?? [];
+      const availableColors = avail.colors?.length
+        ? ` الألوان المتوفرة: ${avail.colors.join('، ')}.`
+        : '';
+      let effectiveKey: string;
+      if (item.color?.trim()) {
+        const resolved = await this.products.resolveOrderImageKeyByColor(
+          item.productId,
+          item.color,
+        );
+        if (!resolved) {
+          throw new OrderCaptureError(
+            `اللون "${item.color}" غير متوفر للموديل "${product.name}".${availableColors} اختاري لوناً متوفراً.`,
+          );
+        }
+        effectiveKey = resolved;
+      } else if (item.storageKey) {
+        effectiveKey = item.storageKey;
+      } else if (productImages.length === 1) {
+        // Single-image (single-variant) model — no colour needed to disambiguate.
+        effectiveKey = productImages[0];
+      } else {
+        throw new OrderCaptureError(
+          `يرجى تحديد لون الصنف "${product.name}" (متوفر بأكثر من لون).${availableColors}`,
+        );
+      }
+
       // The chosen image must belong to this product.
-      if (!(product.imageUrls ?? []).includes(item.storageKey)) {
+      if (!productImages.includes(effectiveKey)) {
         throw new OrderCaptureError(
           `الصورة المختارة غير موجودة للمنتج "${product.name}". اختاري صورة من صور المنتج.`,
         );
@@ -332,12 +373,12 @@ export class OrdersService {
       const lineTotal = multiplyJodByQty(unitPrice, item.qty);
       const colorName = await this.products.getImageColorName(
         item.productId,
-        item.storageKey,
+        effectiveKey,
       );
 
       lines.push({
         productId: item.productId,
-        storageKey: item.storageKey,
+        storageKey: effectiveKey,
         productName: product.name,
         colorName,
         size,
@@ -347,7 +388,7 @@ export class OrdersService {
       });
       itemRows.push({
         productId: item.productId,
-        storageKey: item.storageKey,
+        storageKey: effectiveKey,
         size,
         qty: item.qty,
         unitPrice,

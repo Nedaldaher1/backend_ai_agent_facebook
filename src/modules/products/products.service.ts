@@ -112,6 +112,20 @@ export interface SimilarProduct {
 }
 
 /**
+ * Result of get_product_media's colour-filtered image selection. `mediaUrls` are
+ * the resolved public image URLs to send (primary first); `sentColors` are the
+ * canonical Arabic names actually being sent; `unavailableColors` echoes the
+ * customer's requested terms that this product doesn't offer. `productFound` is
+ * false for a missing/unpublished product (nothing sent).
+ */
+export interface ProductMediaSelection {
+  productFound: boolean;
+  sentColors: string[];
+  unavailableColors: string[];
+  mediaUrls: string[];
+}
+
+/**
  * Product business logic and the single cross-module surface (the agent and the
  * admin UI both call this, never the repository).
  *
@@ -128,7 +142,8 @@ export interface SimilarProduct {
  *   - search           (HTTP GET /products)
  *   - listPublished    (paginated customer/agent catalog)
  *   - addImages        (HTTP POST /products/:id/images — admin response)
- *   - getMedia         (agent tool get_product_media)
+ *   - getMedia                (carousel card images — messenger controller)
+ *   - getProductMediaByColors (agent tool get_product_media)
  */
 @Injectable()
 export class ProductsService {
@@ -239,7 +254,14 @@ export class ProductsService {
     input: ProductSearchInput = {},
   ): Promise<Product[]> {
     const filter = await this.toPublishedFilter(input);
-    return this.repo.searchFuzzy(query, filter);
+    const hits = await this.repo.searchFuzzy(query, filter);
+    if (hits.length > 0) return hits;
+    // Fallback: when the free-text match finds nothing — a browse query
+    // ("شو عندكم؟") or an Arabic morphological variant trigrams miss — return the
+    // structured published catalog for the SAME filters, so the agent never tells
+    // the customer "no products" while matching products exist. Publish gate and
+    // any structured filters (colour/occasion/price) still apply.
+    return this.repo.list(filter, { limit: 8 });
   }
 
   /**
@@ -258,6 +280,7 @@ export class ProductsService {
     available: boolean;
     inStockSizes: string[];
     note?: string;
+    colors?: string[];
     product?: Product;
   }> {
     let product: Product | undefined;
@@ -275,9 +298,15 @@ export class ProductsService {
       available = available && inStockSizes.includes(size);
     }
 
+    // Available colours (distinct Arabic names) across the product's images, so
+    // the agent can answer "what colours do you have?" and never report a real
+    // variant colour as unavailable.
+    const colorRows = await this.imageColors.findColorsByProduct(productId);
+    const availableColors = [...new Set(colorRows.map((r) => r.name))];
+
     // Return the product too so write callers (capture_order) can read its
     // price/name without a second fetch.
-    return { available, inStockSizes, product };
+    return { available, inStockSizes, colors: availableColors, product };
   }
 
   /**
@@ -350,6 +379,147 @@ export class ProductsService {
   }
 
   /**
+   * Distinct canonical colour NAMES (Arabic labels) per product, batched into one
+   * query for a whole search-result page (avoids N+1). Lets the agent surface a
+   * product's FULL available-colours set so it never reports a real variant colour
+   * as "unavailable". Empty map for empty input; products with no tags are absent.
+   */
+  async getColorNamesByProducts(
+    productIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (productIds.length === 0) return map;
+    const rows = await this.imageColors.findColorsByProducts(productIds);
+    for (const row of rows) {
+      const list = map.get(row.productId) ?? [];
+      if (!list.includes(row.name)) list.push(row.name);
+      map.set(row.productId, list);
+    }
+    return map;
+  }
+
+  /**
+   * Select a published product's images by colour for the get_product_media tool.
+   * ALL colour resolution is server-side (the tool is a thin adapter): each
+   * requested term is matched to one of the product's canonical colours via the
+   * dialect synonym map (resolveColorFamily) or a direct case-insensitive
+   * family/name match. `colors.family` is unique, so family ↔ canonical colour is
+   * 1:1 and a family identifies one Arabic display name.
+   *
+   *  - No requested colours (empty/undefined) → every image, in display order.
+   *  - Requested colours → only images tagged with a matching colour. A term that
+   *    doesn't resolve to a colour AVAILABLE ON THIS PRODUCT goes to
+   *    `unavailableColors` as the customer's raw term (so the agent echoes it) —
+   *    this covers both an unknown colour and a real catalog colour the product
+   *    doesn't carry. Never throws on a partial match — sends what's available.
+   *
+   * Publish-gated (drafts / missing → productFound:false, nothing sent). Outward
+   * boundary: `mediaUrls` are resolved public URLs (primary first), de-duplicated
+   * by the product's unique storage keys.
+   */
+  async getProductMediaByColors(
+    productId: string,
+    requestedColors?: string[],
+  ): Promise<ProductMediaSelection> {
+    let product: Product | undefined;
+    try {
+      product = await this.findPublishedRaw(productId);
+    } catch {
+      return {
+        productFound: false,
+        sentColors: [],
+        unavailableColors: [],
+        mediaUrls: [],
+      };
+    }
+
+    const keys = product.imageUrls ?? [];
+    const keySet = new Set(keys);
+
+    // All (image → colour) tags for the product, grouped by storage key. Tags
+    // pointing at a key no longer in image_urls (stale) are skipped so every
+    // "available" colour maps to a sendable image. family ↔ name is 1:1.
+    const colorRows = await this.imageColors.findColorsByProduct(productId);
+    const familiesByKey = new Map<string, Set<string>>();
+    const familyToName = new Map<string, string>();
+    const productFamilies = new Set<string>();
+    for (const row of colorRows) {
+      if (!keySet.has(row.storageKey)) continue;
+      let fams = familiesByKey.get(row.storageKey);
+      if (!fams) {
+        fams = new Set<string>();
+        familiesByKey.set(row.storageKey, fams);
+      }
+      fams.add(row.family);
+      familyToName.set(row.family, row.name);
+      productFamilies.add(row.family);
+    }
+
+    const terms = (requestedColors ?? [])
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
+    // No colour filter → send every image; report all colours present (in order).
+    if (terms.length === 0) {
+      const sentColors: string[] = [];
+      for (const key of keys) {
+        for (const fam of familiesByKey.get(key) ?? []) {
+          const name = familyToName.get(fam);
+          if (name && !sentColors.includes(name)) sentColors.push(name);
+        }
+      }
+      const mediaUrls = await Promise.all(
+        keys.map((key) => this.storage.getUrl(key)),
+      );
+      return { productFound: true, sentColors, unavailableColors: [], mediaUrls };
+    }
+
+    // Colour filter → resolve each term to a family present on this product.
+    const familyByLower = new Map<string, string>(); // lower(family) → family
+    for (const fam of productFamilies) familyByLower.set(fam.toLowerCase(), fam);
+    const familyByName = new Map<string, string>(); // lower(name) → family
+    for (const [fam, name] of familyToName) {
+      familyByName.set(name.toLowerCase(), fam);
+    }
+
+    const matchedFamilies = new Set<string>();
+    const sentColors: string[] = [];
+    const unavailableColors: string[] = [];
+    for (const term of terms) {
+      const lower = term.toLowerCase();
+      // 1. dialect/synonym → family, only if the product actually carries it.
+      const synonymFamily = await this.colors.resolveColorFamily(term);
+      let family =
+        synonymFamily && productFamilies.has(synonymFamily)
+          ? synonymFamily
+          : undefined;
+      // 2. direct family match (e.g. "red"). 3. canonical name match (e.g. "أحمر").
+      family ??= familyByLower.get(lower) ?? familyByName.get(lower);
+
+      if (family) {
+        matchedFamilies.add(family);
+        const name = familyToName.get(family);
+        if (name && !sentColors.includes(name)) sentColors.push(name);
+      } else if (!unavailableColors.includes(term)) {
+        unavailableColors.push(term);
+      }
+    }
+
+    // Images carrying at least one matched family, in display order.
+    const selectedKeys = keys.filter((key) => {
+      const fams = familiesByKey.get(key);
+      if (!fams) return false;
+      for (const fam of fams) if (matchedFamilies.has(fam)) return true;
+      return false;
+    });
+    const mediaUrls = await Promise.all(
+      selectedKeys.map((key) => this.storage.getUrl(key)),
+    );
+
+    return { productFound: true, sentColors, unavailableColors, mediaUrls };
+  }
+
+  /**
    * Resolve the canonical color name(s) attached to one product image
    * (productId + storageKey), joined for a clean snapshot. Returns null when the
    * image carries no color tag. Used by order capture to snapshot color_name —
@@ -362,6 +532,71 @@ export class ProductsService {
     const rows = await this.imageColors.findColorsByImage(productId, storageKey);
     if (rows.length === 0) return null;
     return rows.map((r) => r.name).join('، ');
+  }
+
+  /**
+   * Resolve a customer-chosen colour term to a SINGLE representative image key
+   * for ordering: the FIRST image (in display order) on the published product
+   * that carries that colour. Colour matching mirrors getProductMediaByColors —
+   * dialect/synonym → family, then direct family, then canonical name — limited
+   * to colours the product actually has on an image. Returns null when the
+   * product carries no image for that colour, so order capture refuses the line
+   * and NEVER falls back to the primary image.
+   */
+  async resolveOrderImageKeyByColor(
+    productId: string,
+    colorTerm: string,
+  ): Promise<string | null> {
+    const term = colorTerm.trim();
+    if (!term) return null;
+
+    let product: Product;
+    try {
+      product = await this.findPublishedRaw(productId);
+    } catch {
+      return null;
+    }
+    const keys = product.imageUrls ?? [];
+    const keySet = new Set(keys);
+
+    // (image key → families), limited to keys still in image_urls. family ↔ name
+    // is 1:1, so each family resolves to one canonical Arabic name.
+    const colorRows = await this.imageColors.findColorsByProduct(productId);
+    const familiesByKey = new Map<string, Set<string>>();
+    const productFamilies = new Set<string>();
+    const familyByName = new Map<string, string>(); // lower(name) → family
+    for (const row of colorRows) {
+      if (!keySet.has(row.storageKey)) continue;
+      let fams = familiesByKey.get(row.storageKey);
+      if (!fams) {
+        fams = new Set<string>();
+        familiesByKey.set(row.storageKey, fams);
+      }
+      fams.add(row.family);
+      productFamilies.add(row.family);
+      familyByName.set(row.name.toLowerCase(), row.family);
+    }
+    if (productFamilies.size === 0) return null;
+
+    const familyByLower = new Map<string, string>(); // lower(family) → family
+    for (const fam of productFamilies) familyByLower.set(fam.toLowerCase(), fam);
+
+    // Resolve the term to a family present on this product: 1. dialect/synonym,
+    // 2. direct family match, 3. canonical name match (all case-insensitive).
+    const lower = term.toLowerCase();
+    const synonymFamily = await this.colors.resolveColorFamily(term);
+    let family =
+      synonymFamily && productFamilies.has(synonymFamily)
+        ? synonymFamily
+        : undefined;
+    family ??= familyByLower.get(lower) ?? familyByName.get(lower);
+    if (!family) return null;
+
+    // First image (display order) carrying that family.
+    for (const key of keys) {
+      if (familiesByKey.get(key)?.has(family)) return key;
+    }
+    return null;
   }
 
   /**
