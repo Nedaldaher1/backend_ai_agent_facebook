@@ -1,115 +1,152 @@
 /**
  * Tests for EmbeddingService.
  *
- * @huggingface/transformers is ESM-only and downloads a multi-hundred-MB model,
- * so it is fully mocked: the fake vision/text models return KNOWN, deliberately
- * UN-normalized vectors. The assertions then prove the service's contract:
- *   - output length === EMBEDDING_DIM (768)
- *   - the returned vector is L2-normalized (its dot product with itself ≈ 1.0)
- * for BOTH embedImage and embedText. (Real model shape/dim is confirmed by the
- * one-off probe documented in the PR; this guards the normalization logic.)
+ * The service POSTs to OpenRouter's OpenAI-compatible `/embeddings` endpoint, so
+ * `fetch` is mocked. The assertions prove its contract: the request body shape
+ * for text / image / image+text, truncation to EMBEDDING_DIM + L2-normalization,
+ * and the retry / error behavior.
  */
 
-jest.mock('@huggingface/transformers', () => {
-  // Constant 768-vectors with non-unit L2 norm (2*sqrt(768) and 3*sqrt(768)).
-  // Non-async on purpose: the service awaits these, and `await <value>` is just
-  // the value, so plain fns/objects stand in (and avoid the require-await lint).
-  const visionModel = jest.fn(() => ({
-    image_embeds: { data: new Float32Array(768).fill(2), dims: [1, 768] },
-  }));
-  const textModel = jest.fn(() => ({
-    text_embeds: { data: new Float32Array(768).fill(3), dims: [1, 768] },
-  }));
-  return {
-    env: { allowRemoteModels: false, cacheDir: '' },
-    SiglipVisionModel: { from_pretrained: jest.fn(() => visionModel) },
-    SiglipTextModel: { from_pretrained: jest.fn(() => textModel) },
-    AutoProcessor: {
-      from_pretrained: jest.fn(() => jest.fn(() => ({ pixel_values: {} }))),
-    },
-    AutoTokenizer: {
-      from_pretrained: jest.fn(() =>
-        jest.fn(() => ({ input_ids: {}, attention_mask: {} })),
-      ),
-    },
-    RawImage: {
-      read: jest.fn(() => ({})),
-      fromBlob: jest.fn(() => ({})),
-    },
-  };
-});
-
-import { RawImage, SiglipVisionModel } from '@huggingface/transformers';
 import { EmbeddingService } from '../embedding.service';
-import { ImageDecodeError } from '../image-decode.error';
 import type { ConfigService } from '@nestjs/config';
 
 const dot = (a: number[], b: number[]) =>
   a.reduce((sum, x, i) => sum + x * b[i], 0);
 
+/** A ConfigService stub with small dims/timeouts for fast tests. */
+function makeConfig(overrides: Record<string, string> = {}): ConfigService {
+  const values: Record<string, string> = {
+    EMBEDDING_MODEL_ID: 'google/gemini-embedding-2',
+    EMBEDDING_DIM: '4',
+    EMBEDDING_API_URL: 'https://openrouter.test/api/v1/embeddings',
+    OPENROUTER_API_KEY: 'sk-or-test',
+    EMBEDDING_TIMEOUT_MS: '1000',
+    EMBEDDING_MAX_RETRIES: '2',
+    ...overrides,
+  };
+  return { get: (k: string) => values[k] } as unknown as ConfigService;
+}
+
+/** A fake fetch Response carrying `data[0].embedding`. */
+function embeddingResponse(vec: number[], status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve({ data: [{ embedding: vec }] }),
+    text: () => Promise.resolve('error body'),
+  } as unknown as Response;
+}
+
 describe('EmbeddingService', () => {
-  const config = {
-    get: jest.fn().mockReturnValue(undefined),
-  } as unknown as ConfigService;
-  const service = new EmbeddingService(config);
+  let fetchMock: jest.Mock;
 
-  it('embedImage returns a 768-d, L2-normalized vector (self dot ≈ 1)', async () => {
-    const v = await service.embedImage('https://example.com/abaya.jpg');
-    expect(v).toHaveLength(768);
-    expect(dot(v, v)).toBeCloseTo(1.0, 5);
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock;
   });
 
-  it('embedText returns a 768-d, L2-normalized vector (self dot ≈ 1)', async () => {
+  it('embedText posts the text input and returns an L2-normalized vector', async () => {
+    fetchMock.mockResolvedValueOnce(embeddingResponse([2, 0, 0, 0]));
+    const service = new EmbeddingService(makeConfig());
+
     const v = await service.embedText('a plain black abaya');
-    expect(v).toHaveLength(768);
+
+    expect(v).toHaveLength(4);
+    expect(dot(v, v)).toBeCloseTo(1.0, 5);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://openrouter.test/api/v1/embeddings');
+    const body = JSON.parse(init.body as string) as {
+      model: string;
+      input: unknown;
+      dimensions: number;
+    };
+    expect(body.model).toBe('google/gemini-embedding-2');
+    expect(body.input).toBe('a plain black abaya');
+    expect(body.dimensions).toBe(4);
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      'Bearer sk-or-test',
+    );
+  });
+
+  it('embedImage posts a single image_url content part', async () => {
+    fetchMock.mockResolvedValueOnce(embeddingResponse([0, 3, 0, 0]));
+    const service = new EmbeddingService(makeConfig());
+
+    await service.embedImage('https://cdn/abaya.jpg');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { input: unknown };
+    expect(body.input).toEqual([
+      {
+        content: [
+          { type: 'image_url', image_url: { url: 'https://cdn/abaya.jpg' } },
+        ],
+      },
+    ]);
+  });
+
+  it('embedImageWithText posts both a text and an image_url part', async () => {
+    fetchMock.mockResolvedValueOnce(embeddingResponse([1, 1, 1, 1]));
+    const service = new EmbeddingService(makeConfig());
+
+    await service.embedImageWithText('https://cdn/a.jpg', 'red floral abaya');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { input: unknown };
+    expect(body.input).toEqual([
+      {
+        content: [
+          { type: 'text', text: 'red floral abaya' },
+          { type: 'image_url', image_url: { url: 'https://cdn/a.jpg' } },
+        ],
+      },
+    ]);
+  });
+
+  it('truncates an over-long embedding to EMBEDDING_DIM then normalizes (MRL)', async () => {
+    // Provider returns 6 dims; the service must cut to 4 and renormalize.
+    fetchMock.mockResolvedValueOnce(embeddingResponse([2, 0, 0, 0, 9, 9]));
+    const service = new EmbeddingService(makeConfig());
+
+    const v = await service.embedText('x');
+
+    expect(v).toHaveLength(4);
     expect(dot(v, v)).toBeCloseTo(1.0, 5);
   });
 
-  it('embeds a raw Buffer as well as a URL', async () => {
-    const v = await service.embedImage(Buffer.from([1, 2, 3, 4]));
-    expect(v).toHaveLength(768);
-    expect(dot(v, v)).toBeCloseTo(1.0, 5);
+  it('retries on a 429 then succeeds', async () => {
+    fetchMock
+      .mockResolvedValueOnce(embeddingResponse([], 429))
+      .mockResolvedValueOnce(embeddingResponse([1, 0, 0, 0]));
+    const service = new EmbeddingService(makeConfig());
+
+    const v = await service.embedText('x');
+
+    expect(v).toHaveLength(4);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  // --- decode-failure boundary (Part A) ---
-  // A buffer/URL that can't be decoded is BAD INPUT: embedImage must reject with
-  // the typed ImageDecodeError so the HTTP layer can map it to 422 (not 500).
-
-  it('rejects an undecodable Buffer with ImageDecodeError (decode failure)', async () => {
-    (RawImage.fromBlob as jest.Mock).mockRejectedValueOnce(
-      new Error('VipsJpeg: Premature end of input file (libspng read error)'),
+  it('throws after exhausting retries on persistent 5xx', async () => {
+    fetchMock.mockResolvedValue(embeddingResponse([], 503));
+    const service = new EmbeddingService(
+      makeConfig({ EMBEDDING_MAX_RETRIES: '1' }),
     );
-    await expect(
-      service.embedImage(Buffer.from([0xff, 0xd8, 0x00])),
-    ).rejects.toBeInstanceOf(ImageDecodeError);
+
+    await expect(service.embedText('x')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(2); // initial + 1 retry
   });
 
-  it('rejects an unreadable image URL with ImageDecodeError (decode failure)', async () => {
-    (RawImage.read as jest.Mock).mockRejectedValueOnce(
-      new Error('Unable to read image from "https://x/broken.png" (404)'),
+  it('throws immediately on a non-retryable 4xx', async () => {
+    fetchMock.mockResolvedValueOnce(embeddingResponse([], 400));
+    const service = new EmbeddingService(makeConfig());
+
+    await expect(service.embedText('x')).rejects.toThrow(/400/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes the configured model id', () => {
+    expect(new EmbeddingService(makeConfig()).modelId).toBe(
+      'google/gemini-embedding-2',
     );
-    await expect(
-      service.embedImage('https://x/broken.png'),
-    ).rejects.toBeInstanceOf(ImageDecodeError);
-  });
-
-  it('preserves the original decode error as `cause`', async () => {
-    const cause = new Error('libspng read error');
-    (RawImage.fromBlob as jest.Mock).mockRejectedValueOnce(cause);
-    await expect(
-      service.embedImage(Buffer.from([0x89, 0x50])),
-    ).rejects.toHaveProperty('cause', cause);
-  });
-
-  it('loads the model once across multiple calls (lazy singleton)', async () => {
-    await service.embedImage('https://example.com/a.jpg');
-    await service.embedText('hello');
-    expect(
-      (SiglipVisionModel.from_pretrained as jest.Mock).mock.calls.length,
-    ).toBe(1);
-  });
-
-  it('exposes the configured model id (default)', () => {
-    expect(service.modelId).toBe('Marqo/marqo-fashionSigLIP');
   });
 });

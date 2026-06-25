@@ -1,8 +1,9 @@
 /**
  * find_similar_by_image — visual catalog search.
  *
- * The customer sends a photo; ProductsService embeds it (Marqo-FashionSigLIP)
- * and returns the visually closest PUBLISHED products via pgvector cosine ANN
+ * The customer sends a photo (optionally with a caption); ProductsService embeds
+ * it with gemini-embedding-2 (image + caption) and returns the visually closest
+ * PUBLISHED products via pgvector cosine ANN
  * search. Results are shaped identically to `search_products` so the agent
  * renders them the same way.
  *
@@ -66,9 +67,14 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
         // No image in context this turn — empty result; the agent asks for a photo.
         return { products: [] };
       }
+      // The customer's caption this turn (set by AgentService) is embedded
+      // TOGETHER with her photo, so search matches on both picture and words.
+      const rawText = ctx?.requestContext?.get('lastImageText');
+      const text = typeof rawText === 'string' ? rawText.trim() : undefined;
       try {
         const matches = await products.findSimilarByImage(url, {
           targetColor: input.target_color,
+          text,
         });
         const colorsByProduct = await products.getColorNamesByProducts(
           matches.map((p) => p.id),

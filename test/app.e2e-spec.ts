@@ -7,7 +7,7 @@ import { AppModule } from './../src/app.module';
 
 /**
  * Boots the whole app over the Fastify adapter. Requires DATABASE_URL +
- * ANTHROPIC_API_KEY in the environment and a reachable Postgres (the /health
+ * OPENROUTER_API_KEY in the environment and a reachable Postgres (the /health
  * route runs `select 1`). Not part of the default unit run (`bun run test`);
  * runs via `bun run test:e2e`.
  */

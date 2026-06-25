@@ -71,7 +71,13 @@ export interface BuildMastraDeps {
   sizing: SizingService;
   /** AgentBehaviorService — compiles dynamic system prompt (60s TTL cache). */
   agentBehavior: AgentBehaviorService;
-  /** Mastra framework logger level (from MASTRA_LOG_LEVEL). */
+  /** Sales-agent model id — a Mastra model-router string (AGENT_MODEL_ID env),
+   *  e.g. 'openrouter/google/gemini-3.5-flash'. Injected so swapping the model
+   *  is a config change, never a code edit. */
+  modelId: string;
+  /** Mastra framework logger level (from MASTRA_LOG_LEVEL env). Controls Mastra's
+   *  own diagnostics (agent steps, tool registration, memory ops); the per-turn
+   *  tool-call summary is logged separately by AgentService.logToolCalls. */
   logLevel: 'debug' | 'info' | 'warn' | 'error' | 'silent';
 }
 
@@ -86,7 +92,7 @@ export function buildMastra(deps: BuildMastraDeps): {
   salesAgent: Agent;
   memory: Memory;
 } {
-  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, logLevel } = deps;
+  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, modelId, logLevel } = deps;
 
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
@@ -176,9 +182,12 @@ export function buildMastra(deps: BuildMastraDeps): {
     // async instructions function. Falls back to a safe default when empty.
     instructions: async () => agentBehavior.getInstructions(),
 
-    // Mastra's model router — reads ANTHROPIC_API_KEY from the environment
-    // automatically.  Do NOT import @ai-sdk/anthropic directly here.
-    model: 'anthropic/claude-sonnet-4-6',
+    // Mastra's model router. An 'openrouter/<provider>/<model>' id routes the
+    // call through OpenRouter, which the router authenticates with
+    // OPENROUTER_API_KEY (see @mastra/core provider-registry). The id is
+    // injected (AGENT_MODEL_ID), not hard-coded, so the model is swappable
+    // without a code edit.
+    model: modelId,
 
     tools,
 
@@ -193,8 +202,10 @@ export function buildMastra(deps: BuildMastraDeps): {
   // Mastra's addMemory skip re-setting, so there is no double-wiring.
   //
   // logger: routes Mastra's internal diagnostics (agent steps, tool registration,
-  // memory ops) through Pino. At level 'debug' it surfaces tool-related traces;
-  // clean per-turn tool-call summaries are logged separately by AgentService.
+  // memory ops) through Pino at MASTRA_LOG_LEVEL. At 'debug' it surfaces tool-
+  // related traces; clean per-turn tool-call summaries are logged separately by
+  // AgentService.logToolCalls. PinoLogger emits JSON — pipe the dev server
+  // through `bunx pino-pretty` for readable terminal output.
   const logger = new PinoLogger({ name: 'MasaAgent', level: logLevel });
   const mastra = new Mastra({ agents: { salesAgent }, storage, logger });
 

@@ -15,7 +15,18 @@ export const envSchema = z
     // admin panel origin(s), e.g. 'https://admin.masafashion.com'.
     CORS_ORIGINS: z.string().optional(),
     DATABASE_URL: z.string().url(),
-    ANTHROPIC_API_KEY: z.string().min(1),
+    // LLM provider key. Every model call (sales agent + vision) routes through
+    // OpenRouter via Mastra's model router, which reads OPENROUTER_API_KEY.
+    OPENROUTER_API_KEY: z.string().min(1),
+    // Legacy Anthropic-direct key. Optional now that OpenRouter is the default
+    // provider; only needed if a *_MODEL_ID is pointed back at 'anthropic/...'.
+    ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Mastra framework logger verbosity (agent steps, tool registration, memory
+    // ops) routed through PinoLogger. Per-turn tool-call summaries are logged by
+    // AgentService regardless of this. 'silent' disables Mastra's own logs.
+    MASTRA_LOG_LEVEL: z
+      .enum(['debug', 'info', 'warn', 'error', 'silent'])
+      .default('info'),
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).
     STORAGE_DRIVER: z.enum(['fs', 'r2']).default('r2'),
@@ -40,20 +51,24 @@ export const envSchema = z
     // no seed mechanism), then set it back. Any other value (incl. unset) → 403.
     ALLOW_REGISTRATION: z.string().optional(),
 
-    // --- Visual search embeddings (Marqo-FashionSigLIP via Transformers.js) ---
-    // Multimodal model id; images and text embed into one 768-d space. A model
-    // swap is a config change + re-backfill, never a code edit.
-    EMBEDDING_MODEL_ID: z.string().default('Marqo/marqo-fashionSigLIP'),
-    // Embedding dimension. MUST equal the model output, the pgvector column, and
-    // the HNSW index — all 768 for fashionSigLIP. Asserted at runtime.
-    EMBEDDING_DIM: z.coerce.number().int().positive().default(768),
-    // ONNX weight dtype. fp32 = best retrieval quality; q8 = smaller/faster. The
-    // SAME dtype must be used for catalog and query embeddings, so it is one knob.
-    EMBEDDING_DTYPE: z
-      .enum(['fp32', 'fp16', 'q8', 'int8', 'uint8', 'q4'])
-      .default('fp32'),
-    // Writable, persistent dir for downloaded model files (Transformers.js cache).
-    TRANSFORMERS_CACHE_DIR: z.string().default('./.cache/transformers'),
+    // --- Visual search embeddings (gemini-embedding-2 via OpenRouter) ---
+    // Multimodal embedding model: images and text map into ONE unified vector
+    // space (cross-modal cosine search), reached over OpenRouter's OpenAI-
+    // compatible /embeddings endpoint with OPENROUTER_API_KEY. A model swap is a
+    // config change + a FULL re-backfill (spaces are incompatible across models).
+    EMBEDDING_MODEL_ID: z.string().default('google/gemini-embedding-2'),
+    // Embedding dimension. MUST equal the pgvector column and the HNSW index
+    // (1536; within pgvector's 2000-dim hnsw cap). Requested via the `dimensions`
+    // param; truncated/asserted to this length at runtime.
+    EMBEDDING_DIM: z.coerce.number().int().positive().default(1536),
+    // Embeddings endpoint (OpenAI-compatible). Override only to point at a proxy.
+    EMBEDDING_API_URL: z
+      .string()
+      .url()
+      .default('https://openrouter.ai/api/v1/embeddings'),
+    // Per-request timeout (ms), and retries on transient failures (429/5xx/network).
+    EMBEDDING_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    EMBEDDING_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
     // Default number of distinct products visual search returns.
     SIMILARITY_TOP_K: z.coerce.number().int().positive().default(6),
     // Minimum cosine similarity [0..1] a match must clear to be surfaced; below
@@ -66,13 +81,6 @@ export const envSchema = z
     // Hard maximum wait time for the debounce regardless of new messages
     // arriving (milliseconds). Keep well below Meta's webhook 20-second timeout.
     DEBOUNCE_MAX_MS: z.coerce.number().int().positive().default(8000),
-
-    // Mastra framework logger level. 'info' is quiet; 'debug' surfaces Mastra's
-    // internal step / tool-registration traces. Per-turn tool-call summary lines
-    // are logged by AgentService regardless of this. 'silent' disables Mastra logs.
-    MASTRA_LOG_LEVEL: z
-      .enum(['debug', 'info', 'warn', 'error', 'silent'])
-      .default('info'),
 
     // --- Meta Messenger Platform (direct Graph API, v25.0) ---
     // Token echoed during webhook verification (GET /webhook/messenger):

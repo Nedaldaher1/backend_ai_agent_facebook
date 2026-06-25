@@ -1,53 +1,33 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  AutoProcessor,
-  AutoTokenizer,
-  RawImage,
-  SiglipTextModel,
-  SiglipVisionModel,
-  env,
-} from '@huggingface/transformers';
-import { ImageDecodeError } from './image-decode.error';
 
-export type EmbeddingDtype = 'fp32' | 'fp16' | 'q8' | 'int8' | 'uint8' | 'q4';
-
-/** Minimal shape of a Transformers.js output tensor (flattened `data`). */
-interface EmbedTensor {
-  readonly data: ArrayLike<number>;
-  readonly dims: readonly number[];
-}
-type VisionFn = (inputs: unknown) => Promise<{ image_embeds?: EmbedTensor }>;
-type TextFn = (inputs: unknown) => Promise<{ text_embeds?: EmbedTensor }>;
-type ProcessorFn = (image: unknown) => Promise<unknown>;
-type TokenizerFn = (
-  texts: string[],
-  opts: { padding: 'max_length'; truncation: boolean },
-) => unknown;
-
-interface LoadedModel {
-  vision: VisionFn;
-  text: TextFn;
-  processor: ProcessorFn;
-  tokenizer: TokenizerFn;
-}
+/** OpenRouter /embeddings `input` shapes (OpenAI-compatible + the multimodal
+ *  content-array extension that carries images alongside text). */
+type EmbedInput =
+  | string
+  | Array<{
+      content: Array<
+        | { type: 'text'; text: string }
+        | { type: 'image_url'; image_url: { url: string } }
+      >;
+    }>;
 
 /**
- * In-process multimodal embeddings (Marqo-FashionSigLIP via Transformers.js +
- * onnxruntime-node). Pure inference: NO database and NO feature-module imports —
- * the products module wraps this with storage + persistence.
+ * Multimodal embeddings via OpenRouter's OpenAI-compatible `/embeddings`
+ * endpoint (model `google/gemini-embedding-2`). `embedText`, `embedImage`, and
+ * `embedImageWithText` all return an L2-normalized, `EMBEDDING_DIM`-length vector
+ * in ONE unified space, so cosine similarity (pgvector `<=>`) is meaningful
+ * across text, image, and image+text.
  *
- * `embedImage` and `embedText` both return an L2-NORMALIZED, `EMBEDDING_DIM`-length
- * vector in the SAME space, so cosine similarity (pgvector `<=>`) is meaningful.
- * Verified empirically: the model id is `image_embeds` / `text_embeds`, dim 768,
- * and the raw outputs are NOT normalized (L2 ≈ 17–20) — so normalizing here is
- * mandatory, not cosmetic.
+ * Pure HTTP: NO database and NO feature-module imports — the products module
+ * wraps this with storage + persistence. Images are passed as PUBLIC URLs (R2
+ * product images; the customer's image URL at query time) and fetched
+ * server-side by OpenRouter; we never download bytes here.
  *
- * The model loads once, lazily, on first use (boot stays fast; a deploy that
- * never touches visual search pays nothing). Forward passes are serialized
- * through a promise-chain mutex: two CPU-bound passes in parallel just thrash the
- * CPU at our volume. The dtype is a single config knob so catalog and query
- * embeddings always match (mixing dtypes degrades recall).
+ * The model id is a config knob (`EMBEDDING_MODEL_ID`) and is persisted with
+ * each embedding (`model_id` column) so a model swap is detected and re-embedded.
+ * Embedding spaces are NOT compatible across models — a swap requires a full
+ * re-backfill.
  */
 @Injectable()
 export class EmbeddingService {
@@ -55,113 +35,134 @@ export class EmbeddingService {
   /** The model/version producing the vectors — persisted with each embedding. */
   readonly modelId: string;
   private readonly dim: number;
-  private readonly dtype: EmbeddingDtype;
-  private readonly cacheDir: string;
-  private loaded?: Promise<LoadedModel>;
-  /** Tail of the inference queue (concurrency 1); no external dependency. */
-  private tail: Promise<unknown> = Promise.resolve();
+  private readonly apiUrl: string;
+  private readonly apiKey: string;
+  private readonly timeoutMs: number;
+  private readonly maxRetries: number;
 
   constructor(config: ConfigService) {
     this.modelId =
-      config.get<string>('EMBEDDING_MODEL_ID') ?? 'Marqo/marqo-fashionSigLIP';
-    this.dim = config.get<number>('EMBEDDING_DIM') ?? 768;
-    this.dtype = (config.get<string>('EMBEDDING_DTYPE') ??
-      'fp32') as EmbeddingDtype;
-    this.cacheDir =
-      config.get<string>('TRANSFORMERS_CACHE_DIR') ?? './.cache/transformers';
+      config.get<string>('EMBEDDING_MODEL_ID') ?? 'google/gemini-embedding-2';
+    this.dim = Number(config.get<string>('EMBEDDING_DIM') ?? '1536');
+    this.apiUrl =
+      config.get<string>('EMBEDDING_API_URL') ??
+      'https://openrouter.ai/api/v1/embeddings';
+    this.apiKey = config.get<string>('OPENROUTER_API_KEY') ?? '';
+    this.timeoutMs = Number(
+      config.get<string>('EMBEDDING_TIMEOUT_MS') ?? '15000',
+    );
+    this.maxRetries = Number(
+      config.get<string>('EMBEDDING_MAX_RETRIES') ?? '2',
+    );
+  }
+
+  /** Embed text → L2-normalized vector. */
+  async embedText(text: string): Promise<number[]> {
+    return this.embedRequest(text);
+  }
+
+  /** Embed an image (public URL) → L2-normalized vector in the same space. */
+  async embedImage(imageUrl: string): Promise<number[]> {
+    return this.embedRequest([
+      { content: [{ type: 'image_url', image_url: { url: imageUrl } }] },
+    ]);
   }
 
   /**
-   * Embed an image (public URL or raw bytes) → L2-normalized vector.
-   *
-   * Only the decode step is guarded: bytes that can't be read/decoded
-   * (corrupt/unsupported image — sharp/libspng throws here) are a CLIENT
-   * problem, surfaced as {@link ImageDecodeError} for the HTTP layer to map to
-   * 422. The model forward pass stays OUTSIDE the guard so a genuine inference
-   * fault propagates as a real server error (500), not a masked 422.
+   * Embed an image (public URL) TOGETHER WITH a text description → ONE
+   * L2-normalized vector carrying both. Used for product images (with the
+   * admin-authored description) and for a customer image sent with a caption.
    */
-  async embedImage(input: string | Buffer): Promise<number[]> {
-    const { vision, processor } = await this.ensureLoaded();
-    return this.serialize(async () => {
-      let image: RawImage;
-      try {
-        image =
-          typeof input === 'string'
-            ? await RawImage.read(input)
-            : await RawImage.fromBlob(new Blob([new Uint8Array(input)]));
-      } catch (err) {
-        throw new ImageDecodeError('image could not be decoded', {
-          cause: err,
-        });
-      }
-      const inputs = await processor(image);
-      const output = await vision(inputs);
-      return this.normalize(output.image_embeds, 'image');
-    });
-  }
-
-  /** Embed text → L2-normalized vector in the SAME space as embedImage. */
-  async embedText(text: string): Promise<number[]> {
-    const { text: textModel, tokenizer } = await this.ensureLoaded();
-    return this.serialize(async () => {
-      const inputs = tokenizer([text], {
-        padding: 'max_length',
-        truncation: true,
-      });
-      const output = await textModel(inputs);
-      return this.normalize(output.text_embeds, 'text');
-    });
-  }
-
-  private ensureLoaded(): Promise<LoadedModel> {
-    if (!this.loaded) this.loaded = this.load();
-    return this.loaded;
-  }
-
-  private async load(): Promise<LoadedModel> {
-    env.allowRemoteModels = true;
-    env.cacheDir = this.cacheDir;
-    this.logger.log(
-      `loading ${this.modelId} (dtype=${this.dtype}) from cache ${this.cacheDir} …`,
-    );
-    const startedAt = Date.now();
-    const [vision, text, processor, tokenizer] = await Promise.all([
-      SiglipVisionModel.from_pretrained(this.modelId, { dtype: this.dtype }),
-      SiglipTextModel.from_pretrained(this.modelId, { dtype: this.dtype }),
-      AutoProcessor.from_pretrained(this.modelId),
-      AutoTokenizer.from_pretrained(this.modelId),
+  async embedImageWithText(imageUrl: string, text: string): Promise<number[]> {
+    return this.embedRequest([
+      {
+        content: [
+          { type: 'text', text },
+          { type: 'image_url', image_url: { url: imageUrl } },
+        ],
+      },
     ]);
-    this.logger.log(`model ready in ${Date.now() - startedAt}ms`);
-    return {
-      vision: vision as unknown as VisionFn,
-      text: text as unknown as TextFn,
-      processor: processor as unknown as ProcessorFn,
-      tokenizer: tokenizer as unknown as TokenizerFn,
-    };
   }
 
-  /** Run `task` only after all previously-queued tasks settle (concurrency 1). */
-  private serialize<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.tail.then(task, task);
-    // Keep the chain alive regardless of this task's success/failure.
-    this.tail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
+  /** POST to the embeddings endpoint with timeout + retry; parse + normalize. */
+  private async embedRequest(input: EmbedInput): Promise<number[]> {
+    const body = JSON.stringify({
+      model: this.modelId,
+      input,
+      // OpenAI-compatible dimension request (Matryoshka). If the provider ignores
+      // it and returns more, `normalize` truncates back to EMBEDDING_DIM.
+      dimensions: this.dim,
+      encoding_format: 'float',
+    });
 
-  /** L2-normalize, asserting the dimension matches EMBEDDING_DIM (768). */
-  private normalize(tensor: EmbedTensor | undefined, kind: string): number[] {
-    if (!tensor?.data) {
-      throw new Error(`EmbeddingService: model returned no ${kind} embedding`);
+    let lastError = '';
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(this.apiUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body,
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+      } catch (err) {
+        // Network error or timeout — transient, retry.
+        lastError = err instanceof Error ? err.message : String(err);
+        if (attempt < this.maxRetries) {
+          await this.backoff(attempt);
+          continue;
+        }
+        throw new Error(`EmbeddingService: request failed — ${lastError}`);
+      }
+
+      if (
+        (res.status === 429 || res.status >= 500) &&
+        attempt < this.maxRetries
+      ) {
+        lastError = `HTTP ${res.status}`;
+        await this.backoff(attempt);
+        continue;
+      }
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        throw new Error(
+          `EmbeddingService: ${this.modelId} returned ${res.status}: ${detail.slice(0, 300)}`,
+        );
+      }
+
+      const json = (await res.json()) as {
+        data?: Array<{ embedding?: number[] }>;
+      };
+      const raw = json.data?.[0]?.embedding;
+      if (!raw || raw.length === 0) {
+        throw new Error('EmbeddingService: response contained no embedding');
+      }
+      return this.normalize(raw);
     }
-    const vec = Array.from(tensor.data, Number);
-    if (vec.length !== this.dim) {
+
+    throw new Error(`EmbeddingService: exhausted retries — ${lastError}`);
+  }
+
+  /** Exponential backoff between retries (250ms, 500ms, …). */
+  private backoff(attempt: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+  }
+
+  /**
+   * Truncate to `EMBEDDING_DIM` (Matryoshka: a higher-dim vector can be cut to a
+   * lower dim and renormalized) then L2-normalize, so cosine == dot product and
+   * the length matches the pgvector column.
+   */
+  private normalize(raw: number[]): number[] {
+    if (raw.length < this.dim) {
       throw new Error(
-        `EmbeddingService: expected ${this.dim}-d ${kind} embedding, got ${vec.length}`,
+        `EmbeddingService: expected >= ${this.dim}-d embedding, got ${raw.length}`,
       );
     }
+    const vec = raw.length === this.dim ? raw : raw.slice(0, this.dim);
     let sumSq = 0;
     for (const x of vec) sumSq += x * x;
     const norm = Math.sqrt(sumSq);

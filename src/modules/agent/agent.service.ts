@@ -213,26 +213,35 @@ export class AgentService implements OnModuleInit {
 
   onModuleInit(): void {
     const connectionString = this.config.getOrThrow<string>('DATABASE_URL');
+    // Model id is config-driven (AGENT_MODEL_ID) so it can be swapped without a
+    // code edit. Defaults to Gemini 3.5 Flash via OpenRouter.
+    const modelId =
+      this.config.get<string>('AGENT_MODEL_ID') ??
+      'openrouter/google/gemini-3.5-flash';
+    // Mastra framework logger level (validated enum, defaults to 'info' in the
+    // env schema). Controls Mastra's own diagnostics; per-turn tool-call lines
+    // are logged by logToolCalls regardless.
     const logLevel =
       this.config.get<'debug' | 'info' | 'warn' | 'error' | 'silent'>(
         'MASTRA_LOG_LEVEL',
       ) ?? 'info';
     const { mastra, salesAgent, memory } = buildMastra({
       connectionString,
-      logLevel,
       products: this.products,
       orders: this.orders,
       conversations: this.conversations,
       knowledge: this.knowledge,
       sizing: this.sizing,
       agentBehavior: this.agentBehavior,
+      modelId,
+      logLevel,
     });
     this.mastra = mastra;
     this.salesAgent = salesAgent;
     this.memory = memory;
 
     this.logger.log(
-      `Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=11, instructions=dynamic, logLevel=${logLevel}`,
+      `Mastra ready: schema=mastra, model=${modelId}, logLevel=${logLevel}, workingMemory=resource, tools=11, instructions=dynamic`,
     );
   }
 
@@ -385,6 +394,11 @@ export class AgentService implements OnModuleInit {
     if (input.lastImageUrl) {
       requestContext.set('lastImageUrl', input.lastImageUrl);
       requestContext.set('imageLed', true);
+      // The customer's caption (if any) this turn — find_similar_by_image embeds
+      // it together with the photo into one multimodal vector.
+      if (input.text?.trim()) {
+        requestContext.set('lastImageText', input.text.trim());
+      }
 
       // Vision pre-step (deterministic, best-effort): extract structured
       // attributes from the photo via Claude Haiku and seed them so the agent
@@ -459,9 +473,10 @@ export class AgentService implements OnModuleInit {
       ...(context ? { context } : {}),
     })) as GenerateResult;
 
-    // Observability: one concise line naming the tools the model invoked this
-    // turn. Mastra logs tool registration (debug) but not per-call domain tool
-    // execution, so we derive the signal from generate()'s toolResults.
+    // Per-turn observability: log which tools the agent called this turn, with the
+    // args it supplied and a short result hint. Without this the backend gives no
+    // signal of what the agent is doing — Mastra's own logger reports tool
+    // *registration*, not per-call invocation. Best-effort (never throws).
     this.logToolCalls(result, resourceId);
 
     // One-shot handoff summary (WS7): clear it only AFTER a successful generate()
@@ -604,14 +619,18 @@ export class AgentService implements OnModuleInit {
   }
 
   /**
-   * Emit one concise line per turn naming the domain tools the model invoked,
-   * each with a ✓ (ok) or ✗ (error) marker — e.g.
-   *   `agent turn [PSID] tools: search_products ✓, recommend_size ✓`
+   * Per-turn tool-call observability.
    *
-   * This is the clean local-observability signal for "what tools did the agent
-   * call": Mastra logs tool *registration* at debug level but not per-call domain
-   * tool execution (that lives in the tracing/span system), so we derive it from
-   * generate()'s toolResults. Best-effort — never throws, never blocks the reply.
+   * Logs ONE line per agent turn naming every tool the model invoked, the args
+   * it passed (compacted/truncated) and a short result hint (product/image
+   * counts when present). This is the only signal of what the agent actually did
+   * this turn: Mastra's framework logger reports tool *registration* at boot, not
+   * per-call invocation, and `generate()` does not log its own tool steps.
+   *
+   * Reads from `result.toolResults` (post-execution), whose payload carries
+   * `toolName`, `isError`, `args` (echoed by the provider) and `result`.
+   * Best-effort: the whole body is wrapped in try/catch — observability must
+   * NEVER break the customer reply.
    */
   private logToolCalls(result: GenerateResult, resourceId: string): void {
     try {
@@ -621,14 +640,34 @@ export class AgentService implements OnModuleInit {
         return;
       }
       const summary = calls
-        .map(
-          (c) =>
-            `${c.payload?.toolName ?? 'unknown'}${
-              c.payload?.isError ? ' ✗' : ' ✓'
-            }`,
-        )
+        .map((c) => {
+          const name = c.payload?.toolName ?? 'unknown';
+          const mark = c.payload?.isError ? '✗' : '✓';
+
+          // Compact, truncated args so the log shows WHAT the agent asked for
+          // (e.g. which colour/occasion it searched). Args are absent when the
+          // provider does not echo them — then we just show the tool name.
+          let args = '';
+          if (c.payload?.args !== undefined) {
+            const s = JSON.stringify(c.payload.args);
+            args = ` ${s.length > 120 ? `${s.slice(0, 117)}...` : s}`;
+          }
+
+          // Result hint: surface product/image counts when the tool returned a
+          // list, so the log shows whether the call actually found anything.
+          const r = c.payload?.result as
+            | { products?: unknown[]; images?: unknown[] }
+            | undefined;
+          let hint = '';
+          if (Array.isArray(r?.products)) hint = ` → ${r.products.length} products`;
+          else if (Array.isArray(r?.images)) hint = ` → ${r.images.length} images`;
+
+          return `${name} ${mark}${args}${hint}`;
+        })
         .join(', ');
-      this.logger.log(`agent turn [${resourceId}] tools: ${summary}`);
+      this.logger.log(
+        `agent turn [${resourceId}] tools(${calls.length}): ${summary}`,
+      );
     } catch {
       // Observability must never break the customer reply.
     }

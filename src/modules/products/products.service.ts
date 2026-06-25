@@ -9,20 +9,22 @@ import { ConfigService } from '@nestjs/config';
 import type { ListOptions, PaginatedResult } from '@/common/types/query';
 import { normalizeListOptions } from '@/common/types/query';
 import { assertPublicHttpUrl } from '@/common/net/url-safety';
+import { sniffImageMediaType } from '@/common/images/sniff-image.util';
 import {
   createProductSchema,
   parseOrThrow,
   setImageColorsSchema,
+  setImageDescriptionSchema,
   updateProductSchema,
   type CreateProductInput,
   type UpdateProductInput,
 } from '@/common/validation';
 import { StorageService } from '@/core/storage/storage.service';
 import { EmbeddingService } from '@/modules/embeddings/embedding.service';
-import { ImageDecodeError } from '@/modules/embeddings/image-decode.error';
 import { ColorSynonymsService } from './color-synonyms.service';
 import { ColorsService } from './colors.service';
 import { ProductImageColorsRepository } from './product-image-colors.repository';
+import { ProductImageDescriptionsRepository } from './product-image-descriptions.repository';
 import { ProductImageEmbeddingsRepository } from './product-image-embeddings.repository';
 import { ProductsRepository, type ProductFilter } from './products.repository';
 import type { Product } from './entities/product.entity';
@@ -95,6 +97,14 @@ export interface ImageWithColors {
   hasEmbedding?: boolean;
 }
 
+/** One product image with its admin-authored description (set-description response). */
+export interface ImageWithDescription {
+  key: string;
+  url: string;
+  isPrimary: boolean;
+  description: string;
+}
+
 /**
  * One visual-search hit: the product fields the agent needs, the primary image
  * resolved to a public URL, and the cosine similarity [0..1] of the best
@@ -157,6 +167,7 @@ export class ProductsService {
     private readonly storage: StorageService,
     private readonly colorsService: ColorsService,
     private readonly imageColors: ProductImageColorsRepository,
+    private readonly imageDescriptions: ProductImageDescriptionsRepository,
     private readonly embeddingService: EmbeddingService,
     private readonly embeddings: ProductImageEmbeddingsRepository,
     private readonly config: ConfigService,
@@ -615,7 +626,7 @@ export class ProductsService {
    */
   async findSimilarByImage(
     imageUrl: string,
-    opts?: { limit?: number; targetColor?: string },
+    opts?: { limit?: number; targetColor?: string; text?: string },
   ): Promise<SimilarProduct[]> {
     // SSRF guard: imageUrl is the customer-supplied URL fed to the embedding
     // fetch below. Validate before it reaches internal hosts / cloud metadata.
@@ -633,7 +644,13 @@ export class ProductsService {
         (await this.colors.resolveColorFamily(opts.targetColor)) ?? undefined;
     }
 
-    const vector = await this.embeddingService.embedImage(imageUrl);
+    // When the customer sent a caption with her photo, embed image + text into
+    // ONE multimodal vector (mirrors how product images are embedded with their
+    // description); otherwise embed the image alone.
+    const text = opts?.text?.trim();
+    const vector = text
+      ? await this.embeddingService.embedImageWithText(imageUrl, text)
+      : await this.embeddingService.embedImage(imageUrl);
     const rows = await this.embeddings.searchSimilarByEmbedding(vector, k, {
       colorFamily,
     });
@@ -763,30 +780,21 @@ export class ProductsService {
   }
 
   /**
-   * Run an uploaded image through the embedding model (a real SigLIP forward
-   * pass) to validate it is processable — backs the admin form's per-image
-   * "analyzed" indicator. Stateless: the vector is computed and discarded (the
-   * persisted, searchable embedding is written on publish).
+   * Validate that an uploaded image is a decodable raster image (JPEG/PNG/GIF/
+   * WebP) — backs the admin form's per-image "analyzed" indicator. The
+   * searchable embedding is computed remotely from the image URL on publish
+   * (gemini-embedding-2 via OpenRouter), so this is purely an upload-time format
+   * gate; nothing is sent to the model here.
    *
-   * Error mapping: an undecodable image is bad client input, so it surfaces as
-   * 422 with the stable `code: 'IMAGE_UNREADABLE'` (the frontend distinguishes
-   * it from a transient server error). Only ImageDecodeError is translated —
-   * any other failure (e.g. the model forward pass) propagates to Nest's default
-   * 500 so genuine server faults are not masked.
+   * An unreadable image is bad client input → 422 with the stable
+   * `code: 'IMAGE_UNREADABLE'` (the frontend distinguishes it from a 500).
    */
-  async analyzeImage(
-    buffer: Buffer,
-  ): Promise<{ analyzed: true; modelId: string }> {
-    try {
-      await this.embeddingService.embedImage(buffer);
-    } catch (err) {
-      if (err instanceof ImageDecodeError) {
-        throw new UnprocessableEntityException({
-          code: 'IMAGE_UNREADABLE',
-          message: 'الصورة غير قابلة للقراءة',
-        });
-      }
-      throw err;
+  analyzeImage(buffer: Buffer): { analyzed: true; modelId: string } {
+    if (!sniffImageMediaType(buffer)) {
+      throw new UnprocessableEntityException({
+        code: 'IMAGE_UNREADABLE',
+        message: 'الصورة غير قابلة للقراءة',
+      });
     }
     return { analyzed: true, modelId: this.embeddingService.modelId };
   }
@@ -896,6 +904,43 @@ export class ProductsService {
   }
 
   /**
+   * Set (or replace) the admin-authored description of one product image. The
+   * text is embedded together with the image so visual search matches on both.
+   * After writing, the product's embeddings are refreshed best-effort
+   * (non-blocking) so the new words are baked into the vector.
+   *
+   * Admin boundary: does not enforce the publish gate (drafts are editable).
+   */
+  async setImageDescription(
+    id: string,
+    storageKey: string,
+    input: { description: string },
+  ): Promise<ImageWithDescription> {
+    const { description } = parseOrThrow(setImageDescriptionSchema, input);
+    const product = await this.repo.findById(id);
+    if (!product) {
+      throw new NotFoundException(`Product ${id} not found`);
+    }
+    const keys = product.imageUrls ?? [];
+    if (!keys.includes(storageKey)) {
+      throw new NotFoundException(
+        `Image key '${storageKey}' not found on product ${id}`,
+      );
+    }
+
+    await this.imageDescriptions.upsert(id, storageKey, description);
+    // The image's embedding bakes in this text — refresh best-effort.
+    this.scheduleEmbeddingSync(product);
+
+    return {
+      key: storageKey,
+      url: await this.storage.getUrl(storageKey),
+      isPrimary: keys[0] === storageKey,
+      description,
+    };
+  }
+
+  /**
    * Delete a single image from a product:
    *   1. Load the product (404 if missing).
    *   2. Verify the key is in `imageUrls` (404 if not found).
@@ -917,6 +962,7 @@ export class ProductsService {
     // finally update the DB row.
     await this.storage.deleteImage(key);
     await this.imageColors.deleteForImage(id, key);
+    await this.imageDescriptions.deleteForImage(id, key);
     const remaining = keys.filter((k) => k !== key);
     const updated = await this.repo.updateById(id, { imageUrls: remaining });
     if (!updated) {
@@ -1029,10 +1075,16 @@ export class ProductsService {
       return;
     }
 
+    const descriptions = await this.imageDescriptions.getMapByProduct(
+      product.id,
+    );
     for (const key of keys) {
       try {
         const url = await this.storage.getUrl(key);
-        const vector = await this.embeddingService.embedImage(url);
+        const desc = descriptions[key];
+        const vector = desc
+          ? await this.embeddingService.embedImageWithText(url, desc)
+          : await this.embeddingService.embedImage(url);
         await this.embeddings.upsert(
           product.id,
           key,
@@ -1098,6 +1150,9 @@ export class ProductsService {
       const already = new Set(
         await this.embeddings.findEmbeddedKeys(product.id, modelId),
       );
+      const descriptions = await this.imageDescriptions.getMapByProduct(
+        product.id,
+      );
       for (const key of keys) {
         done++;
         if (already.has(key)) {
@@ -1106,7 +1161,10 @@ export class ProductsService {
         }
         try {
           const url = await this.storage.getUrl(key);
-          const vector = await this.embeddingService.embedImage(url);
+          const desc = descriptions[key];
+          const vector = desc
+            ? await this.embeddingService.embedImageWithText(url, desc)
+            : await this.embeddingService.embedImage(url);
           await this.embeddings.upsert(product.id, key, vector, modelId);
           embedded++;
         } catch (err: unknown) {
