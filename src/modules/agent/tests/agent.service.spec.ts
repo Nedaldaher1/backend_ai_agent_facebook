@@ -348,6 +348,56 @@ describe('AgentService', () => {
     );
   });
 
+  it('applies the default modelSettings (temp 0.5 / topP 0.8 / maxOutputTokens 512) to generate', async () => {
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      makeConversationsMock(),
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    expect(fakeSalesAgent.generate).toHaveBeenCalledWith(
+      'مرحبا',
+      expect.objectContaining({
+        modelSettings: { temperature: 0.5, topP: 0.8, maxOutputTokens: 512 },
+      }),
+    );
+  });
+
+  it('honours AGENT_TEMPERATURE / AGENT_TOP_P / AGENT_MAX_OUTPUT_TOKENS overrides (coerced to numbers)', async () => {
+    const service = new AgentService(
+      makeConfigMock('postgres://x', {
+        AGENT_TEMPERATURE: '0.2',
+        AGENT_TOP_P: '0.95',
+        AGENT_MAX_OUTPUT_TOKENS: '256',
+      }),
+      productsMock,
+      makeConversationsMock(),
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    expect(fakeSalesAgent.generate).toHaveBeenCalledWith(
+      'مرحبا',
+      expect.objectContaining({
+        modelSettings: { temperature: 0.2, topP: 0.95, maxOutputTokens: 256 },
+      }),
+    );
+  });
+
   it('calls findOrCreateByPsid with contactId and the derived threadId', async () => {
     const conversations = makeConversationsMock('convo-42');
     const service = new AgentService(

@@ -191,6 +191,19 @@ export class AgentService implements OnModuleInit {
   private salesAgent!: Agent;
 
   /**
+   * Per-turn generation tuning forwarded to the model on every generate()
+   * (Mastra modelSettings → AI SDK v5 CallSettings). Config-driven
+   * (AGENT_TEMPERATURE / AGENT_TOP_P / AGENT_MAX_OUTPUT_TOKENS). Set in
+   * onModuleInit; applied at the single generate() call site so it governs
+   * every customer turn without abusing the model fallback-array form.
+   */
+  private modelSettings!: {
+    temperature: number;
+    topP: number;
+    maxOutputTokens: number;
+  };
+
+  /**
    * The Mastra Memory instance (working memory + thread/message store). Held so
    * the admin "reset conversation" action can clear a customer's memory.
    */
@@ -218,6 +231,18 @@ export class AgentService implements OnModuleInit {
     const modelId =
       this.config.get<string>('AGENT_MODEL_ID') ??
       'openrouter/google/gemini-3.5-flash';
+    // Generation tuning forwarded to the model on every turn (Mastra
+    // modelSettings). Config-driven with the production defaults baked in;
+    // env.schema validates/coerces, the `?? 'default'` keeps unit tests (which
+    // mock ConfigService) honest. Number() guards against a string slipping
+    // through either path.
+    this.modelSettings = {
+      temperature: Number(this.config.get<string>('AGENT_TEMPERATURE') ?? '0.5'),
+      topP: Number(this.config.get<string>('AGENT_TOP_P') ?? '0.8'),
+      maxOutputTokens: Number(
+        this.config.get<string>('AGENT_MAX_OUTPUT_TOKENS') ?? '512',
+      ),
+    };
     // Mastra framework logger level (validated enum, defaults to 'info' in the
     // env schema). Controls Mastra's own diagnostics; per-turn tool-call lines
     // are logged by logToolCalls regardless.
@@ -240,8 +265,9 @@ export class AgentService implements OnModuleInit {
     this.salesAgent = salesAgent;
     this.memory = memory;
 
+    const { temperature, topP, maxOutputTokens } = this.modelSettings;
     this.logger.log(
-      `Mastra ready: schema=mastra, model=${modelId}, logLevel=${logLevel}, workingMemory=resource, tools=11, instructions=dynamic`,
+      `Mastra ready: schema=mastra, model=${modelId}, temp=${temperature}, topP=${topP}, maxOutputTokens=${maxOutputTokens}, logLevel=${logLevel}, workingMemory=resource, tools=11, instructions=dynamic`,
     );
   }
 
@@ -470,6 +496,11 @@ export class AgentService implements OnModuleInit {
     const result = (await this.salesAgent.generate(input.text, {
       memory: { resource: resourceId, thread: threadId },
       requestContext,
+      // Generation tuning (temperature/topP/maxOutputTokens) applied to every
+      // turn. Mastra forwards it to the model as AI SDK v5 CallSettings. Set on
+      // each generate() — the single call site — since v1.42's Agent ctor has no
+      // top-level modelSettings (it lives on execution options / fallback array).
+      modelSettings: this.modelSettings,
       ...(context ? { context } : {}),
     })) as GenerateResult;
 

@@ -27,6 +27,21 @@ export const envSchema = z
     MASTRA_LOG_LEVEL: z
       .enum(['debug', 'info', 'warn', 'error', 'silent'])
       .default('info'),
+
+    // --- Sales-agent generation settings (Mastra modelSettings) ---
+    // Tuning knobs forwarded to the model on every sales-agent turn (AI SDK v5
+    // CallSettings). Validated here so a misconfigured value fails fast at boot
+    // instead of silently becoming NaN / out-of-range at request time. Defaults
+    // are the production-tuned values; override per-env without a code change.
+    // Sampling temperature [0..2]; lower = more focused/consistent replies.
+    AGENT_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.5),
+    // Nucleus sampling [0..1]. (Provider note: prefer tuning either temperature
+    // or topP, not both; Gemini accepts both simultaneously.)
+    AGENT_TOP_P: z.coerce.number().min(0).max(1).default(0.8),
+    // Hard cap on tokens generated per step. Sales replies are short (carousels
+    // carry the imagery), so 512 is ample headroom while bounding cost/latency.
+    AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(512),
+
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).
     STORAGE_DRIVER: z.enum(['fs', 'r2']).default('r2'),
