@@ -15,16 +15,19 @@ import { products } from './product.entity';
  * products write-path (on publish / image-set change) and by the backfill
  * script; read by the agent's `find_similar_by_image` via cosine ANN search.
  *
- * One row per (product, image_key). `embedding` is an L2-normalized 768-d vector
- * produced by Marqo-FashionSigLIP; search ranks by cosine distance (`<=>` /
- * `vector_cosine_ops`). `model_id` records which model/version produced the
- * vector so a model swap can be detected and re-embedded. The unique
- * (product_id, image_key) lets re-embedding UPSERT instead of duplicating.
+ * One row per (product, image_key). `embedding` is an L2-normalized 1536-d
+ * vector produced by gemini-embedding-2 (image + admin description, via
+ * OpenRouter); search ranks by cosine distance (`<=>` / `vector_cosine_ops`).
+ * `model_id` records which model/version produced the vector so a model swap can
+ * be detected and re-embedded. The unique (product_id, image_key) lets
+ * re-embedding UPSERT instead of duplicating.
  *
- * NOTE: the 768 literal must match EMBEDDING_DIM and the HNSW index. The
- * `CREATE EXTENSION vector` and the HNSW cosine index are applied via raw SQL in
- * the 0009 migration (drizzle-kit emits neither); this entity stays the typed
- * source of truth for the columns and the unique/btree indexes.
+ * NOTE: the 1536 literal must match EMBEDDING_DIM and the HNSW index (1536 is
+ * within pgvector's 2000-dim hnsw cap). `CREATE EXTENSION vector` + the HNSW
+ * cosine index are raw SQL (drizzle-kit emits neither); the 0009 migration
+ * created them at 768, and the dim-change migration drops the index, retypes to
+ * vector(1536), and rebuilds it. This entity stays the typed source of truth for
+ * the columns and the unique/btree indexes.
  */
 export const productImageEmbeddings = pgTable(
   'product_image_embeddings',
@@ -36,10 +39,10 @@ export const productImageEmbeddings = pgTable(
     // R2 storage key the embedding was computed from. Resolved to a public URL
     // via StorageService.getUrl(key) at embed time; kept here for dedupe/re-embed.
     imageKey: text('image_key').notNull(),
-    // L2-normalized embedding. The 768 dimension must match EMBEDDING_DIM and the
-    // vector_cosine_ops HNSW index created in the 0009 migration.
-    embedding: vector('embedding', { dimensions: 768 }).notNull(),
-    // Model+version that produced this vector (e.g. 'Marqo/marqo-fashionSigLIP').
+    // L2-normalized embedding. The 1536 dimension must match EMBEDDING_DIM and
+    // the vector_cosine_ops HNSW index (1536 ≤ pgvector's 2000-dim hnsw cap).
+    embedding: vector('embedding', { dimensions: 1536 }).notNull(),
+    // Model+version that produced this vector (e.g. 'google/gemini-embedding-2').
     modelId: text('model_id').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

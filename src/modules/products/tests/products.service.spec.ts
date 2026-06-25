@@ -4,17 +4,6 @@
 jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
-// EmbeddingService is pulled in (for DI metadata) via ProductsService and imports
-// @huggingface/transformers, which is ESM-only; stub it so the chain loads under
-// Jest (CJS). A mock EmbeddingService is injected, so the real one never runs.
-jest.mock('@huggingface/transformers', () => ({
-  env: {},
-  AutoProcessor: { from_pretrained: jest.fn() },
-  AutoTokenizer: { from_pretrained: jest.fn() },
-  RawImage: { read: jest.fn(), fromBlob: jest.fn() },
-  SiglipTextModel: { from_pretrained: jest.fn() },
-  SiglipVisionModel: { from_pretrained: jest.fn() },
-}));
 // findSimilarByImage now runs an SSRF guard (audit V1) that resolves the
 // customer URL host; the test hosts ("x") aren't real, so stub DNS to a public
 // address so the guard passes through to the (mocked) embedding/repo path.
@@ -30,10 +19,10 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ProductsService } from '../products.service';
-import { ImageDecodeError } from '@/modules/embeddings/image-decode.error';
 import type { ColorSynonymsService } from '../color-synonyms.service';
 import type { ColorsService } from '../colors.service';
 import type { ProductImageColorsRepository } from '../product-image-colors.repository';
+import type { ProductImageDescriptionsRepository } from '../product-image-descriptions.repository';
 import type { ProductsRepository } from '../products.repository';
 import type { ProductImageEmbeddingsRepository } from '../product-image-embeddings.repository';
 import type { StorageService } from '@/core/storage/storage.service';
@@ -121,10 +110,21 @@ describe('ProductsService', () => {
     deleteForImage,
   } as unknown as ProductImageColorsRepository;
 
+  const getDescMapByProduct = jest.fn();
+  const upsertDescription = jest.fn();
+  const deleteDescForImage = jest.fn();
+  const imageDescriptions = {
+    getMapByProduct: getDescMapByProduct,
+    upsert: upsertDescription,
+    deleteForImage: deleteDescForImage,
+  } as unknown as ProductImageDescriptionsRepository;
+
   const embedImage = jest.fn();
+  const embedImageWithText = jest.fn();
   const embeddingService = {
     modelId: 'test-model',
     embedImage,
+    embedImageWithText,
   } as unknown as EmbeddingService;
 
   const upsertEmbedding = jest.fn();
@@ -150,6 +150,7 @@ describe('ProductsService', () => {
     storage,
     colorsService,
     imageColors,
+    imageDescriptions,
     embeddingService,
     embeddings,
     config,
@@ -169,7 +170,11 @@ describe('ProductsService', () => {
     deleteForImage.mockResolvedValue(undefined);
     // Embedding write-path/search: clean no-op defaults so the fire-and-forget
     // sync fired by create/publish/image changes never rejects during a test.
-    embedImage.mockResolvedValue(new Array(768).fill(0));
+    embedImage.mockResolvedValue(new Array(1536).fill(0));
+    embedImageWithText.mockResolvedValue(new Array(1536).fill(0));
+    getDescMapByProduct.mockResolvedValue({});
+    upsertDescription.mockResolvedValue(undefined);
+    deleteDescForImage.mockResolvedValue(undefined);
     upsertEmbedding.mockResolvedValue(undefined);
     deleteMissingKeys.mockResolvedValue(0);
     findEmbeddedKeys.mockResolvedValue([]);
@@ -729,26 +734,23 @@ describe('ProductsService', () => {
 
   // --- analyzeImage ---
 
-  it('analyzeImage runs the buffer through embedImage and returns the model id', async () => {
-    const buffer = Buffer.from('image-bytes');
+  it('analyzeImage accepts a decodable image (JPEG magic bytes), no remote call', () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0x00, 0x11, 0x22]);
 
-    const result = await service.analyzeImage(buffer);
+    const result = service.analyzeImage(jpeg);
 
-    expect(embedImage).toHaveBeenCalledWith(buffer);
     expect(result).toEqual({ analyzed: true, modelId: 'test-model' });
+    // The searchable embedding is computed remotely on publish — never here.
+    expect(embedImage).not.toHaveBeenCalled();
+    expect(embedImageWithText).not.toHaveBeenCalled();
   });
 
-  it('analyzeImage maps an ImageDecodeError to 422 with code IMAGE_UNREADABLE', async () => {
-    embedImage.mockRejectedValueOnce(
-      new ImageDecodeError('image could not be decoded'),
-    );
-
+  it('analyzeImage rejects a non-image with 422 IMAGE_UNREADABLE', () => {
     expect.assertions(3);
     try {
-      await service.analyzeImage(Buffer.from('corrupt-bytes'));
+      service.analyzeImage(Buffer.from('not-an-image'));
     } catch (err) {
-      // UnprocessableEntityException is the NestJS 422 type; the stable `code`
-      // lets the frontend tell a bad image apart from a transient server error.
+      // 422 + stable `code` lets the frontend tell a bad upload apart from a 500.
       expect(err).toBeInstanceOf(UnprocessableEntityException);
       const ex = err as UnprocessableEntityException;
       expect(ex.getStatus()).toBe(422);
@@ -756,20 +758,34 @@ describe('ProductsService', () => {
     }
   });
 
-  it('analyzeImage does NOT mask a generic (forward-pass) error — it propagates to 500', async () => {
-    embedImage.mockRejectedValueOnce(
-      new Error('onnxruntime forward pass failed'),
+  // --- setImageDescription ---
+
+  it('setImageDescription validates the key, upserts, and returns the descriptor', async () => {
+    findById.mockResolvedValue(makeProduct({ imageUrls: ['a.jpg', 'b.jpg'] }));
+
+    const result = await service.setImageDescription('p1', 'b.jpg', {
+      description: 'عباية حمراء بتطريز زهور',
+    });
+
+    expect(upsertDescription).toHaveBeenCalledWith(
+      'p1',
+      'b.jpg',
+      'عباية حمراء بتطريز زهور',
     );
+    expect(result).toMatchObject({
+      key: 'b.jpg',
+      isPrimary: false,
+      description: 'عباية حمراء بتطريز زهور',
+    });
+  });
 
-    const err: unknown = await service
-      .analyzeImage(Buffer.from('bad'))
-      .catch((e: unknown) => e);
+  it('setImageDescription throws NotFoundException when the image key is absent', async () => {
+    findById.mockResolvedValue(makeProduct({ imageUrls: ['a.jpg'] }));
 
-    // A genuine server fault must stay a generic Error (Nest default 500),
-    // never be downgraded to a 422.
-    expect(err).toBeInstanceOf(Error);
-    expect(err).not.toBeInstanceOf(UnprocessableEntityException);
-    expect((err as Error).message).toBe('onnxruntime forward pass failed');
+    await expect(
+      service.setImageDescription('p1', 'missing.jpg', { description: 'x' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(upsertDescription).not.toHaveBeenCalled();
   });
 
   // --- findSimilarByImage ---
@@ -786,6 +802,21 @@ describe('ProductsService', () => {
     distance: 0.08,
     similarity: 0.92,
     ...overrides,
+  });
+
+  it('findSimilarByImage embeds image + caption together when text is provided', async () => {
+    embedImageWithText.mockResolvedValue(new Array(1536).fill(0.2));
+    searchSimilarByEmbedding.mockResolvedValue([makeEmbeddingRow()]);
+
+    await service.findSimilarByImage('https://x/y.jpg', {
+      text: 'عباية سوداء',
+    });
+
+    expect(embedImageWithText).toHaveBeenCalledWith(
+      'https://x/y.jpg',
+      'عباية سوداء',
+    );
+    expect(embedImage).not.toHaveBeenCalled();
   });
 
   it('findSimilarByImage with targetColor resolves color family and forwards it to the repo', async () => {

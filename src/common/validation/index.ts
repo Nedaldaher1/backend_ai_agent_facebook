@@ -86,6 +86,17 @@ export const setImageColorsSchema = z
   .strict();
 export type SetImageColorsInput = z.infer<typeof setImageColorsSchema>;
 
+// --- product_image_descriptions (write payload: set one image's description) ---
+// The admin-authored text is embedded together with the image (one multimodal
+// vector via gemini-embedding-2), so it is trimmed, non-empty, and length-capped
+// to keep the embedding input bounded.
+export const setImageDescriptionSchema = z
+  .object({ description: z.string().trim().min(1).max(1000) })
+  .strict();
+export type SetImageDescriptionInput = z.infer<
+  typeof setImageDescriptionSchema
+>;
+
 // --- knowledge_entries (control-plane) ---
 export const createKnowledgeEntrySchema = insertKnowledgeEntrySchema
   .omit({ id: true, createdAt: true, updatedAt: true })

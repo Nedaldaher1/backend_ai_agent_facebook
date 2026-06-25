@@ -45,20 +45,24 @@ export const envSchema = z
     // no seed mechanism), then set it back. Any other value (incl. unset) → 403.
     ALLOW_REGISTRATION: z.string().optional(),
 
-    // --- Visual search embeddings (Marqo-FashionSigLIP via Transformers.js) ---
-    // Multimodal model id; images and text embed into one 768-d space. A model
-    // swap is a config change + re-backfill, never a code edit.
-    EMBEDDING_MODEL_ID: z.string().default('Marqo/marqo-fashionSigLIP'),
-    // Embedding dimension. MUST equal the model output, the pgvector column, and
-    // the HNSW index — all 768 for fashionSigLIP. Asserted at runtime.
-    EMBEDDING_DIM: z.coerce.number().int().positive().default(768),
-    // ONNX weight dtype. fp32 = best retrieval quality; q8 = smaller/faster. The
-    // SAME dtype must be used for catalog and query embeddings, so it is one knob.
-    EMBEDDING_DTYPE: z
-      .enum(['fp32', 'fp16', 'q8', 'int8', 'uint8', 'q4'])
-      .default('fp32'),
-    // Writable, persistent dir for downloaded model files (Transformers.js cache).
-    TRANSFORMERS_CACHE_DIR: z.string().default('./.cache/transformers'),
+    // --- Visual search embeddings (gemini-embedding-2 via OpenRouter) ---
+    // Multimodal embedding model: images and text map into ONE unified vector
+    // space (cross-modal cosine search), reached over OpenRouter's OpenAI-
+    // compatible /embeddings endpoint with OPENROUTER_API_KEY. A model swap is a
+    // config change + a FULL re-backfill (spaces are incompatible across models).
+    EMBEDDING_MODEL_ID: z.string().default('google/gemini-embedding-2'),
+    // Embedding dimension. MUST equal the pgvector column and the HNSW index
+    // (1536; within pgvector's 2000-dim hnsw cap). Requested via the `dimensions`
+    // param; truncated/asserted to this length at runtime.
+    EMBEDDING_DIM: z.coerce.number().int().positive().default(1536),
+    // Embeddings endpoint (OpenAI-compatible). Override only to point at a proxy.
+    EMBEDDING_API_URL: z
+      .string()
+      .url()
+      .default('https://openrouter.ai/api/v1/embeddings'),
+    // Per-request timeout (ms), and retries on transient failures (429/5xx/network).
+    EMBEDDING_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    EMBEDDING_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
     // Default number of distinct products visual search returns.
     SIMILARITY_TOP_K: z.coerce.number().int().positive().default(6),
     // Minimum cosine similarity [0..1] a match must clear to be surfaced; below

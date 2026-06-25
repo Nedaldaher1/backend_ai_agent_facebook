@@ -28,15 +28,25 @@ import { RolesGuard } from '@/common/guards/roles.guard';
 import { ZodValidationPipe } from '@/common/pipes/zod-validation.pipe';
 import {
   setImageColorsSchema,
+  setImageDescriptionSchema,
   type SetImageColorsInput,
+  type SetImageDescriptionInput,
 } from '@/common/validation';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
 import {
   ImageWithColorsDto,
   SetImageColorsDto,
 } from './dto/product-image-color.dto';
+import {
+  ImageWithDescriptionDto,
+  SetImageDescriptionDto,
+} from './dto/product-image-description.dto';
 import type { Product } from './entities/product.entity';
-import { ProductsService, type ImageWithColors } from './products.service';
+import {
+  ProductsService,
+  type ImageWithColors,
+  type ImageWithDescription,
+} from './products.service';
 
 /**
  * Admin image management routes for a product. Image keys (the `:imageId`
@@ -48,6 +58,7 @@ import { ProductsService, type ImageWithColors } from './products.service';
  *   DELETE /admin/products/:id/images/:imageId         → delete one image
  *   PATCH  /admin/products/:id/images/:imageId/primary → promote to primary (index 0)
  *   PUT    /admin/products/:id/images/:imageId/colors  → set the image's colors
+ *   PUT    /admin/products/:id/images/:imageId/description → set the image's description
  */
 @ApiTags('Admin')
 @Controller('admin/products/:id/images')
@@ -187,5 +198,42 @@ export class ProductImagesAdminController {
     @Body(new ZodValidationPipe(setImageColorsSchema)) dto: SetImageColorsInput,
   ): Promise<ImageWithColors> {
     return this.products.setImageColors(id, imageId, dto);
+  }
+
+  @Put(':imageId/description')
+  @ApiOperation({
+    summary: "Set a product image's description",
+    description:
+      'Sets (or replaces) the admin-authored description of one image. The text ' +
+      'is embedded together with the image (one multimodal vector) so visual ' +
+      'search matches on both the picture and the words. Refreshes the product ' +
+      'embeddings best-effort. Returns the image descriptor with the storage key ' +
+      'resolved to a public URL.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Product UUID.' })
+  @ApiParam({
+    name: 'imageId',
+    description: 'Storage key of the image (e.g. `abc123.jpg`).',
+  })
+  @ApiBody({ type: SetImageDescriptionDto })
+  @ApiOkResponse({
+    description: 'Image description updated.',
+    type: ImageWithDescriptionDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'The product or the image key was not found.',
+  })
+  @ApiBadRequestResponse({
+    description: 'The payload was invalid (empty or too-long `description`).',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  @ApiForbiddenResponse({ description: 'Insufficient role.' })
+  setImageDescription(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('imageId') imageId: string,
+    @Body(new ZodValidationPipe(setImageDescriptionSchema))
+    dto: SetImageDescriptionInput,
+  ): Promise<ImageWithDescription> {
+    return this.products.setImageDescription(id, imageId, dto);
   }
 }

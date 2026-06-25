@@ -30,6 +30,7 @@ import { ConfigModule } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { EmbeddingService } from '@/modules/embeddings/embedding.service';
 import { EmbeddingsModule } from '@/modules/embeddings/embeddings.module';
+import { sniffImageMediaType } from '@/common/images/sniff-image.util';
 import { ALLOWED_IMAGE_EXTENSIONS } from '@/core/storage/storage.constants';
 
 /**
@@ -205,7 +206,11 @@ async function main(): Promise<void> {
     let done = 0;
     for (const it of found.items) {
       const buffer = readFileSync(join(dir, it.rel));
-      const vec = await embeddings.embedImage(buffer);
+      // embedImage now takes a URL; the probe holds local bytes, so it sends a
+      // base64 data URL for the diagnostic run.
+      const mediaType = sniffImageMediaType(buffer) ?? 'image/jpeg';
+      const dataUrl = `data:${mediaType};base64,${buffer.toString('base64')}`;
+      const vec = await embeddings.embedImage(dataUrl);
       items.push({ ...it, vec });
       logger.log(`  [${++done}/${found.items.length}] ${it.rel}`);
     }

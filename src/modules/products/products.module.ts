@@ -11,6 +11,7 @@ import { ColorsAdminController } from './colors-admin.controller';
 import { ColorsRepository } from './colors.repository';
 import { ColorsService } from './colors.service';
 import { ProductImageColorsRepository } from './product-image-colors.repository';
+import { ProductImageDescriptionsRepository } from './product-image-descriptions.repository';
 import { ProductImageEmbeddingsRepository } from './product-image-embeddings.repository';
 import { ProductImagesAdminController } from './product-images-admin.controller';
 import { ProductImagesController } from './product-images.controller';
@@ -49,6 +50,7 @@ import { ProductsService } from './products.service';
     ColorsService,
     ColorsRepository,
     ProductImageColorsRepository,
+    ProductImageDescriptionsRepository,
     ProductImageEmbeddingsRepository,
     AdProductLinksRepository,
     AdProductLinksService,

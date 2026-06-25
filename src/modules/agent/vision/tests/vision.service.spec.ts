@@ -15,14 +15,6 @@ const mockDownloadImage = jest.fn();
 jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
-jest.mock('@huggingface/transformers', () => ({
-  AutoProcessor: { from_pretrained: jest.fn() },
-  AutoTokenizer: { from_pretrained: jest.fn() },
-  RawImage: { read: jest.fn(), fromBlob: jest.fn() },
-  SiglipTextModel: { from_pretrained: jest.fn() },
-  SiglipVisionModel: { from_pretrained: jest.fn() },
-  env: {},
-}));
 jest.mock('@mastra/core/agent', () => ({
   Agent: jest.fn().mockImplementation(() => ({ generate: mockGenerate })),
 }));

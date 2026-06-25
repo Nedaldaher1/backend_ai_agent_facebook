@@ -363,6 +363,11 @@ export class AgentService implements OnModuleInit {
     if (input.lastImageUrl) {
       requestContext.set('lastImageUrl', input.lastImageUrl);
       requestContext.set('imageLed', true);
+      // The customer's caption (if any) this turn — find_similar_by_image embeds
+      // it together with the photo into one multimodal vector.
+      if (input.text?.trim()) {
+        requestContext.set('lastImageText', input.text.trim());
+      }
 
       // Vision pre-step (deterministic, best-effort): extract structured
       // attributes from the photo via Claude Haiku and seed them so the agent
