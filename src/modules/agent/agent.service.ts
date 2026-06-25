@@ -198,6 +198,11 @@ export class AgentService implements OnModuleInit {
 
   onModuleInit(): void {
     const connectionString = this.config.getOrThrow<string>('DATABASE_URL');
+    // Model id is config-driven (AGENT_MODEL_ID) so it can be swapped without a
+    // code edit. Defaults to Gemini 3.5 Flash via OpenRouter.
+    const modelId =
+      this.config.get<string>('AGENT_MODEL_ID') ??
+      'openrouter/google/gemini-3.5-flash';
     const { mastra, salesAgent } = buildMastra({
       connectionString,
       products: this.products,
@@ -206,12 +211,13 @@ export class AgentService implements OnModuleInit {
       knowledge: this.knowledge,
       sizing: this.sizing,
       agentBehavior: this.agentBehavior,
+      modelId,
     });
     this.mastra = mastra;
     this.salesAgent = salesAgent;
 
     this.logger.log(
-      'Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=10, instructions=dynamic',
+      `Mastra ready: schema=mastra, model=${modelId}, workingMemory=resource, tools=10, instructions=dynamic`,
     );
   }
 

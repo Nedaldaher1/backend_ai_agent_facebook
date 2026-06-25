@@ -1,9 +1,9 @@
 /**
  * Fetch a remote customer image (typically a temporary Facebook CDN URL) into
- * bytes + media type, so it can be sent to Claude vision as base64.
+ * bytes + media type, so it can be sent to the vision model as base64.
  *
- * Anthropic cannot re-fetch an expiring URL, so we download once and inline the
- * bytes. Failures are typed so the caller (VisionService) can degrade
+ * The model provider cannot re-fetch an expiring URL, so we download once and
+ * inline the bytes. Failures are typed so the caller (VisionService) can degrade
  * gracefully: ImageFetchError = network/HTTP/timeout/oversize; ImageDecodeError
  * (reused from the embeddings module) = the bytes are not a usable image.
  */

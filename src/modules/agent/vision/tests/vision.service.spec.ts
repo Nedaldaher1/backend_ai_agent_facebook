@@ -1,6 +1,6 @@
 /**
- * Unit tests for VisionService. The real Claude call cannot run in dev (the
- * ANTHROPIC_API_KEY is a placeholder → 401), so the Mastra Agent is mocked; we
+ * Unit tests for VisionService. The real model call cannot run in dev (the
+ * OPENROUTER_API_KEY is a placeholder → 401), so the Mastra Agent is mocked; we
  * assert the request shape (image part + structuredOutput) and, above all, the
  * graceful-degradation contract: extractAttributes NEVER throws.
  */

@@ -88,9 +88,17 @@ const MockRequestContextCtor = RequestContext as unknown as jest.MockedClass<
 // Shared fakes
 // ---------------------------------------------------------------------------
 
-/** A fake ConfigService that returns the given DATABASE_URL. */
-function makeConfigMock(url = 'postgres://x'): ConfigService {
-  return { getOrThrow: () => url } as unknown as ConfigService;
+/** A fake ConfigService that returns the given DATABASE_URL, plus optional
+ *  `get(key)` overrides (e.g. AGENT_MODEL_ID). Unknown keys → undefined, so the
+ *  service falls back to its code defaults. */
+function makeConfigMock(
+  url = 'postgres://x',
+  overrides: Record<string, string | undefined> = {},
+): ConfigService {
+  return {
+    getOrThrow: () => url,
+    get: (key: string) => overrides[key],
+  } as unknown as ConfigService;
 }
 
 /** A minimal ProductsService stub. */
@@ -207,6 +215,50 @@ describe('AgentService', () => {
     expect(mockBuildMastra).toHaveBeenCalledTimes(1);
     expect(mockBuildMastra).toHaveBeenCalledWith(
       expect.objectContaining({ connectionString: url }),
+    );
+  });
+
+  it('onModuleInit passes the default model id (Gemini 3.5 Flash via OpenRouter) to buildMastra', () => {
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      makeConversationsMock(),
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+
+    service.onModuleInit();
+
+    expect(mockBuildMastra).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'openrouter/google/gemini-3.5-flash',
+      }),
+    );
+  });
+
+  it('onModuleInit honours an AGENT_MODEL_ID override', () => {
+    const service = new AgentService(
+      makeConfigMock('postgres://x', {
+        AGENT_MODEL_ID: 'openrouter/google/gemini-2.5-flash',
+      }),
+      productsMock,
+      makeConversationsMock(),
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+
+    service.onModuleInit();
+
+    expect(mockBuildMastra).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'openrouter/google/gemini-2.5-flash',
+      }),
     );
   });
 

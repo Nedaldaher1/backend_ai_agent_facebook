@@ -24,11 +24,11 @@ This repository is the **backend only**. The admin panel (Next.js) and the Faceb
 - **Framework:** NestJS with the **Fastify** adapter (not Express)
 - **ORM:** Drizzle ORM
 - **Database:** PostgreSQL (local during development, via WSL)
-- **AI orchestration:** Mastra, using Claude via the Anthropic AI SDK provider
+- **AI orchestration:** Mastra, using Google Gemini (3.5 Flash) via OpenRouter
 - **Validation:** zod and class-validator
 - **Module system:** ESM (`module: nodenext`). Path aliases are rewritten at build time with `tsc-alias` — never assume `tsconfig-paths` works here.
 
-When you need current product or library facts (NestJS, Mastra, Drizzle, Bun, Anthropic SDK), verify against official docs rather than relying on memory.
+When you need current product or library facts (NestJS, Mastra, Drizzle, Bun, OpenRouter), verify against official docs rather than relying on memory.
 
 ---
 
@@ -69,7 +69,7 @@ Wiring that *is* in place:
 - `is_published` is the publish gate: customer-facing and agent read paths must filter `is_published = true`. Admin paths may see drafts.
 - Tools read the database through the data-access layer, never via raw SQL strings.
 - Money uses `numeric(10,3)` for JOD; never use floating-point math on prices.
-- Secrets (DATABASE_URL, ANTHROPIC_API_KEY) live in environment variables, never in code.
+- Secrets (DATABASE_URL, OPENROUTER_API_KEY) live in environment variables, never in code.
 - Color search normalizes dialect terms through `color_synonyms` (e.g. "نبيتي" → red family).
 
 ---

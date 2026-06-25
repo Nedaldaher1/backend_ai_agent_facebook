@@ -1,7 +1,7 @@
 /**
  * VisionService — extracts structured attributes from a customer-sent product
- * image using Claude Haiku, so the agent can search the catalog by what the
- * customer actually photographed.
+ * image using a multimodal model (Gemini 3.5 Flash via OpenRouter), so the
+ * agent can search the catalog by what the customer actually photographed.
  *
  * Design:
  *  - Runs as a deterministic PRE-GENERATE step (called from AgentService when an
@@ -13,10 +13,10 @@
  *    customer's turn always proceeds (mirrors find_similar_by_image's best-effort
  *    contract).
  *
- * The live model call cannot be exercised in dev (the ANTHROPIC_API_KEY is a
+ * The live model call cannot be exercised in dev (the OPENROUTER_API_KEY is a
  * placeholder → 401); correctness here is covered by unit tests with a mocked
- * agent, and the schema/transport shape is verified against Anthropic + Mastra
- * type defs. Validate end-to-end once a real key is configured.
+ * agent, and the schema/transport shape is verified against the OpenRouter +
+ * Mastra type defs. Validate end-to-end once a real key is configured.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -82,7 +82,7 @@ export class VisionService {
     this.enabled = this.config.get<string>('VISION_ENABLED') !== 'false';
     this.modelId =
       this.config.get<string>('VISION_MODEL_ID') ??
-      'anthropic/claude-haiku-4-5';
+      'openrouter/google/gemini-3.5-flash';
     this.minConfidence = Number(
       this.config.get<string>('VISION_MIN_CONFIDENCE') ?? '0.4',
     );

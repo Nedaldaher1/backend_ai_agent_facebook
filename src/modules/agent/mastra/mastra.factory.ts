@@ -70,6 +70,10 @@ export interface BuildMastraDeps {
   sizing: SizingService;
   /** AgentBehaviorService — compiles dynamic system prompt (60s TTL cache). */
   agentBehavior: AgentBehaviorService;
+  /** Sales-agent model id — a Mastra model-router string (AGENT_MODEL_ID env),
+   *  e.g. 'openrouter/google/gemini-3.5-flash'. Injected so swapping the model
+   *  is a config change, never a code edit. */
+  modelId: string;
 }
 
 /**
@@ -82,7 +86,7 @@ export function buildMastra(deps: BuildMastraDeps): {
   mastra: Mastra;
   salesAgent: Agent;
 } {
-  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior } = deps;
+  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, modelId } = deps;
 
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
@@ -113,9 +117,12 @@ export function buildMastra(deps: BuildMastraDeps): {
     // async instructions function. Falls back to a safe default when empty.
     instructions: async () => agentBehavior.getInstructions(),
 
-    // Mastra's model router — reads ANTHROPIC_API_KEY from the environment
-    // automatically.  Do NOT import @ai-sdk/anthropic directly here.
-    model: 'anthropic/claude-sonnet-4-6',
+    // Mastra's model router. An 'openrouter/<provider>/<model>' id routes the
+    // call through OpenRouter, which the router authenticates with
+    // OPENROUTER_API_KEY (see @mastra/core provider-registry). The id is
+    // injected (AGENT_MODEL_ID), not hard-coded, so the model is swappable
+    // without a code edit.
+    model: modelId,
 
     tools,
 

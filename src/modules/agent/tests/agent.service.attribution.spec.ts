@@ -47,7 +47,10 @@ const mockBuildMastra = buildMastra as jest.MockedFunction<typeof buildMastra>;
 // ---------------------------------------------------------------------------
 
 function makeConfigMock(): ConfigService {
-  return { getOrThrow: () => 'postgres://x' } as unknown as ConfigService;
+  return {
+    getOrThrow: () => 'postgres://x',
+    get: () => undefined,
+  } as unknown as ConfigService;
 }
 
 const agentBehaviorMock: AgentBehaviorService = {

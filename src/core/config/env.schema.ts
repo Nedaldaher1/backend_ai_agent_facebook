@@ -15,7 +15,12 @@ export const envSchema = z
     // admin panel origin(s), e.g. 'https://admin.masafashion.com'.
     CORS_ORIGINS: z.string().optional(),
     DATABASE_URL: z.string().url(),
-    ANTHROPIC_API_KEY: z.string().min(1),
+    // LLM provider key. Every model call (sales agent + vision) routes through
+    // OpenRouter via Mastra's model router, which reads OPENROUTER_API_KEY.
+    OPENROUTER_API_KEY: z.string().min(1),
+    // Legacy Anthropic-direct key. Optional now that OpenRouter is the default
+    // provider; only needed if a *_MODEL_ID is pointed back at 'anthropic/...'.
+    ANTHROPIC_API_KEY: z.string().min(1).optional(),
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).
     STORAGE_DRIVER: z.enum(['fs', 'r2']).default('r2'),
