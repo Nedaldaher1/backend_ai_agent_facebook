@@ -23,11 +23,11 @@
  *    calls the tool to keep the JSON blob up-to-date as it learns about the
  *    customer.
  *
- *  - Domain tools (search_products, check_availability, get_product_media,
- *    recommend_size, get_product_for_order, capture_order, escalate_to_human,
- *    find_similar_by_image, get_order_status) are built via `buildSalesTools`
- *    and registered here. Adding `tools` does NOT remove the auto-registered
- *    `updateWorkingMemory` tool.
+ *  - Domain tools (search_products, list_all_products, check_availability,
+ *    get_product_media, recommend_size, get_product_for_order, capture_order,
+ *    escalate_to_human, find_similar_by_image, get_order_status) are built via
+ *    `buildSalesTools` and registered here. Adding `tools` does NOT remove the
+ *    auto-registered `updateWorkingMemory` tool.
  *
  *  - `instructions` is a dynamic async function backed by
  *    AgentBehaviorService.getInstructions() (60s TTL cache). Admin edits to
@@ -45,6 +45,7 @@ import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
+import { PinoLogger } from '@mastra/loggers';
 import { z } from 'zod';
 import type { ProductsService } from '@/modules/products/products.service';
 import type { OrdersService } from '@/modules/orders/orders.service';
@@ -70,6 +71,8 @@ export interface BuildMastraDeps {
   sizing: SizingService;
   /** AgentBehaviorService — compiles dynamic system prompt (60s TTL cache). */
   agentBehavior: AgentBehaviorService;
+  /** Mastra framework logger level (from MASTRA_LOG_LEVEL). */
+  logLevel: 'debug' | 'info' | 'warn' | 'error' | 'silent';
 }
 
 /**
@@ -81,8 +84,9 @@ export interface BuildMastraDeps {
 export function buildMastra(deps: BuildMastraDeps): {
   mastra: Mastra;
   salesAgent: Agent;
+  memory: Memory;
 } {
-  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior } = deps;
+  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, logLevel } = deps;
 
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
@@ -96,11 +100,70 @@ export function buildMastra(deps: BuildMastraDeps): {
 
   // ------------------------------------------------------------------- tools
   // Build domain tools by closing over the injected services.
-  // Registered: search_products, check_availability, get_product_media,
-  //   get_knowledge, recommend_size, get_product_for_order, capture_order,
-  //   escalate_to_human, find_similar_by_image, get_order_status.
+  // Registered: search_products, list_all_products, check_availability,
+  //   get_product_media, get_knowledge, recommend_size, get_product_for_order,
+  //   capture_order, escalate_to_human, find_similar_by_image, get_order_status.
   // `updateWorkingMemory` is auto-registered by Memory and is NOT removed here.
   const tools = buildSalesTools({ products, orders, conversations, knowledge, sizing });
+
+  // ------------------------------------------------------------------ memory
+  // Captured as a variable (not inline in the Agent) so AgentService can reach
+  // it for the admin "reset conversation" action — clearing resource-scoped
+  // working memory and deleting the customer's thread + message history.
+  const memory = new Memory({
+    // Give Memory its OWN storage handle (the SAME PostgresStore passed to
+    // `new Mastra({ storage })` below). Mastra wires storage into an agent's
+    // memory only LAZILY — on the first `agent.generate()` of a process. But
+    // AgentService.resetConversationMemory() calls memory.updateWorkingMemory /
+    // deleteThread DIRECTLY (outside generate), so without an own-storage handle
+    // those calls throw "Memory requires a storage provider" until a turn has
+    // run, and the admin "reset conversation" silently no-ops. Passing storage
+    // here sets hasOwnStorage=true so the reset works regardless of timing.
+    storage,
+    options: {
+      // Keep the last 20 messages in every prompt window.
+      lastMessages: 20,
+
+      // No embedder is wired in Phase 1, so semantic recall is disabled.
+      // TODO (next ticket): set semanticRecall: { topK: 5 } once PgVector
+      //   and an embedder are configured.
+      semanticRecall: false,
+
+      workingMemory: {
+        enabled: true,
+
+        // 'resource' scope: the JSON blob is keyed by resourceId (= customer
+        // PSID) and shared across ALL her conversation threads.  When she
+        // comes back a week later on a different thread we still know her size.
+        scope: 'resource',
+
+        // Zod schema that constrains what the agent may write into working
+        // memory.  The agent calls the auto-registered `updateWorkingMemory`
+        // tool with JSON matching this shape.
+        schema: z.object({
+          /** Customer's first name, if shared. */
+          name: z.string().optional(),
+
+          /** Abaya size preference — numeric code from the size chart
+           *  (e.g. '1', '2') as returned by the recommend_size tool.
+           *  Stored as a permissive string to accept both legacy letter
+           *  values and current numeric codes without schema rejection. */
+          size: z.string().optional(),
+
+          /** Colour preferences expressed in any dialect the customer used
+           *  (stored raw; normalisation happens in the search tool). */
+          preferred_colors: z.array(z.string()).default([]),
+
+          /** Free-form style notes ("تحب العبايات الكلاسيكية", etc.). */
+          style_notes: z.string().optional(),
+
+          /** The ad reference that brought this customer to the conversation
+           *  (set from the Messenger referral data on first touch). */
+          last_interested_ad_ref: z.string().optional(),
+        }),
+      },
+    },
+  });
 
   // ------------------------------------------------------------- sales agent
   const salesAgent = new Agent({
@@ -119,58 +182,21 @@ export function buildMastra(deps: BuildMastraDeps): {
 
     tools,
 
-    memory: new Memory({
-      options: {
-        // Keep the last 20 messages in every prompt window.
-        lastMessages: 20,
-
-        // No embedder is wired in Phase 1, so semantic recall is disabled.
-        // TODO (next ticket): set semanticRecall: { topK: 5 } once PgVector
-        //   and an embedder are configured.
-        semanticRecall: false,
-
-        workingMemory: {
-          enabled: true,
-
-          // 'resource' scope: the JSON blob is keyed by resourceId (= customer
-          // PSID) and shared across ALL her conversation threads.  When she
-          // comes back a week later on a different thread we still know her size.
-          scope: 'resource',
-
-          // Zod schema that constrains what the agent may write into working
-          // memory.  The agent calls the auto-registered `updateWorkingMemory`
-          // tool with JSON matching this shape.
-          schema: z.object({
-            /** Customer's first name, if shared. */
-            name: z.string().optional(),
-
-            /** Abaya size preference — numeric code from the size chart
-             *  (e.g. '1', '2') as returned by the recommend_size tool.
-             *  Stored as a permissive string to accept both legacy letter
-             *  values and current numeric codes without schema rejection. */
-            size: z.string().optional(),
-
-            /** Colour preferences expressed in any dialect the customer used
-             *  (stored raw; normalisation happens in the search tool). */
-            preferred_colors: z.array(z.string()).default([]),
-
-            /** Free-form style notes ("تحب العبايات الكلاسيكية", etc.). */
-            style_notes: z.string().optional(),
-
-            /** The ad reference that brought this customer to the conversation
-             *  (set from the Messenger referral data on first touch). */
-            last_interested_ad_ref: z.string().optional(),
-          }),
-        },
-      },
-    }),
+    memory,
   });
 
   // ------------------------------------------------------------ mastra root
-  // Registering the agent under the `salesAgent` key here automatically
-  // injects this `storage` instance into Memory, so we do NOT pass the store
-  // to Memory separately.
-  const mastra = new Mastra({ agents: { salesAgent }, storage });
+  // Registering the agent here lets Mastra wire `storage` into the agent's
+  // memory for the generate() path. That wiring is LAZY (first generate()), so
+  // we ALSO pass `storage` to Memory directly above — the same instance — so
+  // the standalone reset path works before any turn. hasOwnStorage=true makes
+  // Mastra's addMemory skip re-setting, so there is no double-wiring.
+  //
+  // logger: routes Mastra's internal diagnostics (agent steps, tool registration,
+  // memory ops) through Pino. At level 'debug' it surfaces tool-related traces;
+  // clean per-turn tool-call summaries are logged separately by AgentService.
+  const logger = new PinoLogger({ name: 'MasaAgent', level: logLevel });
+  const mastra = new Mastra({ agents: { salesAgent }, storage, logger });
 
-  return { mastra, salesAgent };
+  return { mastra, salesAgent, memory };
 }

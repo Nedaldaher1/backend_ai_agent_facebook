@@ -20,6 +20,16 @@ jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
 
+// The controller imports ConversationControlService, which imports AgentService
+// (a DI value) for the reset path; AgentService transitively pulls in
+// mastra.factory + @mastra/core (ESM-only, not requirable under Jest CJS). Stub
+// the factory and the @mastra entrypoints so the module graph loads.
+jest.mock('@/modules/agent/mastra/mastra.factory', () => ({
+  buildMastra: jest.fn(),
+}));
+jest.mock('@mastra/core/agent', () => ({ Agent: jest.fn() }));
+jest.mock('@mastra/core/di', () => ({ RequestContext: jest.fn() }));
+
 import { ConversationsAdminController } from '../conversations-admin.controller';
 import { ROLES_KEY } from '@/common/decorators/roles.decorator';
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
@@ -79,6 +89,7 @@ function makeMockService() {
   return {
     listConversations: jest.fn(),
     getThread: jest.fn(),
+    resetMemory: jest.fn(),
     pause: jest.fn(),
     resume: jest.fn(),
     assign: jest.fn(),
@@ -185,6 +196,24 @@ describe('ConversationsAdminController', () => {
       const result = await ctrl.getOne(CONV_ID);
 
       expect(result.conversation.pausedUntil).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /admin/conversations/:id/reset
+  // -------------------------------------------------------------------------
+
+  describe('reset', () => {
+    it('delegates to control.resetMemory with id and user.email', async () => {
+      (control.resetMemory as jest.Mock).mockResolvedValue({
+        id: CONV_ID,
+        deletedMessages: 3,
+      });
+
+      const result = await ctrl.reset(CONV_ID, USER);
+
+      expect(control.resetMemory).toHaveBeenCalledWith(CONV_ID, USER.email);
+      expect(result).toEqual({ id: CONV_ID, deletedMessages: 3 });
     });
   });
 

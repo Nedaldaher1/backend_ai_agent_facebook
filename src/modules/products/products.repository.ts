@@ -21,6 +21,9 @@ import {
   type Product,
 } from './entities/product.entity';
 import { adProductLinks } from './entities/ad-product-link.entity';
+import { productImageColors } from './entities/product-image-color.entity';
+import { colors } from './entities/color.entity';
+import { tokenizeSearchQuery } from './search-tokenize.util';
 
 /**
  * Filters for the product catalog. `isPublished` is an explicit field so the
@@ -77,7 +80,19 @@ export class ProductsRepository {
       conditions.push(eq(products.isPublished, filter.isPublished));
     }
     if (filter.colorFamily) {
-      conditions.push(eq(products.colorFamily, filter.colorFamily));
+      // Variant-aware colour match: the product's PRIMARY color_family OR any of
+      // its per-image variant colours (product_image_colors → colors.family). So
+      // a product whose primary is green but which has a red variant image still
+      // matches a search for "red" — multi-colour products were previously
+      // matchable only on their single primary colour.
+      conditions.push(
+        sql`(${products.colorFamily} = ${filter.colorFamily} OR EXISTS (
+          SELECT 1 FROM ${productImageColors}
+          JOIN ${colors} ON ${colors.id} = ${productImageColors.colorId}
+          WHERE ${productImageColors.productId} = ${products.id}
+            AND ${colors.family} = ${filter.colorFamily}
+        ))`,
+      );
     }
     if (filter.size) {
       conditions.push(arrayContains(products.sizes, [filter.size]));
@@ -278,17 +293,50 @@ export class ProductsRepository {
     limit = 8,
   ): Promise<Product[]> {
     const conditions = this.buildConditions(filter);
-    const similarityCondition = sql`(
-      similarity(${products.name}, ${query}) >= 0.3
+    const tokens = tokenizeSearchQuery(query);
+
+    // Text the tokens are matched against: name, description, and the joined
+    // tags array (so a tag like "قطن" is searchable). NULL-safe.
+    const tagsText = sql`coalesce(array_to_string(${products.tags}, ' '), '')`;
+
+    // Per-token, WORD-level match. `word_similarity(token, text)` finds the token
+    // INSIDE a longer text — "عباية" scores 1.0 against "عباية صيفي تطريز زهور" —
+    // which whole-string `similarity()` cannot do for an Arabic sentence. ILIKE
+    // adds exact-substring hits trigrams can miss. 0.5 keeps unrelated words out
+    // ("فستان"/"بنطلون" score 0) — calibrated against the live catalog.
+    const WORD_SIM = 0.5;
+    const tokenConds = tokens.map(
+      (t) => sql`(
+        word_similarity(${t}, ${products.name}) >= ${WORD_SIM}
+        OR word_similarity(${t}, coalesce(${products.description}, '')) >= ${WORD_SIM}
+        OR word_similarity(${t}, ${tagsText}) >= ${WORD_SIM}
+        OR ${products.name} ILIKE ${'%' + t + '%'}
+        OR ${tagsText} ILIKE ${'%' + t + '%'}
+      )`,
+    );
+
+    // Whole-query trigram match kept as a coarse OR (helps multi-word name
+    // queries like "عباية صيفي"); threshold lowered from the old 0.3 since the
+    // per-token predicate is the primary signal now. With no usable tokens
+    // (e.g. an all-stopword query) this whole-query clause is the only text
+    // condition; the service layer falls back to a structured list if it misses.
+    const wholeQuery = sql`(
+      similarity(${products.name}, ${query}) >= 0.2
       OR similarity(coalesce(${products.description}, ''), ${query}) >= 0.2
     )`;
+
+    const textCondition =
+      tokenConds.length > 0
+        ? sql`(${sql.join([...tokenConds, wholeQuery], sql` OR `)})`
+        : wholeQuery;
 
     return this.db
       .select()
       .from(products)
-      .where(and(...conditions, similarityCondition))
+      .where(and(...conditions, textCondition))
       .orderBy(
         sql`greatest(
+          word_similarity(${query}, ${products.name}),
           similarity(${products.name}, ${query}),
           similarity(coalesce(${products.description}, ''), ${query})
         ) DESC`,

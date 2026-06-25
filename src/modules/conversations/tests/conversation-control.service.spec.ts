@@ -24,10 +24,21 @@ jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
 
+// conversation-control.service imports AgentService (a DI value) for the reset
+// path; AgentService transitively pulls in mastra.factory + @mastra/core
+// (ESM-only, not requirable under Jest CJS). Stub the factory and the @mastra
+// entrypoints so the module graph loads. AgentService is mocked per test.
+jest.mock('@/modules/agent/mastra/mastra.factory', () => ({
+  buildMastra: jest.fn(),
+}));
+jest.mock('@mastra/core/agent', () => ({ Agent: jest.fn() }));
+jest.mock('@mastra/core/di', () => ({ RequestContext: jest.fn() }));
+
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConversationControlService } from '../conversation-control.service';
 import type { ConversationsService } from '../conversations.service';
 import type { MessengerClient } from '@/modules/agent/messenger/messenger.client';
+import type { AgentService } from '@/modules/agent/agent.service';
 import type { Conversation } from '../entities/conversation.entity';
 import type { Message } from '../entities/message.entity';
 
@@ -83,6 +94,8 @@ function makeMocks() {
   const findMessageByExternalId = jest.fn();
   const listMessages = jest.fn();
   const listWithPreview = jest.fn();
+  const updateState = jest.fn();
+  const deleteMessages = jest.fn();
 
   const conversations = {
     getById,
@@ -92,14 +105,23 @@ function makeMocks() {
     findMessageByExternalId,
     listMessages,
     listWithPreview,
+    updateState,
+    deleteMessages,
   } as unknown as ConversationsService;
 
   const sendText = jest.fn().mockResolvedValue(undefined);
   const messengerClient = { sendText } as unknown as MessengerClient;
 
-  const svc = new ConversationControlService(conversations, messengerClient);
+  const resetConversationMemory = jest.fn().mockResolvedValue(undefined);
+  const agent = { resetConversationMemory } as unknown as AgentService;
 
-  return { svc, getById, setAiState, recordEvent, addMessage, findMessageByExternalId, listMessages, listWithPreview, sendText };
+  const svc = new ConversationControlService(
+    conversations,
+    messengerClient,
+    agent,
+  );
+
+  return { svc, getById, setAiState, recordEvent, addMessage, findMessageByExternalId, listMessages, listWithPreview, sendText, updateState, deleteMessages, resetConversationMemory };
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +131,84 @@ function makeMocks() {
 describe('ConversationControlService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  // -------------------------------------------------------------------------
+  // resetMemory
+  // -------------------------------------------------------------------------
+
+  describe('resetMemory', () => {
+    it('wipes Mastra memory, clears state, deletes messages, and records a reset event', async () => {
+      const {
+        svc,
+        getById,
+        updateState,
+        deleteMessages,
+        recordEvent,
+        resetConversationMemory,
+      } = makeMocks();
+      const convo = makeConvo({ aiState: 'bot' });
+      getById.mockResolvedValue(convo);
+      updateState.mockResolvedValue(convo);
+      deleteMessages.mockResolvedValue(5);
+      recordEvent.mockResolvedValue({});
+
+      const result = await svc.resetMemory(CONV_ID, ACTOR);
+
+      // Mastra memory wiped for the conversation's customer (psid).
+      expect(resetConversationMemory).toHaveBeenCalledWith(PSID);
+      // Conversation context jsonb cleared.
+      expect(updateState).toHaveBeenCalledWith(CONV_ID, {});
+      // Visible message log hard-deleted.
+      expect(deleteMessages).toHaveBeenCalledWith(CONV_ID);
+      // Audit event recorded with the deleted count.
+      expect(recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: CONV_ID,
+          type: 'reset',
+          actor: ACTOR,
+          actorType: 'admin',
+          metadata: { deletedMessages: 5 },
+        }),
+      );
+      expect(result).toEqual({ id: CONV_ID, deletedMessages: 5 });
+    });
+
+    it('aborts cleanly when the Mastra memory wipe fails (no half-done reset)', async () => {
+      const {
+        svc,
+        getById,
+        resetConversationMemory,
+        updateState,
+        deleteMessages,
+        recordEvent,
+      } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      resetConversationMemory.mockRejectedValue(
+        new Error('reset: Mastra memory wipe failed for psid'),
+      );
+
+      await expect(svc.resetMemory(CONV_ID, ACTOR)).rejects.toThrow(
+        /memory wipe failed/i,
+      );
+      // The Mastra wipe runs FIRST, so a failure leaves everything else intact —
+      // no state clear, no message delete, no audit event. The admin can retry.
+      expect(updateState).not.toHaveBeenCalled();
+      expect(deleteMessages).not.toHaveBeenCalled();
+      expect(recordEvent).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFound and performs no wipe when the conversation is missing', async () => {
+      const { svc, getById, resetConversationMemory, deleteMessages } =
+        makeMocks();
+      getById.mockRejectedValue(new NotFoundException('nope'));
+
+      await expect(svc.resetMemory(CONV_ID, ACTOR)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(resetConversationMemory).not.toHaveBeenCalled();
+      expect(deleteMessages).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------

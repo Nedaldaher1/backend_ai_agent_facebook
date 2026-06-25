@@ -152,6 +152,19 @@ export class ConversationsRepository {
   }
 
   /**
+   * Hard-delete every message belonging to a conversation (admin "reset
+   * conversation"). Returns the number of rows removed. The conversation row
+   * itself and its append-only audit events are left intact.
+   */
+  async deleteMessagesByConversation(conversationId: string): Promise<number> {
+    const deleted = await this.db
+      .delete(messages)
+      .where(eq(messages.conversationId, conversationId))
+      .returning({ id: messages.id });
+    return deleted.length;
+  }
+
+  /**
    * Find an inbound message previously logged under this idempotency key, scoped
    * to the conversation. Backs the dedup short-circuit in AgentService.
    */

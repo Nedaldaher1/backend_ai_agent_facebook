@@ -54,7 +54,10 @@ const outputSchema = z.object({
       name: z.string(),
       // price is a string (JOD numeric) — money is a string end-to-end; never float.
       price: z.string(),
+      // `color` is the product's PRIMARY colour family; `colors` is the FULL set
+      // of canonical colour names across its image variants (e.g. ["أسود","أحمر"]).
       color: z.string().optional(),
+      colors: z.array(z.string()),
       category: z.string().optional(),
       available: z.boolean(),
     }),
@@ -81,12 +84,17 @@ export function buildSearchProductsTool(products: ProductsService) {
       if (effectiveAdRef) {
         const byAd = await products.findByAdRef(effectiveAdRef);
         if (byAd.length > 0) {
+          const top = byAd.slice(0, 8);
+          const colorsByProduct = await products.getColorNamesByProducts(
+            top.map((p) => p.id),
+          );
           return {
-            products: byAd.slice(0, 8).map((p) => ({
+            products: top.map((p) => ({
               id: p.id,
               name: p.name,
               price: p.priceJod,
               color: p.colorFamily ?? undefined,
+              colors: colorsByProduct.get(p.id) ?? [],
               // category maps to occasion on the product row.
               category: p.occasion ?? undefined,
               available: p.stockStatus !== 'out',
@@ -126,12 +134,17 @@ export function buildSearchProductsTool(products: ProductsService) {
         ? await products.searchFuzzy(input.query, structured)
         : await products.search(structured);
 
+      const top = results.slice(0, 8);
+      const colorsByProduct = await products.getColorNamesByProducts(
+        top.map((p) => p.id),
+      );
       return {
-        products: results.slice(0, 8).map((p) => ({
+        products: top.map((p) => ({
           id: p.id,
           name: p.name,
           price: p.priceJod,
           color: p.colorFamily ?? undefined,
+          colors: colorsByProduct.get(p.id) ?? [],
           category: p.occasion ?? undefined,
           available: p.stockStatus !== 'out',
         })),

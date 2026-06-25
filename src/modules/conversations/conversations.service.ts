@@ -98,6 +98,14 @@ export class ConversationsService {
     return this.repo.insertMessage(data);
   }
 
+  /**
+   * Hard-delete all messages in a conversation (admin "reset conversation").
+   * Returns the number of rows removed. Delegates to the repository.
+   */
+  deleteMessages(conversationId: string): Promise<number> {
+    return this.repo.deleteMessagesByConversation(conversationId);
+  }
+
   /** Whether an inbound message with this idempotency key was already logged. */
   findMessageByExternalId(
     conversationId: string,

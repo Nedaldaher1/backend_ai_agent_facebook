@@ -90,11 +90,17 @@ const MockRequestContextCtor = RequestContext as unknown as jest.MockedClass<
 
 /** A fake ConfigService that returns the given DATABASE_URL. */
 function makeConfigMock(url = 'postgres://x'): ConfigService {
-  return { getOrThrow: () => url } as unknown as ConfigService;
+  return {
+    getOrThrow: () => url,
+    get: () => undefined, // MASTRA_LOG_LEVEL → falls back to 'info'
+  } as unknown as ConfigService;
 }
 
-/** A minimal ProductsService stub. */
-const productsMock = {} as unknown as ProductsService;
+/** A minimal ProductsService stub. Default: visual search finds nothing, so the
+ * knowledge pre-fetch image branch is a no-op; image tests override per case. */
+const productsMock = {
+  findSimilarByImage: jest.fn().mockResolvedValue([]),
+} as unknown as ProductsService;
 
 /** A minimal OrdersService stub. */
 const ordersMock = {} as unknown as OrdersService;
@@ -104,8 +110,11 @@ const agentBehaviorMock = {
   getInstructions: jest.fn().mockResolvedValue('x'),
 } as unknown as AgentBehaviorService;
 
-/** A minimal KnowledgeService stub. */
-const knowledgeMock = {} as unknown as KnowledgeService;
+/** A minimal KnowledgeService stub. Default: no relevant entries, so the
+ * knowledge pre-fetch injects nothing; pre-fetch tests override getRelevant. */
+const knowledgeMock = {
+  getRelevant: jest.fn().mockResolvedValue([]),
+} as unknown as KnowledgeService;
 
 /** A minimal SizingService stub. */
 const sizingMock = { recommendSize: jest.fn() } as unknown as SizingService;
@@ -137,6 +146,7 @@ function makeConversationsMock(
   aiState: string = 'bot',
   humanSummary: string | null = null,
   pausedUntil: Date | null = null,
+  state: unknown = undefined,
 ): ConversationsService {
   return {
     findOrCreateByPsid: jest.fn().mockResolvedValue({
@@ -144,6 +154,8 @@ function makeConversationsMock(
       aiState,
       humanSummary,
       pausedUntil,
+      // Free-form jsonb; the knowledge pre-fetch reads `lastProductIds`/`adProduct`.
+      state,
     }),
     addMessage: jest.fn().mockResolvedValue({}),
     // Default: no prior message with this idempotency key (not a duplicate).
@@ -155,6 +167,8 @@ function makeConversationsMock(
       .fn()
       .mockResolvedValue({ id: conversationId, aiState: 'bot' }),
     recordEvent: jest.fn().mockResolvedValue({}),
+    // Knowledge pre-fetch (B): remembers the product(s) shown to the customer.
+    mergeState: jest.fn().mockResolvedValue({}),
   } as unknown as ConversationsService;
 }
 
@@ -170,6 +184,12 @@ describe('AgentService', () => {
     generate: jest.fn().mockResolvedValue({ text: FAKE_REPLY }),
   };
 
+  /** A minimal fake Mastra Memory for the admin reset path. */
+  const fakeMemory = {
+    updateWorkingMemory: jest.fn().mockResolvedValue(undefined),
+    deleteThread: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
     MockRequestContextCtor.instances.length = 0;
@@ -181,6 +201,7 @@ describe('AgentService', () => {
       salesAgent: fakeSalesAgent as unknown as ReturnType<
         typeof buildMastra
       >['salesAgent'],
+      memory: fakeMemory as unknown as ReturnType<typeof buildMastra>['memory'],
     });
   });
 
@@ -723,6 +744,70 @@ describe('AgentService', () => {
     expect(result.productOverflow).toBeUndefined();
   });
 
+  it('drains the per-turn mediaSink into reply.images (deduped, http(s) only)', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    // The get_product_media tool pushes the SERVICE-selected URLs into the
+    // mediaSink AgentService placed on the request context — simulate that here.
+    fakeSalesAgent.generate.mockImplementationOnce(
+      (_text: string, opts: { requestContext: { get: (k: string) => unknown } }) => {
+        const sink = opts.requestContext.get('mediaSink') as string[];
+        sink.push(
+          'https://pub.r2.dev/a.jpeg',
+          'https://pub.r2.dev/b.jpeg',
+          'https://pub.r2.dev/a.jpeg', // duplicate — dropped
+          'ftp://pub.r2.dev/clip', // non-http(s) — dropped
+        );
+        return Promise.resolve({ text: 'تفضلي صور العباية', toolResults: [] });
+      },
+    );
+
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'ورجيني الصور',
+    });
+
+    expect(result.images).toEqual([
+      'https://pub.r2.dev/a.jpeg',
+      'https://pub.r2.dev/b.jpeg',
+    ]);
+  });
+
+  it('omits reply.images when no get_product_media tool ran', async () => {
+    const conversations = makeConversationsMock();
+    const service = new AgentService(
+      makeConfigMock(),
+      productsMock,
+      conversations,
+      ordersMock,
+      agentBehaviorMock,
+      knowledgeMock,
+      sizingMock,
+      visionMock,
+    );
+    service.onModuleInit();
+
+    fakeSalesAgent.generate.mockResolvedValueOnce({
+      text: 'أهلاً',
+      toolResults: [],
+    });
+
+    const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+    expect(result.images).toBeUndefined();
+  });
+
   it('sets productOverflow when matched products exceed the 8-item cap', async () => {
     const conversations = makeConversationsMock();
     const service = new AgentService(
@@ -1254,6 +1339,311 @@ describe('AgentService', () => {
       // The one-shot summary must survive a failed turn so the next attempt
       // still injects it (before the fix it was cleared before generate()).
       expect(conversations.clearHumanSummary).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // handleMessage — deterministic knowledge pre-fetch (RAG)
+  // -------------------------------------------------------------------------
+
+  describe('knowledge pre-fetch (RAG)', () => {
+    const KNOWLEDGE_NOTE_MARKER = 'معرفة جاهزة من قاعدة بيانات المتجر';
+
+    /** A KnowledgeService whose getRelevant returns the given entries. */
+    function makeKnowledgeMock(entries: unknown[]): KnowledgeService {
+      return {
+        getRelevant: jest.fn().mockResolvedValue(entries),
+      } as unknown as KnowledgeService;
+    }
+
+    /** The injected knowledge system message from the first generate() call. */
+    function findKnowledgeNote(): { role: string; content: string } | undefined {
+      const options = fakeSalesAgent.generate.mock.calls[0][1] as {
+        context?: Array<{ role: string; content: string }>;
+      };
+      return (options.context ?? []).find((m) =>
+        m.content.includes(KNOWLEDGE_NOTE_MARKER),
+      );
+    }
+
+    it('resolves the product from state.lastProductIds and injects its FAQ before generate', async () => {
+      const conversations = makeConversationsMock('c-kp1', 'bot', null, null, {
+        lastProductIds: ['prod-1'],
+      });
+      const knowledge = makeKnowledgeMock([
+        {
+          id: 'k1',
+          title: 'كم السعر',
+          content: '12 دينار',
+          category: 'canned_response',
+          productId: 'prod-1',
+        },
+      ]);
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'كم سعرها؟' });
+
+      // Product tier queried with the resolved id; no global fallback needed.
+      expect(knowledge.getRelevant).toHaveBeenCalledWith({
+        productIds: ['prod-1'],
+      });
+      const note = findKnowledgeNote();
+      expect(note).toBeDefined();
+      expect(note?.content).toContain('12 دينار');
+    });
+
+    it('resolves the product from the photo this turn via findSimilarByImage', async () => {
+      const conversations = makeConversationsMock('c-kp2');
+      const products = {
+        findSimilarByImage: jest
+          .fn()
+          .mockResolvedValue([{ id: 'prod-img', similarity: 0.9 }]),
+      } as unknown as ProductsService;
+      const knowledge = makeKnowledgeMock([
+        { id: 'k2', title: 'المقاسات', content: 'أرسلي وزنك وطولك' },
+      ]);
+      const service = new AgentService(
+        makeConfigMock(),
+        products,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({
+        contactId: 'C1',
+        text: 'كم مقاسي؟',
+        lastImageUrl: 'https://cdn.example.com/a.jpg',
+      });
+
+      expect(products.findSimilarByImage).toHaveBeenCalledWith(
+        'https://cdn.example.com/a.jpg',
+      );
+      expect(knowledge.getRelevant).toHaveBeenCalledWith({
+        productIds: ['prod-img'],
+      });
+      expect(findKnowledgeNote()).toBeDefined();
+    });
+
+    it('falls back to a global query lookup when no product is in context', async () => {
+      const conversations = makeConversationsMock('c-kp3'); // state undefined
+      const knowledge = makeKnowledgeMock([
+        { id: 'g1', title: 'الشحن', content: 'التوصيل ٢ دينار' },
+      ]);
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'كم التوصيل؟' });
+
+      expect(knowledge.getRelevant).toHaveBeenCalledWith({ query: 'كم التوصيل؟' });
+      expect(findKnowledgeNote()).toBeDefined();
+    });
+
+    it('injects nothing when no knowledge is found (agent proceeds per guardrails)', async () => {
+      const conversations = makeConversationsMock('c-kp4');
+      const knowledge = makeKnowledgeMock([]); // empty in both tiers
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(findKnowledgeNote()).toBeUndefined();
+    });
+
+    it('never breaks the reply when the pre-fetch throws (best-effort)', async () => {
+      const conversations = makeConversationsMock('c-kp5');
+      const knowledge = {
+        getRelevant: jest.fn().mockRejectedValue(new Error('DB down')),
+      } as unknown as KnowledgeService;
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(result.reply).toBe(FAKE_REPLY);
+      expect(findKnowledgeNote()).toBeUndefined();
+    });
+
+    it('persists lastProductIds (media first, then matched) after a turn that showed products', async () => {
+      const conversations = makeConversationsMock('c-kp6');
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      fakeSalesAgent.generate.mockResolvedValueOnce({
+        text: 'تفضلي',
+        toolResults: [
+          {
+            payload: {
+              toolName: 'search_products',
+              isError: false,
+              result: { products: [{ id: 's1' }, { id: 's2' }] },
+            },
+          },
+          {
+            payload: {
+              toolName: 'get_product_media',
+              isError: false,
+              args: { product_id: 'pm1' },
+            },
+          },
+        ],
+      });
+
+      await service.handleMessage({ contactId: 'C1', text: 'ورجيني' });
+
+      // get_product_media product (the photos she's viewing) ranks first.
+      expect(conversations.mergeState).toHaveBeenCalledWith('c-kp6', {
+        lastProductIds: ['pm1', 's1', 's2'],
+      });
+    });
+
+    it('does NOT persist lastProductIds when no products were shown', async () => {
+      const conversations = makeConversationsMock('c-kp7');
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(conversations.mergeState).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // resetConversationMemory (admin "reset conversation")
+  // -------------------------------------------------------------------------
+
+  describe('resetConversationMemory', () => {
+    it('clears resource working memory and deletes the thread for the psid', async () => {
+      const conversations = makeConversationsMock();
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.resetConversationMemory('C1');
+
+      expect(fakeMemory.updateWorkingMemory).toHaveBeenCalledWith({
+        threadId: 'thread:C1',
+        resourceId: 'C1',
+        workingMemory: '',
+      });
+      expect(fakeMemory.deleteThread).toHaveBeenCalledWith('thread:C1');
+    });
+
+    it('throws when deleting the thread fails (so the admin sees the failure)', async () => {
+      const conversations = makeConversationsMock();
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+      (fakeMemory.deleteThread as jest.Mock).mockRejectedValueOnce(
+        new Error('thread gone'),
+      );
+
+      // A silently-swallowed failure here previously let the agent keep
+      // remembering the customer after a "reset"; the wipe must surface failures.
+      await expect(service.resetConversationMemory('C1')).rejects.toThrow(
+        /memory wipe failed/i,
+      );
+      // Working memory was still cleared before the failing step.
+      expect(fakeMemory.updateWorkingMemory).toHaveBeenCalled();
+    });
+
+    it('throws when clearing working memory fails but STILL attempts the thread delete', async () => {
+      const conversations = makeConversationsMock();
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+      (fakeMemory.updateWorkingMemory as jest.Mock).mockRejectedValueOnce(
+        new Error('storage unavailable'),
+      );
+
+      await expect(service.resetConversationMemory('C1')).rejects.toThrow(
+        /memory wipe failed/i,
+      );
+      // Both steps are attempted so neither failure masks the other.
+      expect(fakeMemory.deleteThread).toHaveBeenCalledWith('thread:C1');
     });
   });
 

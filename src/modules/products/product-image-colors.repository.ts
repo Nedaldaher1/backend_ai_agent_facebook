@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { colors } from './entities/color.entity';
 import { productImageColors } from './entities/product-image-color.entity';
@@ -43,6 +43,27 @@ export class ProductImageColorsRepository {
       .from(productImageColors)
       .innerJoin(colors, eq(colors.id, productImageColors.colorId))
       .where(eq(productImageColors.productId, productId))
+      .orderBy(asc(colors.name));
+  }
+
+  /**
+   * Batched variant of findColorsByProduct for a SET of products — one query for
+   * the whole search result page (avoids N+1). Returns flat rows; callers group
+   * by productId. Empty array for empty input.
+   */
+  async findColorsByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; name: string; family: string }>> {
+    if (productIds.length === 0) return [];
+    return this.db
+      .select({
+        productId: productImageColors.productId,
+        name: colors.name,
+        family: colors.family,
+      })
+      .from(productImageColors)
+      .innerJoin(colors, eq(colors.id, productImageColors.colorId))
+      .where(inArray(productImageColors.productId, productIds))
       .orderBy(asc(colors.name));
   }
 

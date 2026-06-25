@@ -241,6 +241,41 @@ describe('MessengerClient', () => {
   });
 
   // -------------------------------------------------------------------------
+  // sendImage
+  // -------------------------------------------------------------------------
+
+  it('sendImage builds an image attachment body (RESPONSE, reusable url, no tag)', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200 });
+    const client = makeClient(BASE_ENV);
+
+    await client.sendImage('PSID-1', 'https://pub.r2.dev/a.jpeg');
+
+    const [, init] = (global.fetch as jest.Mock).mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.messaging_type).toBe('RESPONSE');
+    expect(body.tag).toBeUndefined();
+    expect(body.recipient).toEqual({ id: 'PSID-1' });
+    expect(body.message.attachment.type).toBe('image');
+    expect(body.message.attachment.payload).toEqual({
+      url: 'https://pub.r2.dev/a.jpeg',
+      is_reusable: true,
+    });
+  });
+
+  it('sendImage throws MessengerSendError on a non-2xx response', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: { message: 'bad image url' } }),
+    });
+    const client = makeClient(BASE_ENV);
+
+    await expect(
+      client.sendImage('PSID-1', 'https://pub.r2.dev/x.jpeg'),
+    ).rejects.toThrow(MessengerSendError);
+  });
+
+  // -------------------------------------------------------------------------
   // sendQuickReplies
   // -------------------------------------------------------------------------
 

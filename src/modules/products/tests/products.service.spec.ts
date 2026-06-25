@@ -79,6 +79,7 @@ describe('ProductsService', () => {
   const setPublished = jest.fn();
   const appendImageUrls = jest.fn();
   const findPublishedBySku = jest.fn();
+  const searchFuzzy = jest.fn();
 
   const repo = {
     list,
@@ -90,6 +91,7 @@ describe('ProductsService', () => {
     setPublished,
     appendImageUrls,
     findPublishedBySku,
+    searchFuzzy,
   } as unknown as ProductsRepository;
 
   const colors = {
@@ -113,10 +115,12 @@ describe('ProductsService', () => {
   } as unknown as ColorsService;
 
   const findColorsByProduct = jest.fn();
+  const findColorsByProducts = jest.fn();
   const replaceForImage = jest.fn();
   const deleteForImage = jest.fn();
   const imageColors = {
     findColorsByProduct,
+    findColorsByProducts,
     replaceForImage,
     deleteForImage,
   } as unknown as ProductImageColorsRepository;
@@ -165,6 +169,7 @@ describe('ProductsService', () => {
     );
     // Default: no image-color tags / writes succeed unless a test overrides.
     findColorsByProduct.mockResolvedValue([]);
+    findColorsByProducts.mockResolvedValue([]);
     replaceForImage.mockResolvedValue(undefined);
     deleteForImage.mockResolvedValue(undefined);
     // Embedding write-path/search: clean no-op defaults so the fire-and-forget
@@ -217,6 +222,48 @@ describe('ProductsService', () => {
     findById.mockResolvedValue({ id: 'x', isPublished: false });
 
     await expect(service.getPublishedById('x')).rejects.toThrow('not found');
+  });
+
+  // --- searchFuzzy: free-text path + structured fallback (Arabic fuzzy fix) ---
+
+  it('searchFuzzy returns the repo fuzzy hits when there are matches (no fallback)', async () => {
+    const hits = [makeProduct({ id: 'p1' })];
+    searchFuzzy.mockResolvedValue(hits);
+
+    const result = await service.searchFuzzy('عباية صيفي', {});
+
+    expect(searchFuzzy).toHaveBeenCalledWith(
+      'عباية صيفي',
+      expect.objectContaining({ isPublished: true }),
+    );
+    expect(result).toBe(hits);
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it('searchFuzzy falls back to the structured published catalog when fuzzy finds nothing', async () => {
+    searchFuzzy.mockResolvedValue([]); // free-text miss (e.g. "شو عندكم؟")
+    const catalog = [makeProduct({ id: 'p1' })];
+    list.mockResolvedValue(catalog);
+
+    const result = await service.searchFuzzy('شو عندكم', {});
+
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ isPublished: true }),
+      { limit: 8 },
+    );
+    expect(result).toBe(catalog);
+  });
+
+  it('searchFuzzy fallback preserves the structured filters (publish gate + colour)', async () => {
+    searchFuzzy.mockResolvedValue([]);
+    list.mockResolvedValue([]);
+
+    await service.searchFuzzy('عباية حمراء', { colorFamily: 'red' });
+
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ isPublished: true, colorFamily: 'red' }),
+      { limit: 8 },
+    );
   });
 
   // --- listPublished forces isPublished: true ---
@@ -507,6 +554,227 @@ describe('ProductsService', () => {
 
     expect(media).toEqual([]);
     expect(getUrl).not.toHaveBeenCalled();
+  });
+
+  // --- getProductMediaByColors (agent: send photos filtered by colour) ---
+
+  // A 3-colour model: red (a.jpg, primary), black (b.png), blue (c.jpg).
+  const mediaProduct = () =>
+    makeProduct({
+      id: 'm1',
+      isPublished: true,
+      imageUrls: ['a.jpg', 'b.png', 'c.jpg'],
+    });
+  const mediaColorRows = () => [
+    { storageKey: 'a.jpg', id: 'c-red', name: 'أحمر', family: 'red', hex: null },
+    { storageKey: 'b.png', id: 'c-blk', name: 'أسود', family: 'black', hex: null },
+    { storageKey: 'c.jpg', id: 'c-blu', name: 'أزرق', family: 'blue', hex: null },
+  ];
+
+  it('getProductMediaByColors: a single requested colour sends only that colour', async () => {
+    findById.mockResolvedValue(mediaProduct());
+    findColorsByProduct.mockResolvedValue(mediaColorRows());
+    resolveColorFamily.mockResolvedValue(null); // no synonym → direct name match
+
+    const r = await service.getProductMediaByColors('m1', ['أسود']);
+
+    expect(r).toEqual({
+      productFound: true,
+      sentColors: ['أسود'],
+      unavailableColors: [],
+      mediaUrls: ['https://pub.example.com/b.png'],
+    });
+  });
+
+  it('getProductMediaByColors: multiple colours send their union only (no extras)', async () => {
+    findById.mockResolvedValue(mediaProduct());
+    findColorsByProduct.mockResolvedValue(mediaColorRows());
+    resolveColorFamily.mockResolvedValue(null); // no synonym → direct name match
+
+    const r = await service.getProductMediaByColors('m1', ['أحمر', 'أزرق']);
+
+    expect(r).toEqual({
+      productFound: true,
+      sentColors: ['أحمر', 'أزرق'],
+      unavailableColors: [],
+      mediaUrls: [
+        'https://pub.example.com/a.jpg',
+        'https://pub.example.com/c.jpg',
+      ],
+    });
+  });
+
+  it('getProductMediaByColors: no colours sends every available colour', async () => {
+    findById.mockResolvedValue(mediaProduct());
+    findColorsByProduct.mockResolvedValue(mediaColorRows());
+
+    const r = await service.getProductMediaByColors('m1');
+
+    expect(r).toEqual({
+      productFound: true,
+      sentColors: ['أحمر', 'أسود', 'أزرق'],
+      unavailableColors: [],
+      mediaUrls: [
+        'https://pub.example.com/a.jpg',
+        'https://pub.example.com/b.png',
+        'https://pub.example.com/c.jpg',
+      ],
+    });
+  });
+
+  it('getProductMediaByColors: a colour not offered for this product is reported, available ones still sent', async () => {
+    findById.mockResolvedValue(mediaProduct());
+    findColorsByProduct.mockResolvedValue(mediaColorRows());
+    // 'أصفر' resolves to a real catalog family this product doesn't carry.
+    resolveColorFamily.mockImplementation((term: string) =>
+      Promise.resolve(term === 'أصفر' ? 'yellow' : null),
+    );
+
+    const r = await service.getProductMediaByColors('m1', ['أحمر', 'أصفر']);
+
+    expect(r).toEqual({
+      productFound: true,
+      sentColors: ['أحمر'],
+      unavailableColors: ['أصفر'],
+      mediaUrls: ['https://pub.example.com/a.jpg'],
+    });
+  });
+
+  it('getProductMediaByColors: all requested colours unavailable → nothing sent, full list returned', async () => {
+    findById.mockResolvedValue(mediaProduct());
+    findColorsByProduct.mockResolvedValue(mediaColorRows());
+    resolveColorFamily.mockResolvedValue(null);
+
+    const r = await service.getProductMediaByColors('m1', ['أصفر', 'بنفسجي']);
+
+    expect(r).toEqual({
+      productFound: true,
+      sentColors: [],
+      unavailableColors: ['أصفر', 'بنفسجي'],
+      mediaUrls: [],
+    });
+  });
+
+  it('getProductMediaByColors: a dialect/synonym term resolves to the canonical colour', async () => {
+    findById.mockResolvedValue(mediaProduct());
+    findColorsByProduct.mockResolvedValue(mediaColorRows());
+    // "نبيتي" (dark-red dialect) → red family via color_synonyms.
+    resolveColorFamily.mockResolvedValue('red');
+
+    const r = await service.getProductMediaByColors('m1', ['نبيتي']);
+
+    expect(resolveColorFamily).toHaveBeenCalledWith('نبيتي');
+    expect(r).toEqual({
+      productFound: true,
+      sentColors: ['أحمر'], // canonical name, not the dialect term
+      unavailableColors: [],
+      mediaUrls: ['https://pub.example.com/a.jpg'],
+    });
+  });
+
+  it('getProductMediaByColors: a multi-colour image reports only the requested colour', async () => {
+    findById.mockResolvedValue(
+      makeProduct({ id: 'm2', isPublished: true, imageUrls: ['x.jpg'] }),
+    );
+    // x.jpg is tagged BOTH red and gold.
+    findColorsByProduct.mockResolvedValue([
+      { storageKey: 'x.jpg', id: 'c-red', name: 'أحمر', family: 'red', hex: null },
+      { storageKey: 'x.jpg', id: 'c-gld', name: 'ذهبي', family: 'gold', hex: null },
+    ]);
+    resolveColorFamily.mockResolvedValue(null); // no synonym → direct name match
+
+    const r = await service.getProductMediaByColors('m2', ['أحمر']);
+
+    expect(r).toEqual({
+      productFound: true,
+      sentColors: ['أحمر'], // gold not reported — she only asked for red
+      unavailableColors: [],
+      mediaUrls: ['https://pub.example.com/x.jpg'],
+    });
+  });
+
+  it('getProductMediaByColors: a published product with no images → found, nothing sent', async () => {
+    findById.mockResolvedValue(
+      makeProduct({ id: 'm3', isPublished: true, imageUrls: [] }),
+    );
+
+    const r = await service.getProductMediaByColors('m3');
+
+    expect(r).toEqual({
+      productFound: true,
+      sentColors: [],
+      unavailableColors: [],
+      mediaUrls: [],
+    });
+    expect(getUrl).not.toHaveBeenCalled();
+  });
+
+  it('getProductMediaByColors: missing or unpublished product → productFound false, nothing sent', async () => {
+    findById.mockResolvedValueOnce(undefined); // missing
+    expect(await service.getProductMediaByColors('ghost', ['أحمر'])).toEqual({
+      productFound: false,
+      sentColors: [],
+      unavailableColors: [],
+      mediaUrls: [],
+    });
+
+    findById.mockResolvedValueOnce(
+      makeProduct({ id: 'draft', isPublished: false, imageUrls: ['a.jpg'] }),
+    );
+    expect(await service.getProductMediaByColors('draft', ['أحمر'])).toEqual({
+      productFound: false,
+      sentColors: [],
+      unavailableColors: [],
+      mediaUrls: [],
+    });
+
+    expect(getUrl).not.toHaveBeenCalled();
+  });
+
+  // --- getColorNamesByProducts (batched available colours) ---
+
+  it('getColorNamesByProducts groups DISTINCT colour names per product', async () => {
+    findColorsByProducts.mockResolvedValue([
+      { productId: 'p1', name: 'أحمر', family: 'red' },
+      { productId: 'p1', name: 'أخضر', family: 'green' },
+      { productId: 'p1', name: 'أحمر', family: 'red' }, // dup → dropped
+      { productId: 'p2', name: 'أسود', family: 'black' },
+    ]);
+
+    const map = await service.getColorNamesByProducts(['p1', 'p2']);
+
+    expect(map.get('p1')).toEqual(['أحمر', 'أخضر']);
+    expect(map.get('p2')).toEqual(['أسود']);
+  });
+
+  it('getColorNamesByProducts returns an empty map for empty input (no query)', async () => {
+    const map = await service.getColorNamesByProducts([]);
+
+    expect(map.size).toBe(0);
+    expect(findColorsByProducts).not.toHaveBeenCalled();
+  });
+
+  // --- checkAvailability surfaces available colours ---
+
+  it('checkAvailability returns the product available colours (distinct names)', async () => {
+    findById.mockResolvedValue(
+      makeProduct({
+        id: 'ca1',
+        isPublished: true,
+        sizes: ['1', '2'],
+        stockStatus: 'in_stock',
+      }),
+    );
+    findColorsByProduct.mockResolvedValue([
+      { storageKey: 'a.jpg', id: 'c1', name: 'أحمر', family: 'red', hex: null },
+      { storageKey: 'b.jpg', id: 'c2', name: 'أخضر', family: 'green', hex: null },
+      { storageKey: 'c.jpg', id: 'c1', name: 'أحمر', family: 'red', hex: null }, // dup name
+    ]);
+
+    const result = await service.checkAvailability('ca1');
+
+    expect(result.available).toBe(true);
+    expect(result.colors).toEqual(['أحمر', 'أخضر']);
   });
 
   // --- listImages (admin boundary) ---

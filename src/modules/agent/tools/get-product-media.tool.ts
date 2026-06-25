@@ -1,8 +1,13 @@
 /**
- * get_product_media — جلب صور المنتج.
+ * get_product_media — إرسال صور المنتج للزبونة حسب اللون.
  *
- * Returns the image URLs for a published product. Returns an empty media array
- * for unpublished or missing products — the agent should not reveal those.
+ * Thin adapter: validates input, calls ProductsService.getProductMediaByColors
+ * (which owns ALL colour/synonym resolution and the publish gate), pushes the
+ * SERVICE-selected image URLs into the per-turn `mediaSink` on the request
+ * context — the Messenger controller drains it and delivers each as its own
+ * image message — and returns a colour SUMMARY (no URLs) for the agent to reason
+ * over. The agent must NEVER paste image URLs into its reply (stripImageMarkup is
+ * the backstop).
  */
 
 import { createTool } from '@mastra/core/tools';
@@ -10,31 +15,60 @@ import { z } from 'zod';
 import type { ProductsService } from '@/modules/products/products.service';
 
 const inputSchema = z.object({
-  product_id: z
-    .string()
-    .describe('معرّف المنتج (UUID) المراد جلب صوره'),
+  product_id: z.string().describe('معرّف المنتج (UUID) المراد إرسال صوره'),
+  // Free-form string array (NOT an enum): colours are dynamic, managed in the
+  // Colors page, and resolved server-side. Pass the customer's exact words
+  // (including dialect); do NOT normalize, translate, or add colours she didn't
+  // mention. Omit / empty → send every available colour.
+  colors: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'الألوان التي طلبتها الزبونة صراحةً كما لفظتها (مثلاً ["أسود","نبيتي"]). اتركيها فارغة أو لا تمرريها لإرسال كل ألوان الموديل.',
+    ),
 });
 
 const outputSchema = z.object({
-  media: z.array(
-    z.object({
-      url: z.string(),
-      type: z.string(),
-    }),
-  ),
+  // Canonical colour names actually sent (e.g. ["أحمر"]).
+  sent_colors: z.array(z.string()),
+  // Requested colours this model doesn't offer — tell the customer plainly and
+  // never silently substitute another colour.
+  unavailable_colors: z.array(z.string()),
+  // How many photos were dispatched this call.
+  sent_image_count: z.number(),
+  // False when the model id wasn't found / is unpublished — ask her to confirm it.
+  product_found: z.boolean(),
 });
 
 export function buildGetProductMediaTool(products: ProductsService) {
   return createTool({
     id: 'get_product_media',
     description:
-      'جلبي صور منتج معين لإرسالها للزبونة. استخدمي هذه الأداة قبل مشاركة أي صورة.',
+      'أرسلي صور موديل معيّن للزبونة. إذا ذكرت الزبونة ألواناً محددة فمرّري هذه الألوان فقط في colors (بالضبط كما قالتها، بدون تطبيع أو إضافة) فتُرسَل صور تلك الألوان فقط؛ وإذا طلبت تشوف كل الألوان أو ما حددت لوناً فاستدعيها بدون colors فتُرسَل صور كل الألوان المتوفرة. الصور تُرسَل تلقائياً (كل صورة كرسالة مستقلة) — لا تكتبي أبداً روابط الصور داخل ردّك. اقرئي النتيجة قبل ردّك: أكّدي الألوان المُرسَلة (sent_colors)، وإذا كان unavailable_colors غير فارغ فأخبري الزبونة بوضوح أنه غير متوفر لهذا الموديل واعرضي البديل المتوفر. وإذا كان product_found=false فاطلبي منها تأكيد اسم الموديل.',
     inputSchema,
     outputSchema,
 
-    execute: async (input) => {
-      const media = await products.getMedia(input.product_id);
-      return { media };
+    execute: async (input, ctx) => {
+      const result = await products.getProductMediaByColors(
+        input.product_id,
+        input.colors,
+      );
+
+      // Side-channel: hand the SERVICE-selected image URLs to the per-turn sink
+      // AgentService placed on the request context. The Messenger controller
+      // drains it into standalone image messages. The agent-facing output carries
+      // no URLs — only the colour summary below.
+      const sink = ctx?.requestContext?.get('mediaSink');
+      if (Array.isArray(sink)) {
+        for (const url of result.mediaUrls) sink.push(url);
+      }
+
+      return {
+        sent_colors: result.sentColors,
+        unavailable_colors: result.unavailableColors,
+        sent_image_count: result.mediaUrls.length,
+        product_found: result.productFound,
+      };
     },
   });
 }

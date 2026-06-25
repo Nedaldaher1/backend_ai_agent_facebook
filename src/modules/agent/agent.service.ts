@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { RequestContext } from '@mastra/core/di';
 import type { Agent } from '@mastra/core/agent';
 import type { Mastra } from '@mastra/core';
+import type { Memory } from '@mastra/memory';
 import {
   ProductsService,
   type ProductSearchInput,
@@ -16,6 +17,7 @@ import { createHash } from 'node:crypto';
 import { buildMastra } from './mastra/mastra.factory';
 import { VisionService, type VisionExtractResult } from './vision/vision.service';
 import { MAX_GALLERY_CARDS } from './messenger/messenger.formatter';
+import { stripImageMarkup } from './reply-sanitize.util';
 
 /** Window for the content-hash idempotency fallback when no provider id exists. */
 const DEDUP_WINDOW_MS = 10_000;
@@ -92,6 +94,13 @@ export interface AgentReply {
   products?: Array<{ id: string; name: string; price: string }>;
   /** Number of matched products beyond the rendered cap. 0 when nothing overflows. */
   productOverflow?: number;
+  /**
+   * Product image URLs to deliver as standalone image messages (one per photo),
+   * drained from the per-turn `mediaSink` the get_product_media tool fills (its
+   * own result is a colour summary with no URLs). Omitted when the turn surfaced
+   * no photos. The Messenger controller sends each via MessengerClient.sendImage.
+   */
+  images?: string[];
   /**
    * Whether the agent ran generate() this turn.
    * false on dedup early-return and on not-bot gate returns.
@@ -181,6 +190,12 @@ export class AgentService implements OnModuleInit {
   /** The compiled sales agent — call generate() on this. */
   private salesAgent!: Agent;
 
+  /**
+   * The Mastra Memory instance (working memory + thread/message store). Held so
+   * the admin "reset conversation" action can clear a customer's memory.
+   */
+  private memory!: Memory;
+
   constructor(
     private readonly config: ConfigService,
     private readonly products: ProductsService,
@@ -198,8 +213,13 @@ export class AgentService implements OnModuleInit {
 
   onModuleInit(): void {
     const connectionString = this.config.getOrThrow<string>('DATABASE_URL');
-    const { mastra, salesAgent } = buildMastra({
+    const logLevel =
+      this.config.get<'debug' | 'info' | 'warn' | 'error' | 'silent'>(
+        'MASTRA_LOG_LEVEL',
+      ) ?? 'info';
+    const { mastra, salesAgent, memory } = buildMastra({
       connectionString,
+      logLevel,
       products: this.products,
       orders: this.orders,
       conversations: this.conversations,
@@ -209,9 +229,10 @@ export class AgentService implements OnModuleInit {
     });
     this.mastra = mastra;
     this.salesAgent = salesAgent;
+    this.memory = memory;
 
     this.logger.log(
-      'Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=10, instructions=dynamic',
+      `Mastra ready: schema=mastra, model=claude-sonnet-4-6, workingMemory=resource, tools=11, instructions=dynamic, logLevel=${logLevel}`,
     );
   }
 
@@ -347,6 +368,13 @@ export class AgentService implements OnModuleInit {
       requestContext.set('adRef', input.adRef);
     }
 
+    // get_product_media side-channel: the tool pushes the SERVICE-selected image
+    // URLs into this per-turn sink (its own tool result is a colour summary with
+    // no URLs). Drained after generate() into reply.images so the Messenger
+    // controller sends each photo. Per-call array → no cross-turn shared state.
+    const mediaSink: string[] = [];
+    requestContext.set('mediaSink', mediaSink);
+
     // Image-led routing injection: when the customer sent a photo this turn,
     // wire the URL into the request context and flag the turn as image-led.
     // The search_products tool reads `imageLed` and ignores `ad_ref` when true
@@ -397,6 +425,17 @@ export class AgentService implements OnModuleInit {
       });
       injectedHumanSummary = true;
     }
+
+    // Deterministic knowledge pre-fetch (RAG): resolve the product in context
+    // (photo this turn → product shown last turn → ad product) and inject its
+    // published FAQ so the agent answers from store knowledge FIRST — regardless
+    // of whether the LLM decides to call the get_knowledge tool. Best-effort:
+    // undefined on miss/failure and the turn proceeds (the tool stays available).
+    const knowledgeNote = await this.prefetchKnowledgeNote(input, convo);
+    if (knowledgeNote) {
+      systemMessages.push({ role: 'system', content: knowledgeNote });
+    }
+
     const context = systemMessages.length > 0 ? systemMessages : undefined;
 
     // Persist the business record BEFORE generating — public-schema rows for the
@@ -420,6 +459,11 @@ export class AgentService implements OnModuleInit {
       ...(context ? { context } : {}),
     })) as GenerateResult;
 
+    // Observability: one concise line naming the tools the model invoked this
+    // turn. Mastra logs tool registration (debug) but not per-call domain tool
+    // execution, so we derive the signal from generate()'s toolResults.
+    this.logToolCalls(result, resourceId);
+
     // One-shot handoff summary (WS7): clear it only AFTER a successful generate()
     // so a failed turn (Claude 429/5xx) leaves it intact for the retry instead of
     // losing the human's wrap-up context. Best-effort + fire-and-forget.
@@ -434,22 +478,107 @@ export class AgentService implements OnModuleInit {
     // Persist the agent reply — best-effort business-log row, now carrying eval
     // metadata (matched products + tool + image_led) for the admin panel and the
     // evals harness (diagram node T). A logging failure never denies the reply.
+    // Photos reach the customer as carousel cards, never as text links — strip
+    // any image markup the model pasted into the reply (Messenger renders it as
+    // ugly raw URLs). Deterministic; the prompt/tool descriptions are not trusted.
+    const replyText = stripImageMarkup(result.text);
+
     const evalInfo = this.buildEvalInfo(result, Boolean(input.lastImageUrl));
     await this.logTurn({
       conversationId: convo.id,
       role: 'agent',
-      content: result.text,
+      content: replyText,
       ...(evalInfo ? { attributes: { eval: evalInfo } } : {}),
     });
 
     const { products: extractedProducts, overflow } = this.extractProducts(result);
+    const images = this.sanitizeMediaUrls(mediaSink);
+
+    // Remember the product(s) shown to the customer this turn so the NEXT turn's
+    // knowledge pre-fetch can resolve "the product she's asking about" even when
+    // she sends no new photo. Best-effort + fire-and-forget; never overwrite a
+    // prior value with an empty list.
+    const shownProductIds = this.collectShownProductIds(result);
+    if (shownProductIds.length > 0) {
+      void this.conversations
+        .mergeState(convo.id, { lastProductIds: shownProductIds })
+        .catch((err) =>
+          this.logger.warn(
+            `mergeState(lastProductIds) failed for ${convo.id}: ${String(err)}`,
+          ),
+        );
+    }
+
     return {
-      reply: result.text,
+      reply: replyText,
       products: extractedProducts,
       ...(overflow > 0 ? { productOverflow: overflow } : {}),
+      ...(images.length > 0 ? { images } : {}),
       ran: true,
       aiState: 'bot',
     };
+  }
+
+  /**
+   * Admin "reset conversation": wipe the agent's Mastra memory for a customer —
+   * the resource-scoped working memory (name, size, preferred colours, …) AND
+   * the thread's message history the LLM sees. After this the agent treats her
+   * next message as a brand-new customer.
+   *
+   * `psid` is the customer identity (= resourceId; `conversations.psid`). The
+   * thread id is derived the same way as handleMessage (`thread:{psid}`).
+   *
+   * Both steps are attempted even if one fails (an absent/empty thread or
+   * working-memory record is NOT an error — `updateWorkingMemory` upserts the
+   * resource row and `deleteThread` is a no-op on a missing thread, so a
+   * legitimately-empty conversation clears cleanly). But a REAL failure (e.g.
+   * storage unavailable) is logged at error and re-thrown so the admin endpoint
+   * reports failure instead of a false success — a silently-swallowed failure
+   * here previously let the agent keep remembering the customer after a "reset".
+   * The business-data wipe (conversation `state`, the `public.messages` log) is
+   * orchestrated by ConversationControlService — this method owns ONLY Mastra's
+   * memory.
+   */
+  async resetConversationMemory(psid: string): Promise<void> {
+    const resourceId = psid;
+    const threadId = `thread:${psid}`;
+
+    // Attempt BOTH steps even if one fails, collecting any errors so neither
+    // failure masks the other; a real error is surfaced after both run.
+    const errors: unknown[] = [];
+
+    // 1. Clear resource-scoped working memory. It is keyed by resourceId and
+    //    persists independently of the thread, so deleting the thread alone
+    //    would NOT make the agent forget her name/size/colours.
+    try {
+      await this.memory.updateWorkingMemory({
+        threadId,
+        resourceId,
+        workingMemory: '',
+      });
+    } catch (err) {
+      errors.push(err);
+      this.logger.error(
+        `reset: clearing working memory FAILED for psid ${psid}: ${String(err)}`,
+      );
+    }
+
+    // 2. Delete the thread and its message history (the LLM conversation window).
+    try {
+      await this.memory.deleteThread(threadId);
+    } catch (err) {
+      errors.push(err);
+      this.logger.error(
+        `reset: deleting thread FAILED for psid ${psid}: ${String(err)}`,
+      );
+    }
+
+    // Surface a real failure: never report success when the wipe did not happen.
+    if (errors.length > 0) {
+      throw new Error(
+        `reset: Mastra memory wipe failed for psid ${psid} (${errors.length} error(s)); see logs.`,
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -471,6 +600,37 @@ export class AgentService implements OnModuleInit {
         `Business-log write failed (conversation ${message.conversationId}, ` +
           `role ${message.role}); continuing without it. ${String(err)}`,
       );
+    }
+  }
+
+  /**
+   * Emit one concise line per turn naming the domain tools the model invoked,
+   * each with a ✓ (ok) or ✗ (error) marker — e.g.
+   *   `agent turn [PSID] tools: search_products ✓, recommend_size ✓`
+   *
+   * This is the clean local-observability signal for "what tools did the agent
+   * call": Mastra logs tool *registration* at debug level but not per-call domain
+   * tool execution (that lives in the tracing/span system), so we derive it from
+   * generate()'s toolResults. Best-effort — never throws, never blocks the reply.
+   */
+  private logToolCalls(result: GenerateResult, resourceId: string): void {
+    try {
+      const calls = result.toolResults ?? [];
+      if (calls.length === 0) {
+        this.logger.log(`agent turn [${resourceId}] tools: (none)`);
+        return;
+      }
+      const summary = calls
+        .map(
+          (c) =>
+            `${c.payload?.toolName ?? 'unknown'}${
+              c.payload?.isError ? ' ✗' : ' ✓'
+            }`,
+        )
+        .join(', ');
+      this.logger.log(`agent turn [${resourceId}] tools: ${summary}`);
+    } catch {
+      // Observability must never break the customer reply.
     }
   }
 
@@ -498,7 +658,8 @@ export class AgentService implements OnModuleInit {
         .filter(
           (c) =>
             (c.payload?.toolName === 'search_products' ||
-              c.payload?.toolName === 'find_similar_by_image') &&
+              c.payload?.toolName === 'find_similar_by_image' ||
+              c.payload?.toolName === 'list_all_products') &&
             !c.payload?.isError,
         )
         .flatMap((c) => {
@@ -526,6 +687,33 @@ export class AgentService implements OnModuleInit {
       };
     } catch {
       return { products: undefined, overflow: 0 };
+    }
+  }
+
+  /**
+   * Sanitize the per-turn media sink into the list delivered as standalone image
+   * messages. The get_product_media tool fills `mediaSink` with the public image
+   * URLs the SERVICE selected (the tool's own result is a colour summary with no
+   * URLs, so there is no image-attachment path the model can invoke directly).
+   *
+   * Keeps only http(s) URLs, de-duplicates, and caps the count so one turn can
+   * never fan out into a flood of messages. Best-effort: never throws.
+   */
+  private sanitizeMediaUrls(rawUrls: string[]): string[] {
+    const MAX_IMAGES = 8;
+    try {
+      const urls: string[] = [];
+      const seen = new Set<string>();
+      for (const url of rawUrls) {
+        if (!url || seen.has(url)) continue;
+        if (!/^https?:\/\//i.test(url)) continue;
+        seen.add(url);
+        urls.push(url);
+        if (urls.length >= MAX_IMAGES) return urls;
+      }
+      return urls;
+    } catch {
+      return [];
     }
   }
 
@@ -690,5 +878,139 @@ export class AgentService implements OnModuleInit {
         ? '، وبما أن الثقة منخفضة اعرضي الأقرب وأكّدي مع الزبونة «قصدك هاي؟» قبل إتمام الطلب.'
         : '.')
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Knowledge pre-fetch (deterministic RAG)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Deterministic knowledge pre-fetch. Resolves the product the customer is
+   * discussing and returns a formatted Arabic system note with its published FAQ
+   * (global entries fill any remaining slots), or undefined when nothing relevant
+   * is found.
+   *
+   * Runs BEFORE generate() so store knowledge is consulted FIRST, independent of
+   * whether the LLM chooses to call the get_knowledge tool. Best-effort: any
+   * failure returns undefined and the turn proceeds (the tool stays available).
+   */
+  private async prefetchKnowledgeNote(
+    input: IncomingMessage,
+    convo: { id: string; state?: unknown },
+  ): Promise<string | undefined> {
+    try {
+      const productIds = await this.resolveProductContext(input, convo);
+
+      // Product tier first (no query → the product's full FAQ by priority;
+      // getRelevant fills remaining slots from global). Fall back to a global,
+      // query-ranked lookup when no product is in context or it has no FAQ.
+      let entries =
+        productIds.length > 0
+          ? await this.knowledge.getRelevant({ productIds })
+          : [];
+      if (entries.length === 0) {
+        entries = await this.knowledge.getRelevant({ query: input.text });
+      }
+      if (entries.length === 0) return undefined;
+
+      return this.formatKnowledgeNote(entries);
+    } catch (err) {
+      this.logger.warn(
+        `Knowledge pre-fetch failed for conversation ${convo.id}: ${String(err)}`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Resolve the product(s) in conversation context for knowledge retrieval, by
+   * priority: (1) the photo she sent THIS turn (visual search top match —
+   * findSimilarByImage already drops weak matches), (2) the product(s) the agent
+   * showed her on a previous turn (state.lastProductIds), (3) the ad-attributed
+   * product (state.adProduct.id). Returns [] when none resolve.
+   */
+  private async resolveProductContext(
+    input: IncomingMessage,
+    convo: { state?: unknown },
+  ): Promise<string[]> {
+    if (input.lastImageUrl) {
+      const matches = await this.products.findSimilarByImage(input.lastImageUrl);
+      const topId = matches[0]?.id;
+      if (topId) return [topId];
+    }
+
+    const state = (convo.state ?? {}) as {
+      lastProductIds?: unknown;
+      adProduct?: { id?: unknown };
+    };
+
+    const last = Array.isArray(state.lastProductIds)
+      ? state.lastProductIds.filter((x): x is string => typeof x === 'string')
+      : [];
+    if (last.length > 0) return last;
+
+    if (typeof state.adProduct?.id === 'string') return [state.adProduct.id];
+
+    return [];
+  }
+
+  /**
+   * Format pre-fetched knowledge entries into an Arabic system note that tells the
+   * agent to answer from store knowledge only, in her own voice, without revealing
+   * that she consulted a knowledge base.
+   */
+  private formatKnowledgeNote(
+    entries: Array<{ title: string; content: string }>,
+  ): string {
+    const lines = entries.map((e) => `• ${e.title}: ${e.content}`).join('\n');
+    return (
+      'معرفة جاهزة من قاعدة بيانات المتجر — أجيبي من هذه المعلومات حصرًا بأسلوبك ' +
+      'الطبيعي، ولا تخترعي غيرها، ولا تخبري الزبونة أنك تبحثين في قاعدة المعرفة:\n' +
+      lines
+    );
+  }
+
+  /**
+   * Product ids the agent surfaced to the customer this turn, most specific first:
+   * the product whose photos were sent via get_product_media, then products
+   * matched by search_products / find_similar_by_image. Deduped + capped. Persisted
+   * to conversation state so the next turn's pre-fetch can resolve "the product in
+   * context" without a new photo. Best-effort: a malformed payload yields [].
+   */
+  private collectShownProductIds(result: GenerateResult): string[] {
+    const MAX = 8;
+    try {
+      const media: string[] = [];
+      const matched: string[] = [];
+      for (const c of result.toolResults ?? []) {
+        if (c.payload?.isError) continue;
+        const name = c.payload?.toolName;
+        if (name === 'get_product_media') {
+          const args = c.payload?.args as { product_id?: unknown } | undefined;
+          if (typeof args?.product_id === 'string') media.push(args.product_id);
+        } else if (
+          name === 'search_products' ||
+          name === 'find_similar_by_image'
+        ) {
+          const raw = c.payload?.result as
+            | { products?: Array<{ id?: unknown }> }
+            | undefined;
+          for (const p of raw?.products ?? []) {
+            if (typeof p?.id === 'string') matched.push(p.id);
+          }
+        }
+      }
+      const seen = new Set<string>();
+      const ids: string[] = [];
+      for (const id of [...media, ...matched]) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        ids.push(id);
+        if (ids.length >= MAX) break;
+      }
+      return ids;
+    } catch {
+      return [];
+    }
   }
 }

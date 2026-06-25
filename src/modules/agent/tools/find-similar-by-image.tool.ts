@@ -40,7 +40,10 @@ const outputSchema = z.object({
       name: z.string(),
       // price is a string (JOD numeric) — money is a string end-to-end; never float.
       price: z.string(),
+      // `color` is the primary colour family; `colors` is the full set of
+      // canonical colour names across the product's image variants.
       color: z.string().optional(),
+      colors: z.array(z.string()),
       category: z.string().optional(),
       available: z.boolean(),
     }),
@@ -67,12 +70,16 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
         const matches = await products.findSimilarByImage(url, {
           targetColor: input.target_color,
         });
+        const colorsByProduct = await products.getColorNamesByProducts(
+          matches.map((p) => p.id),
+        );
         return {
           products: matches.map((p) => ({
             id: p.id,
             name: p.name,
             price: p.priceJod,
             color: p.colorFamily ?? undefined,
+            colors: colorsByProduct.get(p.id) ?? [],
             // category maps to occasion on the product row (no category column).
             category: p.occasion ?? undefined,
             available: p.stockStatus !== 'out',

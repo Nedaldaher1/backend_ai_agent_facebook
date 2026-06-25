@@ -1,16 +1,16 @@
 /**
  * Sales tools barrel.
  *
- * `buildSalesTools(deps)` constructs all ten Mastra tools by closing over the
+ * `buildSalesTools(deps)` constructs all eleven Mastra tools by closing over the
  * injected domain services. Tools never import a repository or run SQL directly.
  *
  * The returned object is keyed by the tool id (snake_case) exactly as required
  * by the Agent constructor.
  *
  * Key order (grouped by read vs. write):
- *   search_products, check_availability, get_product_media, get_knowledge,
- *   recommend_size, get_product_for_order, capture_order, escalate_to_human,
- *   find_similar_by_image, get_order_status
+ *   search_products, list_all_products, check_availability, get_product_media,
+ *   get_knowledge, recommend_size, get_product_for_order, capture_order,
+ *   escalate_to_human, find_similar_by_image, get_order_status
  */
 
 import type { ProductsService } from '@/modules/products/products.service';
@@ -19,6 +19,7 @@ import type { ConversationsService } from '@/modules/conversations/conversations
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import { buildSearchProductsTool } from './search-products.tool';
+import { buildListAllProductsTool } from './list-all-products.tool';
 import { buildFindSimilarByImageTool } from './find-similar-by-image.tool';
 import { buildCheckAvailabilityTool } from './check-availability.tool';
 import { buildGetProductMediaTool } from './get-product-media.tool';
@@ -47,6 +48,7 @@ export function buildSalesTools(deps: SalesToolsDeps) {
 
   return {
     search_products: buildSearchProductsTool(products),
+    list_all_products: buildListAllProductsTool(products),
     check_availability: buildCheckAvailabilityTool(products),
     get_product_media: buildGetProductMediaTool(products),
     get_knowledge: buildGetKnowledgeTool(knowledge),

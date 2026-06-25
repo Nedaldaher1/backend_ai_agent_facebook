@@ -65,6 +65,7 @@ function makeProductsMock(overrides: Partial<Record<string, jest.Mock>> = {}) {
     normalizeColor: jest.fn().mockResolvedValue(undefined),
     search: jest.fn().mockResolvedValue([]),
     searchFuzzy: jest.fn().mockResolvedValue([]),
+    getColorNamesByProducts: jest.fn().mockResolvedValue(new Map<string, string[]>()),
   };
 
   // Merge: overrides win; then extract the resolved fns so callers get live refs.
@@ -121,6 +122,7 @@ describe('buildSearchProductsTool — search_products', () => {
         name: 'A',
         price: '45.000',
         color: 'red',
+        colors: [],
         category: 'سهرة',
         available: true,
       });
@@ -346,6 +348,20 @@ describe('buildSearchProductsTool — search_products', () => {
       const result = await tool.execute({}, ctx({}));
 
       expect(result.products[0].color).toBeUndefined();
+    });
+
+    it('attaches the full available-colour names from getColorNamesByProducts', async () => {
+      const p = makeProduct({ id: 'p9', colorFamily: 'green' });
+      const colorsMap = new Map<string, string[]>([['p9', ['أخضر', 'أحمر']]]);
+      const { mock } = makeProductsMock({
+        search: jest.fn().mockResolvedValue([p]),
+        getColorNamesByProducts: jest.fn().mockResolvedValue(colorsMap),
+      });
+      const tool = buildSearchProductsTool(mock) as any;
+
+      const result = await tool.execute({}, ctx({}));
+
+      expect(result.products[0].colors).toEqual(['أخضر', 'أحمر']);
     });
   });
 

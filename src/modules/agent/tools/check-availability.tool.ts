@@ -23,6 +23,9 @@ const inputSchema = z.object({
 const outputSchema = z.object({
   available: z.boolean(),
   in_stock_sizes: z.array(z.string()).optional(),
+  // All canonical colour names available for this product (across its image
+  // variants), e.g. ["أسود","أخضر","أحمر"]. Use to answer "what colours?".
+  colors: z.array(z.string()).optional(),
   note: z.string().optional(),
 });
 
@@ -30,7 +33,7 @@ export function buildCheckAvailabilityTool(products: ProductsService) {
   return createTool({
     id: 'check_availability',
     description:
-      'تحققي من توفر عباءة معينة وما هي المقاسات المتاحة. لا تُخبري الزبونة بالتوفر إلا بعد استخدام هذه الأداة.',
+      'تحققي من توفر عباءة معينة وما هي المقاسات والألوان المتاحة لها. لا تُخبري الزبونة بالتوفر أو الألوان إلا بعد استخدام هذه الأداة.',
     inputSchema,
     outputSchema,
 
@@ -42,6 +45,7 @@ export function buildCheckAvailabilityTool(products: ProductsService) {
       return {
         available: result.available,
         in_stock_sizes: result.inStockSizes,
+        colors: result.colors,
         note: result.note,
       };
     },

@@ -48,7 +48,10 @@ const mockBuildMastra = buildMastra as jest.MockedFunction<typeof buildMastra>;
 const fakeSalesAgent = { generate: jest.fn() };
 
 function makeConfigMock(): ConfigService {
-  return { getOrThrow: () => 'postgres://x' } as unknown as ConfigService;
+  return {
+    getOrThrow: () => 'postgres://x',
+    get: () => undefined, // MASTRA_LOG_LEVEL → falls back to 'info'
+  } as unknown as ConfigService;
 }
 
 const productsMock = {} as unknown as ProductsService;

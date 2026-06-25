@@ -133,6 +133,27 @@ export class MessengerClient {
   }
 
   /**
+   * Send a single image as an attachment — one image = one Messenger message.
+   *
+   * `url` MUST be a publicly reachable HTTPS image; Meta fetches it server-side
+   * (our R2 product images are public, verified). This is how product photos are
+   * delivered to the customer — NEVER as links pasted into reply text.
+   * `is_reusable: true` lets Meta cache the asset so re-sends are cheaper.
+   */
+  async sendImage(psid: string, url: string): Promise<void> {
+    await this.postToSendApi({
+      recipient: { id: psid },
+      messaging_type: 'RESPONSE',
+      message: {
+        attachment: {
+          type: 'image',
+          payload: { url, is_reusable: true },
+        },
+      },
+    });
+  }
+
+  /**
    * Send quick replies alongside a text prompt. Each quick reply is a
    * { title, payload } pair (content_type is always 'text').
    */

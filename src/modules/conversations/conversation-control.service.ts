@@ -33,6 +33,7 @@ import type { AiState } from './conversations.repository';
 import type { Conversation } from './entities/conversation.entity';
 import type { Message } from './entities/message.entity';
 import { MessengerClient } from '@/modules/agent/messenger/messenger.client';
+import { AgentService } from '@/modules/agent/agent.service';
 import type {
   AssignConversationInput,
   HandoffConversationInput,
@@ -69,6 +70,7 @@ export class ConversationControlService {
   constructor(
     private readonly conversations: ConversationsService,
     private readonly messengerClient: MessengerClient,
+    private readonly agent: AgentService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -122,6 +124,54 @@ export class ConversationControlService {
     const conversation = await this.conversations.getById(id);
     const msgs = await this.conversations.listMessages(id, { orderBy: 'asc' });
     return { conversation, messages: msgs };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reset
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Admin "reset conversation" — full wipe. In order:
+   *  1. Clears the agent's Mastra memory for this customer (resource-scoped
+   *     working memory + the thread's message history) via AgentService.
+   *  2. Clears the conversation `state` jsonb (last product, prefs, ad product…).
+   *  3. Hard-deletes the conversation's messages (public.messages) so the thread
+   *     shows empty in the admin panel (the admin explicitly chose a full wipe).
+   *  4. Records a `reset` audit event.
+   *
+   * The conversation row, its ai_state/assignment, and the append-only event log
+   * are preserved. 404 when the conversation does not exist. Returns the number
+   * of message rows removed.
+   */
+  async resetMemory(
+    id: string,
+    actor: string,
+  ): Promise<{ id: string; deletedMessages: number }> {
+    const convo = await this.conversations.getById(id);
+
+    // 1. Wipe Mastra memory (working memory + thread/message history).
+    await this.agent.resetConversationMemory(convo.psid);
+
+    // 2. Clear the conversation context jsonb.
+    await this.conversations.updateState(id, {});
+
+    // 3. Hard-delete the visible message log.
+    const deletedMessages = await this.conversations.deleteMessages(id);
+
+    // 4. Audit trail (kept — not part of the wipe). ai_state is unchanged, so
+    //    fromState === toState; the event documents who reset and when.
+    await this.conversations.recordEvent({
+      conversationId: id,
+      type: 'reset',
+      actor,
+      actorType: 'admin',
+      fromState: convo.aiState as AiState,
+      toState: convo.aiState as AiState,
+      reason: 'conversation reset (memory + messages cleared)',
+      metadata: { deletedMessages },
+    });
+
+    return { id, deletedMessages };
   }
 
   // ---------------------------------------------------------------------------

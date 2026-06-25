@@ -20,6 +20,7 @@ import {
   type KnowledgeEntry,
   type NewKnowledgeEntry,
 } from './entities/knowledge-entry.entity';
+import { tokenizeSearchQuery } from '@/modules/products/search-tokenize.util';
 
 /**
  * Filters for knowledge_entries. `isPublished` is explicit so the publish gate
@@ -173,13 +174,18 @@ export class KnowledgeRepository {
    *    Returns [] immediately when productIds is empty (no scope to search).
    *  - `type==='global'`: filters to entries where productId IS NULL.
    *
-   * Fuzzy search (when query is set): uses pg_trgm similarity on the GIN-indexed
-   * expression `(coalesce(title,'') || ' ' || coalesce(situation,'') || ' ' || coalesce(content,''))`.
-   * The ILIKE term is a safety net for short Arabic keywords that fall below the
-   * similarity threshold. Both use bound parameters — the query is NEVER concatenated
-   * into the SQL string.
+   * Fuzzy search (when query is set): Arabic-aware, per-TOKEN matching that mirrors
+   * products.repository.searchFuzzy. Whole-string `similarity()` collapses for Arabic
+   * sentences (the trigram overlap of a long query with a short entry is tiny), so we
+   * match each meaningful token with `word_similarity(token, searchable)` — which finds
+   * the token INSIDE the concatenated title+situation+content — OR an exact-substring
+   * ILIKE the trigrams can miss. A coarse whole-query `similarity()` clause is kept as
+   * an extra OR. All values are bound parameters — the query is NEVER concatenated into
+   * the SQL string. `searchable` is `(coalesce(title,'') || ' ' || coalesce(situation,'')
+   * || ' ' || coalesce(content,''))`.
    *
-   * Ordering: query present → priority DESC + similarity DESC; else → priority DESC + createdAt DESC.
+   * Ordering: query present → priority DESC + greatest(word_similarity, similarity) DESC;
+   * else → priority DESC + createdAt DESC.
    */
   async findRelevant(filter: KnowledgeRelevanceFilter): Promise<KnowledgeEntry[]> {
     // Short-circuit: products scope with empty list can match nothing.
@@ -224,27 +230,43 @@ export class KnowledgeRepository {
         .limit(limit);
     }
 
-    // Fuzzy path. The pg_trgm `%` operator is the INDEXABLE form of
-    // `similarity() >= threshold`; pairing it with ILIKE (both GIN-trgm-indexable)
-    // lets Postgres use knowledge_entries_search_trgm_idx. A bare
-    // `similarity() >= 0.2` call is NOT indexable and would force a seq scan.
-    // `%` reads its cutoff from pg_trgm.similarity_threshold, so we lower it to
-    // 0.2 (lenient for Arabic) with SET LOCAL inside a tx — scoped to this query
-    // and safe on a pooled connection. ORDER BY similarity() needs no index.
+    // Fuzzy path — per-token, WORD-level match (Arabic-aware), mirroring
+    // products.repository.searchFuzzy. `word_similarity(token, searchable)` finds
+    // a token INSIDE the concatenated text ("عباية" scores ~1.0 against a long
+    // entry) where whole-string `similarity()` cannot. ILIKE adds exact-substring
+    // hits trigrams miss. WORD_SIM 0.5 keeps unrelated words out. The function
+    // form of word_similarity needs no GUC, so — unlike the old `%` operator —
+    // no transaction / SET LOCAL is required. (Trade-off: the function form does
+    // not use the GIN trgm index; acceptable at this table's scale, same as
+    // products.searchFuzzy.) All values are bound parameters.
     const q = filter.query;
-    const match = sql`(${searchable} % ${q} OR ${searchable} ILIKE '%' || ${q} || '%')`;
+    const tokens = tokenizeSearchQuery(q);
 
-    return this.db.transaction(async (tx) => {
-      await tx.execute(sql`SET LOCAL pg_trgm.similarity_threshold = 0.2`);
-      return tx
-        .select()
-        .from(knowledgeEntries)
-        .where(and(...conditions, match))
-        .orderBy(
-          sql`${knowledgeEntries.priority} DESC`,
-          sql`similarity(${searchable}, ${q}) DESC`,
-        )
-        .limit(limit);
-    });
+    const WORD_SIM = 0.5;
+    const tokenConds = tokens.map(
+      (t) => sql`(
+        word_similarity(${t}, ${searchable}) >= ${WORD_SIM}
+        OR ${searchable} ILIKE ${'%' + t + '%'}
+      )`,
+    );
+
+    // Coarse whole-query trigram clause kept as an extra OR (helps short queries);
+    // with no usable tokens (all-stopword query) it is the only text condition.
+    const wholeQuery = sql`(similarity(${searchable}, ${q}) >= 0.2)`;
+
+    const textCondition =
+      tokenConds.length > 0
+        ? sql`(${sql.join([...tokenConds, wholeQuery], sql` OR `)})`
+        : wholeQuery;
+
+    return this.db
+      .select()
+      .from(knowledgeEntries)
+      .where(and(...conditions, textCondition))
+      .orderBy(
+        sql`${knowledgeEntries.priority} DESC`,
+        sql`greatest(word_similarity(${q}, ${searchable}), similarity(${searchable}, ${q})) DESC`,
+      )
+      .limit(limit);
   }
 }

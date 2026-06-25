@@ -61,7 +61,14 @@ const makeHit = (overrides: Record<string, unknown> = {}) => ({
 
 describe('buildFindSimilarByImageTool', () => {
   const findSimilarByImage = jest.fn();
-  const products = { findSimilarByImage } as unknown as ProductsService;
+  // clearAllMocks (not reset) keeps this implementation across tests.
+  const getColorNamesByProducts = jest
+    .fn()
+    .mockResolvedValue(new Map<string, string[]>());
+  const products = {
+    findSimilarByImage,
+    getColorNamesByProducts,
+  } as unknown as ProductsService;
 
   beforeEach(() => jest.clearAllMocks());
 
@@ -94,6 +101,7 @@ describe('buildFindSimilarByImageTool', () => {
           name: 'عباءة سوداء',
           price: '49.000',
           color: 'black',
+          colors: [],
           category: 'سهرة',
           available: true,
         },
@@ -102,6 +110,7 @@ describe('buildFindSimilarByImageTool', () => {
           name: 'عباءة سوداء',
           price: '49.000',
           color: undefined,
+          colors: [],
           category: undefined,
           available: false,
         },

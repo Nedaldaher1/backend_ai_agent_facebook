@@ -19,6 +19,7 @@ export const CONVERSATION_EVENT_TYPES = [
   'handoff',
   'human_message',
   'ai_state_change',
+  'reset',
 ] as const;
 
 /** Who (or what) produced the event. */

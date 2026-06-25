@@ -90,12 +90,23 @@ A typical bug-fix chain: implement with the relevant engineer, then run `backend
 
 ## 5. Git workflow — READ CAREFULLY
 
-Git discipline is mandatory. Follow these rules exactly.
+Git discipline is mandatory. **You own day-to-day Git management while you work** — branching, committing, tidying history, and integrating finished work into `dev` — and you do this autonomously, without asking permission for each step. One rule overrides everything else:
+
+> **`dev` must always stay clean: it must build, pass tests, and pass lint at every commit. Never let broken or work-in-progress code reach `dev`.**
 
 ### Branch structure
-- `main` — production-ready code only. Never commit directly to `main`.
-- `dev` — integration branch. Feature branches merge here first.
-- Feature/fix branches — one per Linear issue, branched from `dev`.
+- `main` — production-ready code only. Never commit directly to it and never merge into it on your own (see the permission boundary below). `main` updates stay with me.
+- `dev` — the integration branch and the target for finished work. It must always be in a green, buildable state. Never commit work-in-progress directly to `dev`.
+- Feature/fix branches — one per Linear issue, branched from `dev`. **All actual work happens here, never directly on `dev`.**
+
+### What "keep `dev` clean" means — enforce this before every integration
+A feature/fix branch may be merged into `dev` only when **all** of these pass on that branch:
+1. `bun run build` completes with no errors.
+2. `bun run test` passes (and `bun run test:e2e` when the change touches request/response flows).
+3. `bun run lint` passes.
+4. The change has gone through `backend-code-reviewer`.
+
+If any gate fails, fix it on the feature branch first. **Never merge red code into `dev` "to fix later."** Keep `dev` history readable: integrate each Linear issue as a single clean unit — prefer a squash merge or a fast-forward, not a noisy series of WIP commits. If a merge would leave `dev` broken or with conflicts you cannot cleanly resolve, stop and tell me instead of forcing it.
 
 ### Branch naming (this is what links Git to Linear)
 Use the Linear issue ID in the branch name. The workspace team key is the prefix Linear assigns (for example `MAS`). Format:
@@ -117,12 +128,23 @@ Use `feature/`, `fix/`, `chore/`, `refactor/`, `test/`, or `docs/`. Use lowercas
 - Use Conventional Commits: `type(scope): summary`, e.g. `fix(catalog): normalize dialect color terms`.
 - Keep the summary under ~72 characters; explain the why in the body if needed.
 - Reference the Linear issue in the body when relevant: `Refs MAS-37`.
+- Commit in small, coherent steps as you work; you do not need to ask before committing.
 
-### Permission boundary — IMPORTANT
-- You may: create branches, stage, commit, view diffs, view log/status, and merge into `dev` locally.
-- You may NOT run `git push` unless I explicitly ask in that message. Never push automatically.
-- Never force-push, never rewrite published history, never commit directly to `main`.
-- Never commit `.env*`, secrets, or `node_modules`. If you see a secret about to be staged, stop and warn me.
+### Permission boundary — IMPORTANT (updated)
+
+**You MAY, autonomously and without asking each time:**
+- Create, switch, rename, and delete branches; stage and commit; view diff / log / status.
+- Tidy the history of **your own, not-yet-pushed** feature branch (amend, squash, reorder) to keep it clean before integrating.
+- Merge a feature/fix branch into `dev` **once all four gates above pass**, preferring a squash or fast-forward merge.
+- Push feature/fix branches and `dev` to the remote (normal, non-force pushes only).
+- Keep the remote in sync as you work — this is part of "organizing Git," and you may do it without asking.
+
+**You may NOT, unless I explicitly ask in that message:**
+- Commit directly to `main`, or merge anything into `main`. Promoting `dev` → `main` (and opening/merging the production PR) stays mine.
+- Force-push, or rewrite history on any **shared / already-pushed** branch (`main`, `dev`, or a feature branch you have already pushed). History rewriting is allowed **only** on a private feature branch that has never been pushed.
+- Commit `.env*`, secrets, credentials, or `node_modules`. If a secret is about to be staged, **stop and warn me** before committing.
+
+When in doubt about anything touching `main`, any force-push, history rewriting on a shared branch, or anything that risks data loss — **stop and ask**.
 
 ---
 
@@ -140,15 +162,16 @@ When I ask you to fix a Linear issue (e.g. "fix MAS-37"):
    git checkout -b fix/MAS-37-color-normalization-bug
    ```
 3. **Reproduce, then fix** — find the responsible code, make the minimal correct change. Delegate to the right sub-agent.
-4. **Test** — run `backend-tester` (or `bun test`) and confirm the fix; add a regression test.
+4. **Test** — run `backend-tester` (or `bun test`) and confirm the fix; add a regression test. Make sure the build and lint are clean too (the `dev` gates from section 5).
 5. **Commit** with a Conventional Commit and a magic word that links and closes the issue:
    ```
    git commit -m "fix(catalog): normalize dialect color terms
 
    Fixes MAS-37"
    ```
-6. **Update the ticket** via Linear MCP: move it to "In Review" (or "Done" only after merge to `main`), and add a short comment summarizing the fix.
-7. **Stop before pushing.** Tell me the branch is ready; I run `git push` and open the PR myself unless I tell you otherwise.
+6. **Integrate into `dev` yourself** once all four gates pass: push the feature branch, then merge it into `dev` (squash/fast-forward) and push `dev`. Keep `dev` green.
+7. **Update the ticket** via Linear MCP: move it to "In Review" and add a short comment summarizing the fix. Do **not** mark it "Done" — that only happens after the change reaches `main`.
+8. **Stop at the `main` boundary.** Promoting `dev` → `main` and opening/merging the production PR is mine unless I tell you otherwise in that message.
 
 ### Linear magic words (link + auto-close)
 Include one of these followed by the issue ID in the commit body or PR description to link the issue and auto-close it on merge:
@@ -166,6 +189,7 @@ To link without closing (e.g. partial work), reference the ID without a magic wo
 
 ### State transitions — keep them conservative
 - Opening a PR / pushing the branch → issue moves to "In Progress" / "In Review".
+- Merging a clean feature branch into `dev` keeps the issue at "In Review" — never "Done".
 - Only a merge to `main` (production) should move an issue to "Done". Do not mark issues "Done" on merges to `dev`.
 
 ---
@@ -184,4 +208,4 @@ Always be explicit about the team when searching ("open bugs in our team"), and 
 - Make the minimal correct change; do not refactor unrelated code in a fix branch.
 - After a change, run the tests and report results honestly — never silently force a test to pass.
 - Explain your reasoning in Arabic if I write in Arabic; keep code, commits, branch names, and identifiers in English.
-- If something is ambiguous or risky (schema change, data loss, anything touching `main` or `push`), stop and ask.
+- You manage Git autonomously (section 5), but if something is ambiguous or risky — schema change, data loss, anything touching `main`, a force-push, or rewriting shared history — stop and ask.

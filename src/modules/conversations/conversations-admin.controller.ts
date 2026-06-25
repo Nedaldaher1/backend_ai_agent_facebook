@@ -145,6 +145,34 @@ export class ConversationsAdminController {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /admin/conversations/:id/reset
+  // ---------------------------------------------------------------------------
+
+  @Post(':id/reset')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Reset a conversation (admin)',
+    description:
+      "Full wipe: clears the agent's memory (Mastra working memory + thread " +
+      'message history) and the conversation context, then hard-deletes the ' +
+      "conversation's messages so the thread shows empty. The conversation row, " +
+      'its ai_state/assignment, and the audit-event log are preserved. ' +
+      'Irreversible — the deleted messages cannot be recovered.',
+  })
+  @ApiOkResponse({
+    description: 'Conversation reset. Returns { id, deletedMessages }.',
+  })
+  @ApiNotFoundResponse({ description: 'No conversation exists with that id.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  @ApiForbiddenResponse({ description: 'Insufficient role.' })
+  reset(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: { email: string },
+  ) {
+    return this.control.resetMemory(id, user.email);
+  }
+
+  // ---------------------------------------------------------------------------
   // POST /admin/conversations/:id/pause
   // ---------------------------------------------------------------------------
 
