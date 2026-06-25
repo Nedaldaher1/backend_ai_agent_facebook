@@ -48,7 +48,7 @@ describe('buildListAllProductsTool', () => {
     const result = await tool.execute();
 
     // Publish gate is enforced inside listPublished — called with {} filter + cap.
-    expect(listPublished).toHaveBeenCalledWith({}, { limit: 30 });
+    expect(listPublished).toHaveBeenCalledWith({}, { limit: 15 });
     expect(result.total).toBe(2);
     expect(result.products).toEqual([
       {

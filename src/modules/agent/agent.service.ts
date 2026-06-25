@@ -235,6 +235,13 @@ export class AgentService implements OnModuleInit {
   private maxSteps!: number;
 
   /**
+   * Knowledge pre-fetch note caps (AGENT_KNOWLEDGE_MAX_ENTRIES / _MAX_CHARS):
+   * bound the RAG note injected into context every turn. Set in onModuleInit.
+   */
+  private knowledgeMaxEntries!: number;
+  private knowledgeMaxChars!: number;
+
+  /**
    * The Mastra Memory instance (working memory + thread/message store). Held so
    * the admin "reset conversation" action can clear a customer's memory.
    */
@@ -277,6 +284,15 @@ export class AgentService implements OnModuleInit {
     // Cap on tool-calling round-trips per message (see field doc). Number()
     // guards a string slipping through the mocked-config path in tests.
     this.maxSteps = Number(this.config.get<string>('AGENT_MAX_STEPS') ?? '4');
+    this.knowledgeMaxEntries = Number(
+      this.config.get<string>('AGENT_KNOWLEDGE_MAX_ENTRIES') ?? '3',
+    );
+    this.knowledgeMaxChars = Number(
+      this.config.get<string>('AGENT_KNOWLEDGE_MAX_CHARS') ?? '500',
+    );
+    const lastMessages = Number(
+      this.config.get<string>('AGENT_LAST_MESSAGES') ?? '10',
+    );
     // Mastra framework logger level (validated enum, defaults to 'info' in the
     // env schema). Controls Mastra's own diagnostics; per-turn tool-call lines
     // are logged by logToolCalls regardless.
@@ -294,6 +310,7 @@ export class AgentService implements OnModuleInit {
       agentBehavior: this.agentBehavior,
       modelId,
       logLevel,
+      lastMessages,
     });
     this.mastra = mastra;
     this.salesAgent = salesAgent;
@@ -1090,7 +1107,7 @@ export class AgentService implements OnModuleInit {
         productIds.length > 0
           ? await this.knowledge.getRelevant({ productIds })
           : [];
-      if (entries.length === 0) {
+      if (entries.length === 0 && this.isInformationalQuery(input.text)) {
         entries = await this.knowledge.getRelevant({ query: input.text });
       }
       if (entries.length === 0) return undefined;
@@ -1102,6 +1119,21 @@ export class AgentService implements OnModuleInit {
       );
       return undefined;
     }
+  }
+
+  /**
+   * Heuristic gate for the GLOBAL knowledge fallback: skip it for inputs that are
+   * clearly not informational questions (empty, or phone/number-only — e.g. the
+   * phone she sends during order capture), so we neither query nor inject a
+   * knowledge note (and pay its tokens) on those turns. Product-tier knowledge
+   * (resolved from context) is unaffected, as is any normal Arabic question.
+   */
+  private isInformationalQuery(text: string | undefined): boolean {
+    const t = (text ?? '').trim();
+    if (t.length === 0) return false;
+    // Phone / pure-number / punctuation-only inputs carry no question.
+    if (/^[\d\s+()\-ـ]+$/.test(t)) return false;
+    return true;
   }
 
   /**
@@ -1144,7 +1176,19 @@ export class AgentService implements OnModuleInit {
   private formatKnowledgeNote(
     entries: Array<{ title: string; content: string }>,
   ): string {
-    const lines = entries.map((e) => `• ${e.title}: ${e.content}`).join('\n');
+    // Bound the injected note: cap entry count and truncate each answer. The
+    // prefetch is a best-effort head-start; get_knowledge stays available for the
+    // full text. Keeps this system message from dominating the per-turn context.
+    const lines = entries
+      .slice(0, this.knowledgeMaxEntries)
+      .map((e) => {
+        const content =
+          e.content.length > this.knowledgeMaxChars
+            ? `${e.content.slice(0, this.knowledgeMaxChars)}…`
+            : e.content;
+        return `• ${e.title}: ${content}`;
+      })
+      .join('\n');
     return (
       'معرفة جاهزة من قاعدة بيانات المتجر — أجيبي من هذه المعلومات حصرًا بأسلوبك ' +
       'الطبيعي، ولا تخترعي غيرها، ولا تخبري الزبونة أنك تبحثين في قاعدة المعرفة:\n' +

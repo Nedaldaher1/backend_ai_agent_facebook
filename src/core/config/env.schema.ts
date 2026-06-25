@@ -53,6 +53,16 @@ export const envSchema = z
     // Lower = cheaper but can truncate a complex multi-item turn (finishReason
     // then shows the step limit) — tune from the per-turn usage log. Per-env.
     AGENT_MAX_STEPS: z.coerce.number().int().positive().default(4),
+    // Conversation history kept in every prompt window (Mastra lastMessages).
+    // Includes tool-call/result messages whose payloads (product lists, etc.) are
+    // re-sent each step — a major lever on per-call size. Was hard-coded to 20;
+    // 10 turns is ample for this flow. Tunable per-env.
+    AGENT_LAST_MESSAGES: z.coerce.number().int().positive().default(10),
+    // Knowledge pre-fetch note caps (RAG injected into context every turn): max
+    // FAQ entries and max characters per entry. Bounds the injected note so it
+    // can't dominate the prompt; the get_knowledge tool stays available for more.
+    AGENT_KNOWLEDGE_MAX_ENTRIES: z.coerce.number().int().positive().default(3),
+    AGENT_KNOWLEDGE_MAX_CHARS: z.coerce.number().int().positive().default(500),
 
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).

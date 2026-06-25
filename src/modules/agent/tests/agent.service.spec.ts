@@ -1733,6 +1733,67 @@ describe('AgentService', () => {
       expect(findKnowledgeNote()).toBeDefined();
     });
 
+    it('caps the injected note to the entry limit and truncates long content', async () => {
+      const conversations = makeConversationsMock('c-kp-cap', 'bot', null, null, {
+        lastProductIds: ['prod-1'],
+      });
+      const longContent = 'ت'.repeat(800);
+      const knowledge = makeKnowledgeMock([
+        { id: 'k1', title: 'سؤال١', content: longContent },
+        { id: 'k2', title: 'سؤال٢', content: 'جواب٢' },
+        { id: 'k3', title: 'سؤال٣', content: 'جواب٣' },
+        { id: 'k4', title: 'سؤال٤', content: 'جواب٤' },
+        { id: 'k5', title: 'سؤال٥', content: 'جواب٥' },
+      ]);
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'احكيلي عنها' });
+
+      const note = findKnowledgeNote();
+      expect(note).toBeDefined();
+      // Default cap is 3 entries — the 4th/5th must not appear.
+      expect(note?.content).toContain('سؤال١');
+      expect(note?.content).toContain('سؤال٣');
+      expect(note?.content).not.toContain('سؤال٤');
+      // Long content truncated (default 500 chars) with an ellipsis.
+      expect(note?.content).toContain('…');
+      expect(note?.content).not.toContain(longContent);
+    });
+
+    it('skips the global fallback for a phone-only (non-question) input', async () => {
+      const conversations = makeConversationsMock('c-kp-phone'); // no product context
+      const knowledge = makeKnowledgeMock([
+        { id: 'g1', title: 'الشحن', content: 'التوصيل ٢ دينار' },
+      ]);
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: '0791234567' });
+
+      // No product context + a phone-only input → no query, no injected note.
+      expect(knowledge.getRelevant).not.toHaveBeenCalled();
+      expect(findKnowledgeNote()).toBeUndefined();
+    });
+
     it('injects nothing when no knowledge is found (agent proceeds per guardrails)', async () => {
       const conversations = makeConversationsMock('c-kp4');
       const knowledge = makeKnowledgeMock([]); // empty in both tiers

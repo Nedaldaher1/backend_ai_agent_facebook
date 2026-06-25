@@ -79,6 +79,9 @@ export interface BuildMastraDeps {
    *  own diagnostics (agent steps, tool registration, memory ops); the per-turn
    *  tool-call summary is logged separately by AgentService.logToolCalls. */
   logLevel: 'debug' | 'info' | 'warn' | 'error' | 'silent';
+  /** Conversation history window kept in every prompt (Mastra lastMessages,
+   *  AGENT_LAST_MESSAGES env). Bounds per-call context size. */
+  lastMessages: number;
 }
 
 /**
@@ -92,7 +95,7 @@ export function buildMastra(deps: BuildMastraDeps): {
   salesAgent: Agent;
   memory: Memory;
 } {
-  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, modelId, logLevel } = deps;
+  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, modelId, logLevel, lastMessages } = deps;
 
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
@@ -127,8 +130,10 @@ export function buildMastra(deps: BuildMastraDeps): {
     // here sets hasOwnStorage=true so the reset works regardless of timing.
     storage,
     options: {
-      // Keep the last 20 messages in every prompt window.
-      lastMessages: 20,
+      // Conversation history kept in every prompt window (config-driven via
+      // AGENT_LAST_MESSAGES). Includes tool-call/result messages, so a smaller
+      // window directly shrinks the re-sent context.
+      lastMessages,
 
       // No embedder is wired in Phase 1, so semantic recall is disabled.
       // TODO (next ticket): set semanticRecall: { topK: 5 } once PgVector

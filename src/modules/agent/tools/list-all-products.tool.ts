@@ -19,8 +19,14 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { ProductsService } from '@/modules/products/products.service';
 
-/** Hard cap on products returned in one browse call. */
-const MAX_LIST = 30;
+/**
+ * Hard cap on products returned in one browse call. Kept modest because this
+ * result is stored in the conversation history and re-sent on every subsequent
+ * step/turn, and the customer only ever sees the (separately capped) gallery
+ * cards — so a large list is wasted prompt tokens. `total` still lets the agent
+ * say there are more and offer to narrow down.
+ */
+const MAX_LIST = 15;
 
 const inputSchema = z.object({});
 
