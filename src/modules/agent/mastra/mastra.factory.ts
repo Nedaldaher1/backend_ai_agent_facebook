@@ -45,6 +45,7 @@ import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
+import { PinoLogger } from '@mastra/loggers';
 import { z } from 'zod';
 import type { ProductsService } from '@/modules/products/products.service';
 import type { OrdersService } from '@/modules/orders/orders.service';
@@ -74,6 +75,10 @@ export interface BuildMastraDeps {
    *  e.g. 'openrouter/google/gemini-3.5-flash'. Injected so swapping the model
    *  is a config change, never a code edit. */
   modelId: string;
+  /** Mastra framework logger level (from MASTRA_LOG_LEVEL env). Controls Mastra's
+   *  own diagnostics (agent steps, tool registration, memory ops); the per-turn
+   *  tool-call summary is logged separately by AgentService.logToolCalls. */
+  logLevel: 'debug' | 'info' | 'warn' | 'error' | 'silent';
 }
 
 /**
@@ -86,7 +91,7 @@ export function buildMastra(deps: BuildMastraDeps): {
   mastra: Mastra;
   salesAgent: Agent;
 } {
-  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, modelId } = deps;
+  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, modelId, logLevel } = deps;
 
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
@@ -177,7 +182,14 @@ export function buildMastra(deps: BuildMastraDeps): {
   // Registering the agent under the `salesAgent` key here automatically
   // injects this `storage` instance into Memory, so we do NOT pass the store
   // to Memory separately.
-  const mastra = new Mastra({ agents: { salesAgent }, storage });
+  //
+  // logger: routes Mastra's internal diagnostics (agent steps, tool
+  // registration, memory ops) through Pino at MASTRA_LOG_LEVEL. At 'debug' it
+  // surfaces tool-related traces; clean per-turn tool-call summaries are logged
+  // separately by AgentService.logToolCalls. PinoLogger emits JSON — pipe the
+  // dev server through `bunx pino-pretty` for readable terminal output.
+  const logger = new PinoLogger({ name: 'MasaAgent', level: logLevel });
+  const mastra = new Mastra({ agents: { salesAgent }, storage, logger });
 
   return { mastra, salesAgent };
 }

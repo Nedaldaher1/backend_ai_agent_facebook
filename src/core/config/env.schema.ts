@@ -21,6 +21,12 @@ export const envSchema = z
     // Legacy Anthropic-direct key. Optional now that OpenRouter is the default
     // provider; only needed if a *_MODEL_ID is pointed back at 'anthropic/...'.
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Mastra framework logger verbosity (agent steps, tool registration, memory
+    // ops) routed through PinoLogger. Per-turn tool-call summaries are logged by
+    // AgentService regardless of this. 'silent' disables Mastra's own logs.
+    MASTRA_LOG_LEVEL: z
+      .enum(['debug', 'info', 'warn', 'error', 'silent'])
+      .default('info'),
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).
     STORAGE_DRIVER: z.enum(['fs', 'r2']).default('r2'),

@@ -203,6 +203,13 @@ export class AgentService implements OnModuleInit {
     const modelId =
       this.config.get<string>('AGENT_MODEL_ID') ??
       'openrouter/google/gemini-3.5-flash';
+    // Mastra framework logger level (validated enum, defaults to 'info' in the
+    // env schema). Controls Mastra's own diagnostics; per-turn tool-call lines
+    // are logged by logToolCalls regardless.
+    const logLevel =
+      this.config.get<'debug' | 'info' | 'warn' | 'error' | 'silent'>(
+        'MASTRA_LOG_LEVEL',
+      ) ?? 'info';
     const { mastra, salesAgent } = buildMastra({
       connectionString,
       products: this.products,
@@ -212,12 +219,13 @@ export class AgentService implements OnModuleInit {
       sizing: this.sizing,
       agentBehavior: this.agentBehavior,
       modelId,
+      logLevel,
     });
     this.mastra = mastra;
     this.salesAgent = salesAgent;
 
     this.logger.log(
-      `Mastra ready: schema=mastra, model=${modelId}, workingMemory=resource, tools=10, instructions=dynamic`,
+      `Mastra ready: schema=mastra, model=${modelId}, logLevel=${logLevel}, workingMemory=resource, tools=10, instructions=dynamic`,
     );
   }
 
@@ -431,6 +439,12 @@ export class AgentService implements OnModuleInit {
       ...(context ? { context } : {}),
     })) as GenerateResult;
 
+    // Per-turn observability: log which tools the agent called this turn, with the
+    // args it supplied and a short result hint. Without this the backend gives no
+    // signal of what the agent is doing — Mastra's own logger reports tool
+    // *registration*, not per-call invocation. Best-effort (never throws).
+    this.logToolCalls(result, resourceId);
+
     // One-shot handoff summary (WS7): clear it only AFTER a successful generate()
     // so a failed turn (Claude 429/5xx) leaves it intact for the retry instead of
     // losing the human's wrap-up context. Best-effort + fire-and-forget.
@@ -482,6 +496,61 @@ export class AgentService implements OnModuleInit {
         `Business-log write failed (conversation ${message.conversationId}, ` +
           `role ${message.role}); continuing without it. ${String(err)}`,
       );
+    }
+  }
+
+  /**
+   * Per-turn tool-call observability.
+   *
+   * Logs ONE line per agent turn naming every tool the model invoked, the args
+   * it passed (compacted/truncated) and a short result hint (product/image
+   * counts when present). This is the only signal of what the agent actually did
+   * this turn: Mastra's framework logger reports tool *registration* at boot, not
+   * per-call invocation, and `generate()` does not log its own tool steps.
+   *
+   * Reads from `result.toolResults` (post-execution), whose payload carries
+   * `toolName`, `isError`, `args` (echoed by the provider) and `result`.
+   * Best-effort: the whole body is wrapped in try/catch — observability must
+   * NEVER break the customer reply.
+   */
+  private logToolCalls(result: GenerateResult, resourceId: string): void {
+    try {
+      const calls = result.toolResults ?? [];
+      if (calls.length === 0) {
+        this.logger.log(`agent turn [${resourceId}] tools: (none)`);
+        return;
+      }
+      const summary = calls
+        .map((c) => {
+          const name = c.payload?.toolName ?? 'unknown';
+          const mark = c.payload?.isError ? '✗' : '✓';
+
+          // Compact, truncated args so the log shows WHAT the agent asked for
+          // (e.g. which colour/occasion it searched). Args are absent when the
+          // provider does not echo them — then we just show the tool name.
+          let args = '';
+          if (c.payload?.args !== undefined) {
+            const s = JSON.stringify(c.payload.args);
+            args = ` ${s.length > 120 ? `${s.slice(0, 117)}...` : s}`;
+          }
+
+          // Result hint: surface product/image counts when the tool returned a
+          // list, so the log shows whether the call actually found anything.
+          const r = c.payload?.result as
+            | { products?: unknown[]; images?: unknown[] }
+            | undefined;
+          let hint = '';
+          if (Array.isArray(r?.products)) hint = ` → ${r.products.length} products`;
+          else if (Array.isArray(r?.images)) hint = ` → ${r.images.length} images`;
+
+          return `${name} ${mark}${args}${hint}`;
+        })
+        .join(', ');
+      this.logger.log(
+        `agent turn [${resourceId}] tools(${calls.length}): ${summary}`,
+      );
+    } catch {
+      // Observability must never break the customer reply.
     }
   }
 
