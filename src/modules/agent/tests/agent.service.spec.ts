@@ -889,7 +889,24 @@ describe('AgentService', () => {
       await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
 
       const opts = fakeSalesAgent.generate.mock.calls[0][1];
-      expect(opts.maxSteps).toBe(4);
+      expect(opts.maxSteps).toBe(6);
+    });
+
+    it('does NOT retry when truncated at the step cap (finishReason tool-calls)', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+
+      // Hitting maxSteps while still wanting tools → empty text + 'tool-calls'; a
+      // re-run hits the same wall, so go straight to the fallback (no 2x cost).
+      fakeSalesAgent.generate.mockResolvedValueOnce({
+        text: '',
+        finishReason: 'tool-calls',
+      });
+
+      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
+      expect(result.reply).toBe(FALLBACK_REPLY);
     });
 
     it('strips emoji from the reply deterministically', async () => {

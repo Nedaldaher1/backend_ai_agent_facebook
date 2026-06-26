@@ -283,7 +283,7 @@ export class AgentService implements OnModuleInit {
     };
     // Cap on tool-calling round-trips per message (see field doc). Number()
     // guards a string slipping through the mocked-config path in tests.
-    this.maxSteps = Number(this.config.get<string>('AGENT_MAX_STEPS') ?? '4');
+    this.maxSteps = Number(this.config.get<string>('AGENT_MAX_STEPS') ?? '6');
     this.knowledgeMaxEntries = Number(
       this.config.get<string>('AGENT_KNOWLEDGE_MAX_ENTRIES') ?? '3',
     );
@@ -585,11 +585,17 @@ export class AgentService implements OnModuleInit {
     // finishReason is logged (see logToolCalls) to reveal the cause.
     if (!replyText.trim()) {
       const reason = result.finishReason ?? 'unknown';
-      // Retry only for failure modes a re-run can fix (length truncation, a
-      // tool-call step, or a transient blip). A clean 'stop' with empty text
-      // means the model deliberately produced nothing — retrying would just burn
-      // another full generation, so skip straight to the fallback.
-      if (reason !== 'stop') {
+      // Retry only for failure modes a re-run can actually fix (length
+      // truncation, or a transient error/other/unknown). Skip the DETERMINISTIC
+      // reasons — 'stop' (model deliberately produced nothing), 'tool-calls' (hit
+      // the maxSteps wall while still wanting tools; a re-run hits the same wall)
+      // and 'content-filter' (a re-run yields the same block) — since retrying
+      // those just burns another full generation, so fall straight to the fallback.
+      const noRetry =
+        reason === 'stop' ||
+        reason === 'tool-calls' ||
+        reason === 'content-filter';
+      if (!noRetry) {
         this.logger.warn(
           `agent turn [${resourceId}] empty reply (finishReason=${reason}) — retrying once`,
         );
@@ -1131,8 +1137,9 @@ export class AgentService implements OnModuleInit {
   private isInformationalQuery(text: string | undefined): boolean {
     const t = (text ?? '').trim();
     if (t.length === 0) return false;
-    // Phone / pure-number / punctuation-only inputs carry no question.
-    if (/^[\d\s+()\-ـ]+$/.test(t)) return false;
+    // Phone / pure-number / punctuation-only inputs carry no question. Includes
+    // Arabic-Indic (٠-٩) and Persian (۰-۹) digits, not just ASCII.
+    if (/^[\d٠-٩۰-۹\s+()\-ـ]+$/.test(t)) return false;
     return true;
   }
 
@@ -1179,20 +1186,30 @@ export class AgentService implements OnModuleInit {
     // Bound the injected note: cap entry count and truncate each answer. The
     // prefetch is a best-effort head-start; get_knowledge stays available for the
     // full text. Keeps this system message from dominating the per-turn context.
+    let truncated = false;
     const lines = entries
       .slice(0, this.knowledgeMaxEntries)
       .map((e) => {
-        const content =
-          e.content.length > this.knowledgeMaxChars
-            ? `${e.content.slice(0, this.knowledgeMaxChars)}…`
-            : e.content;
+        let content = e.content;
+        if (content.length > this.knowledgeMaxChars) {
+          // Cut on a word boundary so a value/number is never split mid-token,
+          // then flag it so the note can point the agent at get_knowledge.
+          const cut = content.slice(0, this.knowledgeMaxChars);
+          const lastSpace = cut.lastIndexOf(' ');
+          content = `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+          truncated = true;
+        }
         return `• ${e.title}: ${content}`;
       })
       .join('\n');
+    const moreHint = truncated
+      ? '\n(الإجابات المنتهية بـ«…» مختصرة — إن احتجتِ التفاصيل الكاملة استخدمي get_knowledge.)'
+      : '';
     return (
       'معرفة جاهزة من قاعدة بيانات المتجر — أجيبي من هذه المعلومات حصرًا بأسلوبك ' +
       'الطبيعي، ولا تخترعي غيرها، ولا تخبري الزبونة أنك تبحثين في قاعدة المعرفة:\n' +
-      lines
+      lines +
+      moreHint
     );
   }
 

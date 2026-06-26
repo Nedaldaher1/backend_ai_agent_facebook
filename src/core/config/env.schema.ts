@@ -46,17 +46,18 @@ export const envSchema = z
     // ample headroom; replies still stay short via the persona, so cost/latency
     // impact is negligible. Tunable per-env.
     AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(2048),
-    // Max sequential tool-calling round-trips per customer message (Mastra
-    // maxSteps). Each step re-sends the full prompt (instructions + 12 tool
-    // schemas + history), so this directly multiplies per-message token cost.
-    // Mastra's default is 5; a normal flow (search → media → reply) fits in ~3.
-    // Lower = cheaper but can truncate a complex multi-item turn (finishReason
-    // then shows the step limit) — tune from the per-turn usage log. Per-env.
-    AGENT_MAX_STEPS: z.coerce.number().int().positive().default(4),
+    // Ceiling on tool-calling round-trips per customer message (Mastra maxSteps;
+    // its own default is 5). A runaway-loop / cost guard, NOT a primary saver:
+    // normal turns stop early on their own, and an order-confirmation turn can
+    // legitimately need ~5 steps (check_availability → recommend_size →
+    // get_product_for_order → capture_order → reply). Default 6 leaves headroom so
+    // real flows are never truncated while still bounding a pathological loop;
+    // lower it from the per-turn usage log only if turns are wasting steps.
+    AGENT_MAX_STEPS: z.coerce.number().int().positive().default(6),
     // Conversation history kept in every prompt window (Mastra lastMessages).
     // Includes tool-call/result messages whose payloads (product lists, etc.) are
     // re-sent each step — a major lever on per-call size. Was hard-coded to 20;
-    // 10 turns is ample for this flow. Tunable per-env.
+    // 10 messages is ample for this flow. Tunable per-env.
     AGENT_LAST_MESSAGES: z.coerce.number().int().positive().default(10),
     // Knowledge pre-fetch note caps (RAG injected into context every turn): max
     // FAQ entries and max characters per entry. Bounds the injected note so it

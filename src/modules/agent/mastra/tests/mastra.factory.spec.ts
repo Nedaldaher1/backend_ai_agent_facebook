@@ -54,6 +54,7 @@ function makeDeps(): BuildMastraDeps {
     sizing: svc as BuildMastraDeps['sizing'],
     agentBehavior: svc as BuildMastraDeps['agentBehavior'],
     logLevel: 'silent',
+    lastMessages: 10,
   };
 }
 
@@ -90,6 +91,13 @@ describe('buildMastra — Memory storage wiring', () => {
       enabled: true,
       scope: 'resource',
     });
+  });
+
+  it('forwards the configured lastMessages into Memory options', () => {
+    buildMastra({ ...makeDeps(), lastMessages: 7 });
+
+    const memoryArg = MemoryMock.mock.calls[0][0];
+    expect(memoryArg.options.lastMessages).toBe(7);
   });
 
   it('registers the agent with the built memory instance', () => {
