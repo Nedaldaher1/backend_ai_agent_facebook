@@ -15,11 +15,7 @@ import {
 } from '@/common/validation';
 import { ProductsService } from '@/modules/products/products.service';
 import { OrdersRepository, type NewOrderItemInput } from './orders.repository';
-import {
-  ORDER_STATUSES,
-  type NewOrder,
-  type Order,
-} from './entities/order.entity';
+import { ORDER_STATUSES, type Order } from './entities/order.entity';
 import type { OrderItem } from './entities/order-item.entity';
 import { DELIVERY_FEE_MILLI } from './delivery-fees';
 import { OrderCaptureError } from './order-capture.error';
@@ -266,19 +262,6 @@ export class OrdersService {
    * maps it to 400) — no partial orders are ever written.
    */
   async captureCodOrder(input: CaptureOrderInput): Promise<CaptureOrderResult> {
-    // --- idempotency: return the existing open draft for this conversation ---
-    // Applies only when conversationId is present (agent path). Standalone admin
-    // orders (conversationId === null) always create a new record.
-    if (input.conversationId != null) {
-      const existing = await this.repo.findOpenDraftByConversation(
-        input.conversationId,
-      );
-      if (existing) {
-        const items = await this.repo.listItemsByOrder(existing.id);
-        return this.buildResultFromPersisted(existing, items);
-      }
-    }
-
     // --- header validation ---
     const phone = normalizeJordanMobile(input.phone);
     if (!phone) {
@@ -403,21 +386,51 @@ export class OrdersService {
     const deliveryFee = milliToJod(DELIVERY_FEE_MILLI);
     const total = addJod(subtotal, deliveryFee);
 
-    // --- persist header + items in one transaction ---
-    const orderRow: NewOrder = {
-      conversationId: input.conversationId,
-      source: input.source,
+    // --- persist: edit the open draft in place, else insert a new one ---
+    // A draft is an editable cart. When this conversation already has an open
+    // draft, overwrite its contents with this latest capture (one open draft per
+    // conversation, always current) instead of dropping the new choices or
+    // creating a duplicate. Standalone admin orders (conversationId === null)
+    // always insert a fresh record.
+    const header = {
       phone,
       address,
       unifiedSize: input.unifiedSize ?? null,
       subtotal,
       deliveryFee,
       total,
-      currency: 'JOD',
-      status: 'draft',
     };
 
-    const { order, items } = await this.repo.createWithItems(orderRow, itemRows);
+    const existingDraft =
+      input.conversationId != null
+        ? await this.repo.findOpenDraftByConversation(input.conversationId)
+        : undefined;
+
+    // Edit the open draft in place. Fall back to a fresh insert when there is no
+    // open draft, or when replaceDraftContents returns null because that draft
+    // was confirmed/canceled concurrently (it must not clobber a committed order).
+    let persisted: { order: Order; items: OrderItem[] } | null = null;
+    if (existingDraft) {
+      persisted = await this.repo.replaceDraftContents(
+        existingDraft.id,
+        header,
+        itemRows,
+      );
+    }
+    if (!persisted) {
+      persisted = await this.repo.createWithItems(
+        {
+          conversationId: input.conversationId,
+          source: input.source,
+          ...header,
+          currency: 'JOD',
+          status: 'draft',
+        },
+        itemRows,
+      );
+    }
+
+    const { order, items } = persisted;
 
     return {
       order,
@@ -460,45 +473,5 @@ export class OrdersService {
       }
       throw err; // genuine / system errors still propagate
     }
-  }
-
-  // --- private helpers ---
-
-  /**
-   * Reconstructs a CaptureOrderResult from already-persisted rows. Used by the
-   * idempotency branch (returning an existing draft) so the caller always receives
-   * the same shape regardless of whether the order was just created or fetched.
-   */
-  private buildResultFromPersisted(
-    order: Order,
-    items: OrderItem[],
-  ): CaptureOrderResult {
-    const lines: CaptureOrderLine[] = items.map((item) => ({
-      productId: item.productId ?? '',
-      storageKey: item.storageKey,
-      productName: item.productName ?? '',
-      colorName: item.colorName,
-      size: item.size,
-      quantity: item.qty,
-      unitPrice: item.unitPrice,
-      lineTotal: item.lineTotal,
-    }));
-
-    return {
-      order,
-      items,
-      confirmation: {
-        orderId: order.id,
-        status: order.status,
-        source: order.source,
-        phone: order.phone ?? '',
-        address: order.address ?? '',
-        lines,
-        subtotal: order.subtotal,
-        deliveryFee: order.deliveryFee,
-        total: order.total,
-        currency: 'JOD',
-      },
-    };
   }
 }
