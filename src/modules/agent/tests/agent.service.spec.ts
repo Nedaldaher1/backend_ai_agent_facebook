@@ -84,7 +84,13 @@ import type { VisionService } from '../vision/vision.service';
 const mockBuildMastra = buildMastra as jest.MockedFunction<typeof buildMastra>;
 const MockRequestContextCtor = RequestContext as unknown as jest.MockedClass<
   typeof RequestContext
-> & { instances: Array<{ sets: Map<string, unknown>; set: jest.Mock; get: jest.Mock }> };
+> & {
+  instances: Array<{
+    sets: Map<string, unknown>;
+    set: jest.Mock;
+    get: jest.Mock;
+  }>;
+};
 
 // ---------------------------------------------------------------------------
 // Shared fakes
@@ -350,7 +356,7 @@ describe('AgentService', () => {
     );
   });
 
-  it('applies the default modelSettings (temp 0.5 / topP 0.8 / maxOutputTokens 2048) to generate', async () => {
+  it('applies the default modelSettings (temp 0.5 / topP 0.8 / maxOutputTokens 768) to generate', async () => {
     const service = new AgentService(
       makeConfigMock(),
       productsMock,
@@ -368,7 +374,7 @@ describe('AgentService', () => {
     expect(fakeSalesAgent.generate).toHaveBeenCalledWith(
       'مرحبا',
       expect.objectContaining({
-        modelSettings: { temperature: 0.5, topP: 0.8, maxOutputTokens: 2048 },
+        modelSettings: { temperature: 0.5, topP: 0.8, maxOutputTokens: 768 },
       }),
     );
   });
@@ -414,11 +420,16 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    await service.handleMessage({ contactId: 'C1', text: 'مرحبا', adRef: undefined });
+    await service.handleMessage({
+      contactId: 'C1',
+      text: 'مرحبا',
+      adRef: undefined,
+    });
 
-    expect(
-      (conversations.findOrCreateByPsid as jest.Mock),
-    ).toHaveBeenCalledWith('C1', { threadId: 'thread:C1', adRef: undefined });
+    expect(conversations.findOrCreateByPsid as jest.Mock).toHaveBeenCalledWith(
+      'C1',
+      { threadId: 'thread:C1', adRef: undefined },
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -440,7 +451,11 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    await service.handleMessage({ contactId: 'C1', text: 'مرحبا', adRef: 'spring' });
+    await service.handleMessage({
+      contactId: 'C1',
+      text: 'مرحبا',
+      adRef: 'spring',
+    });
 
     const instance = MockRequestContextCtor.instances[0];
     expect(instance.sets.get('contactId')).toBe('C1');
@@ -560,7 +575,9 @@ describe('AgentService', () => {
       lastImageUrl: IMAGE_URL,
     });
 
-    expect(visionMock.extractAttributes).toHaveBeenCalledWith({ url: IMAGE_URL });
+    expect(visionMock.extractAttributes).toHaveBeenCalledWith({
+      url: IMAGE_URL,
+    });
 
     const instance = MockRequestContextCtor.instances[0];
     expect(instance.sets.get('visionAttributes')).toMatchObject({
@@ -713,7 +730,10 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'مرحبا',
+    });
 
     expect(result.reply).toBe(FAKE_REPLY);
   });
@@ -795,7 +815,10 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'مرحبا',
+    });
 
     expect(result.reply).toBe(FAKE_REPLY);
   });
@@ -828,7 +851,10 @@ describe('AgentService', () => {
         .mockResolvedValueOnce({ text: '   ', finishReason: 'length' })
         .mockResolvedValueOnce({ text: '', finishReason: 'length' });
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(2);
       expect(result.reply).toBe(FALLBACK_REPLY);
@@ -845,7 +871,10 @@ describe('AgentService', () => {
         .mockResolvedValueOnce({ text: '' })
         .mockResolvedValueOnce({ text: 'رجعت بنص هالمرة' });
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(2);
       expect(result.reply).toBe('رجعت بنص هالمرة');
@@ -857,7 +886,10 @@ describe('AgentService', () => {
 
       fakeSalesAgent.generate.mockResolvedValueOnce({ text: 'رد مباشر' });
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
       expect(result.reply).toBe('رد مباشر');
@@ -874,7 +906,10 @@ describe('AgentService', () => {
         finishReason: 'stop',
       });
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
       expect(result.reply).toBe(FALLBACK_REPLY);
@@ -903,7 +938,10 @@ describe('AgentService', () => {
         finishReason: 'tool-calls',
       });
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
       expect(result.reply).toBe(FALLBACK_REPLY);
@@ -914,9 +952,14 @@ describe('AgentService', () => {
       const service = make(conversations);
 
       // \u{1F60D} = 😍. The reply must come back emoji-free and double-space-tidied.
-      fakeSalesAgent.generate.mockResolvedValueOnce({ text: 'تمام \u{1F60D} حياتي' });
+      fakeSalesAgent.generate.mockResolvedValueOnce({
+        text: 'تمام \u{1F60D} حياتي',
+      });
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(result.reply).toBe('تمام حياتي');
     });
@@ -946,7 +989,8 @@ describe('AgentService', () => {
       const lines = logSpy.mock.calls.map((c) => String(c[0]));
       expect(
         lines.some(
-          (l) => l.includes('capture_order') && l.includes('order ord-9 created'),
+          (l) =>
+            l.includes('capture_order') && l.includes('order ord-9 created'),
         ),
       ).toBe(true);
       logSpy.mockRestore();
@@ -1024,10 +1068,15 @@ describe('AgentService', () => {
       ],
     });
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'عبايات' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'عبايات',
+    });
 
     // Deduped to one entry; price is the STRING '45.000' (not a number)
-    expect(result.products).toEqual([{ id: 'p1', name: 'عباية', price: '45.000' }]);
+    expect(result.products).toEqual([
+      { id: 'p1', name: 'عباية', price: '45.000' },
+    ]);
     // No overflow — only 1 unique product, well under the 8-item cap
     expect(result.productOverflow).toBeUndefined();
   });
@@ -1049,7 +1098,10 @@ describe('AgentService', () => {
     // The get_product_media tool pushes the SERVICE-selected URLs into the
     // mediaSink AgentService placed on the request context — simulate that here.
     fakeSalesAgent.generate.mockImplementationOnce(
-      (_text: string, opts: { requestContext: { get: (k: string) => unknown } }) => {
+      (
+        _text: string,
+        opts: { requestContext: { get: (k: string) => unknown } },
+      ) => {
         const sink = opts.requestContext.get('mediaSink') as string[];
         sink.push(
           'https://pub.r2.dev/a.jpeg',
@@ -1091,7 +1143,10 @@ describe('AgentService', () => {
       toolResults: [],
     });
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'مرحبا',
+    });
 
     expect(result.images).toBeUndefined();
   });
@@ -1131,7 +1186,10 @@ describe('AgentService', () => {
       ],
     });
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'عبايات' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'عبايات',
+    });
 
     expect(result.products).toHaveLength(8);
     expect(result.productOverflow).toBe(3);
@@ -1211,7 +1269,9 @@ describe('AgentService', () => {
           payload: {
             toolName: 'find_similar_by_image',
             isError: false,
-            result: { products: [{ id: 'p9', name: 'عباية', price: '60.000' }] },
+            result: {
+              products: [{ id: 'p9', name: 'عباية', price: '60.000' }],
+            },
           },
         },
       ],
@@ -1274,7 +1334,12 @@ describe('AgentService', () => {
             isError: false,
             result: {
               products: [
-                { id: 'v1', name: 'عباية مطابقة', price: '60.000', available: true },
+                {
+                  id: 'v1',
+                  name: 'عباية مطابقة',
+                  price: '60.000',
+                  available: true,
+                },
               ],
             },
           },
@@ -1311,7 +1376,10 @@ describe('AgentService', () => {
 
     fakeSalesAgent.generate.mockResolvedValueOnce({ text: 'لا يوجد' });
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'كيف الأسعار؟' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'كيف الأسعار؟',
+    });
 
     expect(result.products).toBeUndefined();
   });
@@ -1335,7 +1403,10 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'وين طلبي؟' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'وين طلبي؟',
+    });
 
     // Silent — the handoff line was delivered once on the escalation turn itself.
     expect(result.reply).toBe('');
@@ -1358,7 +1429,10 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'هل الطلب جاهز؟' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'هل الطلب جاهز؟',
+    });
 
     expect(result.reply).toBe('');
     expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
@@ -1408,7 +1482,11 @@ describe('AgentService', () => {
     service.onModuleInit();
 
     const IMAGE_URL = 'https://cdn.example.com/photo.jpg';
-    await service.handleMessage({ contactId: 'C1', text: 'صورة', lastImageUrl: IMAGE_URL });
+    await service.handleMessage({
+      contactId: 'C1',
+      text: 'صورة',
+      lastImageUrl: IMAGE_URL,
+    });
 
     const addMessage = conversations.addMessage as jest.Mock;
     expect(addMessage).toHaveBeenCalledWith({
@@ -1435,7 +1513,10 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'عندك عبايات؟' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'عندك عبايات؟',
+    });
 
     expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
     expect(result.reply).toBe(FAKE_REPLY);
@@ -1456,7 +1537,10 @@ describe('AgentService', () => {
     );
     service.onModuleInit();
 
-    const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+    const result = await service.handleMessage({
+      contactId: 'C1',
+      text: 'مرحبا',
+    });
 
     expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
     expect(result.reply).toBe(FAKE_REPLY);
@@ -1484,10 +1568,18 @@ describe('AgentService', () => {
 
     it('auto-resumes a paused conversation whose window has elapsed, then generates', async () => {
       const past = new Date(Date.now() - 60_000);
-      const conversations = makeConversationsMock('convo-exp', 'paused', null, past);
+      const conversations = makeConversationsMock(
+        'convo-exp',
+        'paused',
+        null,
+        past,
+      );
       const service = makeService(conversations);
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(conversations.setAiState).toHaveBeenCalledWith('convo-exp', {
         aiState: 'bot',
@@ -1506,10 +1598,18 @@ describe('AgentService', () => {
 
     it('stays silent (no resume, no generate) when the pause window is still in the future', async () => {
       const future = new Date(Date.now() + 60_000);
-      const conversations = makeConversationsMock('convo-fut', 'paused', null, future);
+      const conversations = makeConversationsMock(
+        'convo-fut',
+        'paused',
+        null,
+        future,
+      );
       const service = makeService(conversations);
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(result.reply).toBe('');
       expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
@@ -1517,10 +1617,18 @@ describe('AgentService', () => {
     });
 
     it('stays silent for an indefinite pause (pausedUntil null)', async () => {
-      const conversations = makeConversationsMock('convo-ind', 'paused', null, null);
+      const conversations = makeConversationsMock(
+        'convo-ind',
+        'paused',
+        null,
+        null,
+      );
       const service = makeService(conversations);
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(result.reply).toBe('');
       expect(fakeSalesAgent.generate).not.toHaveBeenCalled();
@@ -1604,7 +1712,11 @@ describe('AgentService', () => {
 
     it('does NOT clear the summary when generate() throws — kept for the retry (audit A2)', async () => {
       const SUMMARY = 'سياق التحويل يجب أن يبقى';
-      const conversations = makeConversationsMock('convo-ws7-fail', 'bot', SUMMARY);
+      const conversations = makeConversationsMock(
+        'convo-ws7-fail',
+        'bot',
+        SUMMARY,
+      );
       const service = new AgentService(
         makeConfigMock(),
         productsMock,
@@ -1645,7 +1757,9 @@ describe('AgentService', () => {
     }
 
     /** The injected knowledge system message from the first generate() call. */
-    function findKnowledgeNote(): { role: string; content: string } | undefined {
+    function findKnowledgeNote():
+      | { role: string; content: string }
+      | undefined {
       const options = fakeSalesAgent.generate.mock.calls[0][1] as {
         context?: Array<{ role: string; content: string }>;
       };
@@ -1679,7 +1793,9 @@ describe('AgentService', () => {
       );
       service.onModuleInit();
 
-      await service.handleMessage({ contactId: 'C1', text: 'كم سعرها؟' });
+      // Text carries an FAQ keyword (قماش) so the default 'gated' mode runs
+      // the pre-fetch; keyword-free turns are covered by the gating tests below.
+      await service.handleMessage({ contactId: 'C1', text: 'شو خامة قماشها؟' });
 
       // Product tier queried with the resolved id; no global fallback needed.
       expect(knowledge.getRelevant).toHaveBeenCalledWith({
@@ -1746,14 +1862,22 @@ describe('AgentService', () => {
 
       await service.handleMessage({ contactId: 'C1', text: 'كم التوصيل؟' });
 
-      expect(knowledge.getRelevant).toHaveBeenCalledWith({ query: 'كم التوصيل؟' });
+      expect(knowledge.getRelevant).toHaveBeenCalledWith({
+        query: 'كم التوصيل؟',
+      });
       expect(findKnowledgeNote()).toBeDefined();
     });
 
     it('caps the injected note to the entry limit and truncates long content', async () => {
-      const conversations = makeConversationsMock('c-kp-cap', 'bot', null, null, {
-        lastProductIds: ['prod-1'],
-      });
+      const conversations = makeConversationsMock(
+        'c-kp-cap',
+        'bot',
+        null,
+        null,
+        {
+          lastProductIds: ['prod-1'],
+        },
+      );
       const longContent = 'ت'.repeat(800);
       const knowledge = makeKnowledgeMock([
         { id: 'k1', title: 'سؤال١', content: longContent },
@@ -1774,7 +1898,10 @@ describe('AgentService', () => {
       );
       service.onModuleInit();
 
-      await service.handleMessage({ contactId: 'C1', text: 'احكيلي عنها' });
+      await service.handleMessage({
+        contactId: 'C1',
+        text: 'شو سياسة الاستبدال عندكم؟',
+      });
 
       const note = findKnowledgeNote();
       expect(note).toBeDefined();
@@ -1785,6 +1912,103 @@ describe('AgentService', () => {
       // Long content truncated (default 500 chars) with an ellipsis.
       expect(note?.content).toContain('…');
       expect(note?.content).not.toContain(longContent);
+    });
+
+    it('gated mode (default) skips the pre-fetch entirely on a non-FAQ turn — no query, no note', async () => {
+      const conversations = makeConversationsMock(
+        'c-kp-gate',
+        'bot',
+        null,
+        null,
+        {
+          lastProductIds: ['prod-1'],
+        },
+      );
+      const knowledge = makeKnowledgeMock([
+        { id: 'k1', title: 'كم السعر', content: '12 دينار' },
+      ]);
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      // A search/order move with no FAQ keyword — the ~300-750-token note
+      // must not be paid for on turns like this.
+      await service.handleMessage({ contactId: 'C1', text: 'بدي أطلب هاي' });
+
+      expect(knowledge.getRelevant).not.toHaveBeenCalled();
+      expect(findKnowledgeNote()).toBeUndefined();
+    });
+
+    it('KNOWLEDGE_PREFETCH_MODE=always restores the legacy inject-every-turn behavior', async () => {
+      const conversations = makeConversationsMock(
+        'c-kp-always',
+        'bot',
+        null,
+        null,
+        {
+          lastProductIds: ['prod-1'],
+        },
+      );
+      const knowledge = makeKnowledgeMock([
+        { id: 'k1', title: 'كم السعر', content: '12 دينار' },
+      ]);
+      const service = new AgentService(
+        makeConfigMock('postgres://x', { KNOWLEDGE_PREFETCH_MODE: 'always' }),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'بدي أطلب هاي' });
+
+      expect(knowledge.getRelevant).toHaveBeenCalledWith({
+        productIds: ['prod-1'],
+      });
+      expect(findKnowledgeNote()).toBeDefined();
+    });
+
+    it('KNOWLEDGE_PREFETCH_MODE=off never injects, even on FAQ-looking turns', async () => {
+      const conversations = makeConversationsMock(
+        'c-kp-off',
+        'bot',
+        null,
+        null,
+        {
+          lastProductIds: ['prod-1'],
+        },
+      );
+      const knowledge = makeKnowledgeMock([
+        { id: 'k1', title: 'الشحن', content: 'التوصيل ٢ دينار' },
+      ]);
+      const service = new AgentService(
+        makeConfigMock('postgres://x', { KNOWLEDGE_PREFETCH_MODE: 'off' }),
+        productsMock,
+        conversations,
+        ordersMock,
+        agentBehaviorMock,
+        knowledge,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'قديش التوصيل؟' });
+
+      expect(knowledge.getRelevant).not.toHaveBeenCalled();
+      expect(findKnowledgeNote()).toBeUndefined();
     });
 
     it('skips the global fallback for a phone-only (non-question) input', async () => {
@@ -1848,7 +2072,10 @@ describe('AgentService', () => {
       );
       service.onModuleInit();
 
-      const result = await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
 
       expect(result.reply).toBe(FAKE_REPLY);
       expect(findKnowledgeNote()).toBeUndefined();
@@ -1958,9 +2185,7 @@ describe('AgentService', () => {
         visionMock,
       );
       service.onModuleInit();
-      (fakeMemory.deleteThread as jest.Mock).mockRejectedValueOnce(
-        new Error('thread gone'),
-      );
+      fakeMemory.deleteThread.mockRejectedValueOnce(new Error('thread gone'));
 
       // A silently-swallowed failure here previously let the agent keep
       // remembering the customer after a "reset"; the wipe must surface failures.
@@ -1984,7 +2209,7 @@ describe('AgentService', () => {
         visionMock,
       );
       service.onModuleInit();
-      (fakeMemory.updateWorkingMemory as jest.Mock).mockRejectedValueOnce(
+      fakeMemory.updateWorkingMemory.mockRejectedValueOnce(
         new Error('storage unavailable'),
       );
 

@@ -98,7 +98,9 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
-      "^@/(.*)$": "<rootDir>/$1"
+      "^@/(.*)$": "<rootDir>/$1",
+      "^p-map$": "<rootDir>/../test/mocks/p-map.cjs",
+      "^tokenx$": "<rootDir>/../test/mocks/tokenx.cjs"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

@@ -29,11 +29,11 @@ const inputSchema = z.object({
   target_color: z
     .string()
     .optional()
-    .describe(
-      'لون محدد طلبته الزبونة لنفس التصميم (مثلاً "أسود")، إن وُجد',
-    ),
+    .describe('Specific color she wants for this design (e.g. "أسود"), if any'),
 });
 
+// Lean model-facing payload (see search-products.tool.ts): id/name/price/
+// colors/available only — these results re-enter the prompt on every step.
 const outputSchema = z.object({
   products: z.array(
     z.object({
@@ -41,11 +41,8 @@ const outputSchema = z.object({
       name: z.string(),
       // price is a string (JOD numeric) — money is a string end-to-end; never float.
       price: z.string(),
-      // `color` is the primary colour family; `colors` is the full set of
-      // canonical colour names across the product's image variants.
-      color: z.string().optional(),
+      // Full set of canonical colour names across the product's image variants.
       colors: z.array(z.string()),
-      category: z.string().optional(),
       available: z.boolean(),
     }),
   ),
@@ -55,14 +52,14 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
   return createTool({
     id: 'find_similar_by_image',
     description:
-      'ابحثي عن عبايات مشابهة بصرياً للصورة التي أرسلتها الزبونة للتو — الرابط يُؤخذ تلقائياً من السياق، استدعي هذه الأداة بدون أي وسيطات عندما أرسلت الزبونة صورة. لا تخترعي منتجات — إن لم تُرجع الأداة نتائج فاطلبي صورة أوضح أو استخدمي البحث النصي.',
+      'Visually search the catalog for the photo the customer just sent (URL is taken from context — call with no arguments). On empty results ask for a clearer photo or fall back to text search; never invent products.',
     inputSchema,
     outputSchema,
 
     execute: async (input, ctx) => {
       // Read the image URL from the request context (set by AgentService from
       // input.lastImageUrl before the generate() call — never from model input).
-      const url = (ctx?.requestContext?.get('lastImageUrl') as string | undefined)?.trim();
+      const url = ctx?.requestContext?.get('lastImageUrl')?.trim();
       if (!url) {
         // No image in context this turn — empty result; the agent asks for a photo.
         return { products: [] };
@@ -84,10 +81,7 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
             id: p.id,
             name: p.name,
             price: p.priceJod,
-            color: p.colorFamily ?? undefined,
             colors: colorsByProduct.get(p.id) ?? [],
-            // category maps to occasion on the product row (no category column).
-            category: p.occasion ?? undefined,
             available: p.stockStatus !== 'out',
           })),
         };

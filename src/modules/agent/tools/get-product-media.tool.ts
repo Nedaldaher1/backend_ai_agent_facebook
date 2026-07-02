@@ -24,7 +24,7 @@ const inputSchema = z.object({
     .array(z.string())
     .optional()
     .describe(
-      'الألوان التي طلبتها الزبونة صراحةً كما لفظتها (مثلاً ["أسود","نبيتي"]). اتركيها فارغة أو لا تمرريها لإرسال كل ألوان الموديل.',
+      'Colors the customer explicitly asked for, exactly as she said them (e.g. ["أسود","نبيتي"]). Omit to send all of the model\'s colors.',
     ),
 });
 
@@ -44,7 +44,7 @@ export function buildGetProductMediaTool(products: ProductsService) {
   return createTool({
     id: 'get_product_media',
     description:
-      'أرسلي صور موديل معيّن للزبونة. إذا ذكرت الزبونة ألواناً محددة فمرّري هذه الألوان فقط في colors (بالضبط كما قالتها، بدون تطبيع أو إضافة) فتُرسَل صور تلك الألوان فقط؛ وإذا طلبت تشوف كل الألوان أو ما حددت لوناً فاستدعيها بدون colors فتُرسَل صور كل الألوان المتوفرة. الصور تُرسَل تلقائياً (كل صورة كرسالة مستقلة) — لا تكتبي أبداً روابط الصور داخل ردّك. اقرئي النتيجة قبل ردّك: أكّدي الألوان المُرسَلة (sent_colors)، وإذا كان unavailable_colors غير فارغ فأخبري الزبونة بوضوح أنه غير متوفر لهذا الموديل واعرضي البديل المتوفر. وإذا كان product_found=false فاطلبي منها تأكيد اسم الموديل.',
+      "Send a model's photos to the customer (delivered automatically as separate image messages — NEVER paste image URLs in your reply). Pass `colors` ONLY with colors she named, exactly as she said them; omit it to send all colors. Read the result before replying: confirm sent_colors; if unavailable_colors is non-empty say so plainly and offer what IS available (never substitute silently); if product_found=false ask her to confirm the model.",
     inputSchema,
     outputSchema,
 

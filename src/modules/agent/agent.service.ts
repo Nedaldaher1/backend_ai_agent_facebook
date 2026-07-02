@@ -258,6 +258,20 @@ export class AgentService implements OnModuleInit {
   private knowledgeMaxChars!: number;
 
   /**
+   * Knowledge pre-fetch gating (KNOWLEDGE_PREFETCH_MODE): 'gated' injects the
+   * FAQ note only on FAQ-looking turns, 'always' = legacy every-turn injection,
+   * 'off' = tool-only. Set in onModuleInit.
+   */
+  private knowledgePrefetchMode!: 'always' | 'gated' | 'off';
+
+  /**
+   * Whether to inject the last-shown products recap note (enabled whenever old
+   * tool results are stripped from recalled history — the recap re-anchors
+   * "the one you showed me" references those payloads used to resolve).
+   */
+  private historyRecapEnabled!: boolean;
+
+  /**
    * The Mastra Memory instance (working memory + thread/message store). Held so
    * the admin "reset conversation" action can clear a customer's memory.
    */
@@ -297,7 +311,7 @@ export class AgentService implements OnModuleInit {
       ),
       topP: Number(this.config.get<string>('AGENT_TOP_P') ?? '0.8'),
       maxOutputTokens: Number(
-        this.config.get<string>('AGENT_MAX_OUTPUT_TOKENS') ?? '2048',
+        this.config.get<string>('AGENT_MAX_OUTPUT_TOKENS') ?? '768',
       ),
     };
     // Cap on tool-calling round-trips per message (see field doc). Number()
@@ -309,9 +323,23 @@ export class AgentService implements OnModuleInit {
     this.knowledgeMaxChars = Number(
       this.config.get<string>('AGENT_KNOWLEDGE_MAX_CHARS') ?? '500',
     );
+    const rawPrefetchMode = this.config.get<string>('KNOWLEDGE_PREFETCH_MODE');
+    this.knowledgePrefetchMode =
+      rawPrefetchMode === 'always' || rawPrefetchMode === 'off'
+        ? rawPrefetchMode
+        : 'gated';
     const lastMessages = Number(
       this.config.get<string>('AGENT_LAST_MESSAGES') ?? '10',
     );
+    // History token diet (see mastra.factory): which tools' OLD results are
+    // stripped from recalled history, and the hard token budget for it.
+    const rawFilter = this.config.get<string>('AGENT_HISTORY_TOOL_FILTER');
+    const historyToolFilter: 'fat' | 'all' | 'off' =
+      rawFilter === 'all' || rawFilter === 'off' ? rawFilter : 'fat';
+    const historyTokenLimit = Number(
+      this.config.get<string>('AGENT_HISTORY_TOKEN_LIMIT') ?? '12000',
+    );
+    this.historyRecapEnabled = historyToolFilter !== 'off';
     // Mastra framework logger level (validated enum, defaults to 'info' in the
     // env schema). Controls Mastra's own diagnostics; per-turn tool-call lines
     // are logged by logToolCalls regardless.
@@ -330,6 +358,8 @@ export class AgentService implements OnModuleInit {
       modelId,
       logLevel,
       lastMessages,
+      historyToolFilter,
+      historyTokenLimit,
     });
     this.mastra = mastra;
     this.salesAgent = salesAgent;
@@ -337,7 +367,7 @@ export class AgentService implements OnModuleInit {
 
     const { temperature, topP, maxOutputTokens } = this.modelSettings;
     this.logger.log(
-      `Mastra ready: schema=mastra, model=${modelId}, temp=${temperature}, topP=${topP}, maxOutputTokens=${maxOutputTokens}, maxSteps=${this.maxSteps}, logLevel=${logLevel}, workingMemory=resource, tools=11, instructions=dynamic`,
+      `Mastra ready: schema=mastra, model=${modelId}, temp=${temperature}, topP=${topP}, maxOutputTokens=${maxOutputTokens}, maxSteps=${this.maxSteps}, historyFilter=${historyToolFilter}, historyTokenLimit=${historyTokenLimit}, logLevel=${logLevel}, workingMemory=resource, tools=11, instructions=dynamic`,
     );
   }
 
@@ -558,6 +588,18 @@ export class AgentService implements OnModuleInit {
     const knowledgeNote = await this.prefetchKnowledgeNote(input, convo);
     if (knowledgeNote) {
       systemMessages.push({ role: 'system', content: knowledgeNote });
+    }
+
+    // Last-shown recap: old tool results are stripped from recalled history
+    // (ToolCallFilter), so re-anchor "اللي ورجيتيني ياها / التانية" references
+    // deterministically with a one-line id+name+price summary of the products
+    // surfaced last turn — ~100 tokens instead of the 800-2,000-token raw
+    // payloads it replaces. Best-effort: undefined on any failure.
+    if (this.historyRecapEnabled) {
+      const recapNote = await this.buildShownProductsRecap(convo);
+      if (recapNote) {
+        systemMessages.push({ role: 'system', content: recapNote });
+      }
     }
 
     const context = systemMessages.length > 0 ? systemMessages : undefined;
@@ -1205,6 +1247,18 @@ export class AgentService implements OnModuleInit {
     input: IncomingMessage,
     convo: { id: string; state?: unknown },
   ): Promise<string | undefined> {
+    // Gating (KNOWLEDGE_PREFETCH_MODE): most turns are search/order moves that
+    // never use the FAQ note — injecting it anyway costs ~300-750 tokens each.
+    // 'gated' injects only when the text looks like an FAQ question; the
+    // get_knowledge tool stays available either way (guardrail rule 1 covers
+    // the fallback). 'off' = tool-only; 'always' = legacy behavior.
+    if (this.knowledgePrefetchMode === 'off') return undefined;
+    if (
+      this.knowledgePrefetchMode === 'gated' &&
+      !this.isFaqIntent(input.text)
+    ) {
+      return undefined;
+    }
     try {
       const productIds = await this.resolveProductContext(input, convo);
 
@@ -1227,6 +1281,26 @@ export class AgentService implements OnModuleInit {
       );
       return undefined;
     }
+  }
+
+  /**
+   * FAQ-intent keywords for the 'gated' pre-fetch mode: shipping/delivery,
+   * returns/exchange, payment, fabric/care, sizing, policy/warranty — the
+   * topics knowledge_entries actually answer. Substring match over the raw
+   * text (covers ال-prefixes and suffixed forms); a false positive merely
+   * injects a note, a false negative falls back to the get_knowledge tool.
+   * Deliberately excludes price words — prices must come from product tools.
+   */
+  private static readonly FAQ_INTENT_RE =
+    /شحن|توصيل|توصل|وصول|ارجاع|إرجاع|ترجيع|رجاع|استبدال|بدل|استرجاع|دفع|كاش|كليك|قماش|خامة|غسيل|عناية|مقاس|قياس|سياس|ضمان|كفال|مضمون|خصم|عرض|كوبون/;
+
+  /**
+   * Does this turn look like an FAQ question the knowledge base can answer?
+   * Requires a real informational text (not numbers/phone) AND an FAQ keyword.
+   */
+  private isFaqIntent(text: string | undefined): boolean {
+    if (!this.isInformationalQuery(text)) return false;
+    return AgentService.FAQ_INTENT_RE.test((text ?? '').trim());
   }
 
   /**
@@ -1315,6 +1389,48 @@ export class AgentService implements OnModuleInit {
       lines +
       moreHint
     );
+  }
+
+  /**
+   * One-line recap of the products shown last turn (from
+   * conversation state.lastProductIds, maintained by collectShownProductIds),
+   * with id + name + price so both conversational references ("التانية") and
+   * order-flow tool calls (which need the product_id) keep working after
+   * ToolCallFilter stripped the original tool payloads from recalled history.
+   * Unpublished/missing ids are silently skipped. Best-effort: never throws.
+   */
+  private async buildShownProductsRecap(convo: {
+    state?: unknown;
+  }): Promise<string | undefined> {
+    try {
+      const state = (convo.state ?? {}) as { lastProductIds?: unknown };
+      const ids = Array.isArray(state.lastProductIds)
+        ? state.lastProductIds
+            .filter((x): x is string => typeof x === 'string')
+            .slice(0, 8)
+        : [];
+      if (ids.length === 0) return undefined;
+
+      const settled = await Promise.allSettled(
+        ids.map((id) => this.products.getPublishedById(id)),
+      );
+      const lines: string[] = [];
+      for (const s of settled) {
+        if (s.status !== 'fulfilled') continue;
+        const p = s.value;
+        lines.push(
+          `${lines.length + 1}) ${p.name} — ${p.priceJod} دينار (product_id: ${p.id})`,
+        );
+      }
+      if (lines.length === 0) return undefined;
+
+      return (
+        'آخر موديلات عُرضت على الزبونة (مرجع لإشاراتها مثل «هاي/التانية/اللي ورجيتيني ياها» — استخدمي product_id منها للأدوات):\n' +
+        lines.join('\n')
+      );
+    } catch {
+      return undefined;
+    }
   }
 
   /**

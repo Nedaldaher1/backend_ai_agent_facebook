@@ -17,15 +17,12 @@ import { z } from 'zod';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 
 const inputSchema = z.object({
-  weight_kg: z
-    .number()
-    .positive()
-    .describe('وزن الزبونة بالكيلوغرام'),
+  weight_kg: z.number().positive().describe("Customer's weight in kg"),
   height_cm: z
     .number()
     .positive()
     .optional()
-    .describe('طول الزبونة بالسنتيمتر (اختياري)'),
+    .describe("Customer's height in cm (optional)"),
 });
 
 const outputSchema = z.object({
@@ -38,7 +35,7 @@ export function buildRecommendSizeTool(sizing: SizingService) {
   return createTool({
     id: 'recommend_size',
     description:
-      'تحديد مقاس العباءة المناسب بناءً على وزن الزبونة (الطول اختياري). إذا أعادت الأداة needs_human=true يجب تحويل الزبونة إلى موظف بشري عبر escalate_to_human.',
+      "Recommend the abaya size from the customer's weight (height optional). If it returns needs_human=true, hand off via escalate_to_human.",
     inputSchema,
     outputSchema,
 

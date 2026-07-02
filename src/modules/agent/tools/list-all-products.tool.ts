@@ -26,10 +26,12 @@ import type { ProductsService } from '@/modules/products/products.service';
  * cards — so a large list is wasted prompt tokens. `total` still lets the agent
  * say there are more and offer to narrow down.
  */
-const MAX_LIST = 15;
+const MAX_LIST = 8;
 
 const inputSchema = z.object({});
 
+// Lean model-facing payload (see search-products.tool.ts): id/name/price/
+// colors/available only — this list re-enters the prompt on every step.
 const outputSchema = z.object({
   products: z.array(
     z.object({
@@ -37,11 +39,8 @@ const outputSchema = z.object({
       name: z.string(),
       // price is a string (JOD numeric) — money is a string end-to-end; never float.
       price: z.string(),
-      // `color` is the primary colour family; `colors` is the full set of
-      // canonical colour names across the product's image variants.
-      color: z.string().optional(),
+      // Full set of canonical colour names across the product's image variants.
       colors: z.array(z.string()),
-      category: z.string().optional(),
       available: z.boolean(),
     }),
   ),
@@ -53,7 +52,7 @@ export function buildListAllProductsTool(products: ProductsService) {
   return createTool({
     id: 'list_all_products',
     description:
-      'أرجِعي كل العبايات المنشورة في الكتالوج. استخدميها لما تطلب الزبونة تشوف كل المنتجات أو تتصفّح بدون طلب محدّد (مثل: "شو عندكم؟"، "ورجيني العبايات"). للبحث بمواصفات معينة (لون/مقاس/مناسبة/سعر) استخدمي search_products. لا تخترعي منتجات أو أسعاراً — اعرضي فقط ما تُرجِعه هذه الأداة.',
+      'Browse the published catalog — use when the customer wants to see everything with no specific criteria ("شو عندكم؟"). For attribute search use search_products. Show only what this returns; `total` may exceed the returned page.',
     inputSchema,
     outputSchema,
 
@@ -70,10 +69,7 @@ export function buildListAllProductsTool(products: ProductsService) {
           id: p.id,
           name: p.name,
           price: p.priceJod,
-          color: p.colorFamily ?? undefined,
           colors: colorsByProduct.get(p.id) ?? [],
-          // category maps to occasion on the product row.
-          category: p.occasion ?? undefined,
           available: p.stockStatus !== 'out',
         })),
         total,

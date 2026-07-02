@@ -15,7 +15,10 @@ function makeProductsMock(
     .fn()
     .mockResolvedValue(new Map<string, string[]>()),
 ): ProductsService {
-  return { listPublished, getColorNamesByProducts } as unknown as ProductsService;
+  return {
+    listPublished,
+    getColorNamesByProducts,
+  } as unknown as ProductsService;
 }
 
 describe('buildListAllProductsTool', () => {
@@ -43,30 +46,28 @@ describe('buildListAllProductsTool', () => {
       limit: 30,
       offset: 0,
     });
-    const tool = buildListAllProductsTool(makeProductsMock(listPublished)) as any;
+    const tool = buildListAllProductsTool(
+      makeProductsMock(listPublished),
+    ) as any;
 
     const result = await tool.execute();
 
     // Publish gate is enforced inside listPublished — called with {} filter + cap.
-    expect(listPublished).toHaveBeenCalledWith({}, { limit: 15 });
+    expect(listPublished).toHaveBeenCalledWith({}, { limit: 8 });
     expect(result.total).toBe(2);
     expect(result.products).toEqual([
       {
         id: 'p1',
         name: 'عباية صيفي',
         price: '12.000',
-        color: 'green',
         colors: [],
-        category: 'daily',
         available: true,
       },
       {
         id: 'p2',
         name: 'عباية سهرة',
         price: '25.500',
-        color: undefined,
         colors: [],
-        category: undefined,
         available: false, // stockStatus 'out' → unavailable
       },
     ]);
@@ -88,7 +89,9 @@ describe('buildListAllProductsTool', () => {
       limit: 30,
       offset: 0,
     });
-    const colorsMap = new Map<string, string[]>([['p1', ['أخضر', 'أحمر', 'أسود']]]);
+    const colorsMap = new Map<string, string[]>([
+      ['p1', ['أخضر', 'أحمر', 'أسود']],
+    ]);
     const tool = buildListAllProductsTool(
       makeProductsMock(listPublished, jest.fn().mockResolvedValue(colorsMap)),
     ) as any;
@@ -105,7 +108,9 @@ describe('buildListAllProductsTool', () => {
       limit: 30,
       offset: 0,
     });
-    const tool = buildListAllProductsTool(makeProductsMock(listPublished)) as any;
+    const tool = buildListAllProductsTool(
+      makeProductsMock(listPublished),
+    ) as any;
 
     const result = await tool.execute();
 

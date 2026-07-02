@@ -18,7 +18,7 @@ const inputSchema = z.object({
   product_id: z
     .string()
     .uuid()
-    .describe('معرّف المنتج الذي اختارته الزبونة لتجهيز الطلب'),
+    .describe('UUID of the product the customer chose'),
 });
 
 const outputSchema = z.object({
@@ -40,7 +40,7 @@ export function buildGetProductForOrderTool(products: ProductsService) {
   return createTool({
     id: 'get_product_for_order',
     description:
-      'حلّلي المنتج المختار إلى مفتاح الطلب (storage_key) والمقاسات المتاحة لتجهيز capture_order. إذا كانت found:false فالمنتج غير قابل للطلب (غير منشور أو بلا صورة) واختاري منتجًا آخر.',
+      'Resolve the chosen product for ordering (storage_key + available sizes) ahead of capture_order. found:false means it is not orderable (unpublished or no image) — pick another product.',
     inputSchema,
     outputSchema,
 

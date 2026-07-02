@@ -26,27 +26,28 @@ const inputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'مرجع الإعلان الذي قدمت منه الزبونة (اختياري) — يُعيد المنتجات المرتبطة بهذا الإعلان أولاً',
+      'Ad ref the customer came from — returns its linked products first',
     ),
   color: z
     .string()
     .optional()
-    .describe('اللون المطلوب بأي لهجة (مثال: نبيتي، عنابي، أزرق غامق)'),
+    .describe('Requested color in any dialect (e.g. نبيتي، عنابي، أزرق غامق)'),
   category: z
     .string()
     .optional()
-    .describe('المناسبة أو الفئة (مثال: سهرة، يومي، عمل)'),
-  size: z.string().optional().describe('المقاس المطلوب (مثال: M، L، XL)'),
-  max_price: z
-    .number()
-    .optional()
-    .describe('الحد الأقصى للسعر بالدينار الأردني'),
+    .describe('Occasion/category (e.g. سهرة، يومي، عمل)'),
+  size: z.string().optional().describe('Requested size (e.g. M, L, 2)'),
+  max_price: z.number().optional().describe('Max price in JOD'),
   query: z
     .string()
     .optional()
-    .describe('نص بحث حر عن المنتج (مثال: عباءة فضفاضة مع حجاب)'),
+    .describe('Free-text search (e.g. عباءة فضفاضة مع حجاب)'),
 });
 
+// Lean model-facing payload: id/name/price/colors/available only. The primary
+// colour family and occasion were dropped — `colors` already contains the
+// family, and these results re-enter the prompt on every step, so every field
+// is paid for many times.
 const outputSchema = z.object({
   products: z.array(
     z.object({
@@ -54,11 +55,8 @@ const outputSchema = z.object({
       name: z.string(),
       // price is a string (JOD numeric) — money is a string end-to-end; never float.
       price: z.string(),
-      // `color` is the product's PRIMARY colour family; `colors` is the FULL set
-      // of canonical colour names across its image variants (e.g. ["أسود","أحمر"]).
-      color: z.string().optional(),
+      // FULL set of canonical colour names across the product's image variants.
       colors: z.array(z.string()),
-      category: z.string().optional(),
       available: z.boolean(),
     }),
   ),
@@ -68,7 +66,7 @@ export function buildSearchProductsTool(products: ProductsService) {
   return createTool({
     id: 'search_products',
     description:
-      'ابحثي في كتالوج العبايات المنشورة حسب اللون والمقاس والمناسبة والسعر ونص البحث الحر. استخدمي هذه الأداة دائماً للحصول على المنتجات — لا تخترعي أسعاراً أو توفراً.',
+      'Search the published abaya catalog by color, size, occasion, price, or free text. Always use this (never invent products, prices, or availability).',
     inputSchema,
     outputSchema,
 
@@ -93,10 +91,7 @@ export function buildSearchProductsTool(products: ProductsService) {
               id: p.id,
               name: p.name,
               price: p.priceJod,
-              color: p.colorFamily ?? undefined,
               colors: colorsByProduct.get(p.id) ?? [],
-              // category maps to occasion on the product row.
-              category: p.occasion ?? undefined,
               available: p.stockStatus !== 'out',
             })),
           };
@@ -113,9 +108,7 @@ export function buildSearchProductsTool(products: ProductsService) {
       if (input.color) {
         colorFamily = await products.normalizeColor(input.color);
       } else if (imageLed) {
-        const seeded = ctx?.requestContext?.get('visionAttributes') as
-          | { colorFamily?: string }
-          | undefined;
+        const seeded = ctx?.requestContext?.get('visionAttributes');
         colorFamily = seeded?.colorFamily;
       }
 
@@ -125,8 +118,7 @@ export function buildSearchProductsTool(products: ProductsService) {
         colorFamily,
         size: input.size,
         occasion: input.category,
-        priceMax:
-          input.max_price != null ? String(input.max_price) : undefined,
+        priceMax: input.max_price != null ? String(input.max_price) : undefined,
       };
 
       // 4. Search: fuzzy text search if `query` provided, else structured.
@@ -143,9 +135,7 @@ export function buildSearchProductsTool(products: ProductsService) {
           id: p.id,
           name: p.name,
           price: p.priceJod,
-          color: p.colorFamily ?? undefined,
           colors: colorsByProduct.get(p.id) ?? [],
-          category: p.occasion ?? undefined,
           available: p.stockStatus !== 'out',
         })),
       };

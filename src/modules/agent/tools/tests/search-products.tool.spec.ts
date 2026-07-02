@@ -65,7 +65,9 @@ function makeProductsMock(overrides: Partial<Record<string, jest.Mock>> = {}) {
     normalizeColor: jest.fn().mockResolvedValue(undefined),
     search: jest.fn().mockResolvedValue([]),
     searchFuzzy: jest.fn().mockResolvedValue([]),
-    getColorNamesByProducts: jest.fn().mockResolvedValue(new Map<string, string[]>()),
+    getColorNamesByProducts: jest
+      .fn()
+      .mockResolvedValue(new Map<string, string[]>()),
   };
 
   // Merge: overrides win; then extract the resolved fns so callers get live refs.
@@ -121,9 +123,7 @@ describe('buildSearchProductsTool — search_products', () => {
         id: '1',
         name: 'A',
         price: '45.000',
-        color: 'red',
         colors: [],
-        category: 'سهرة',
         available: true,
       });
       // price must be a string, not a number
@@ -325,7 +325,9 @@ describe('buildSearchProductsTool — search_products', () => {
   // Output shape — price is always a string
   // -------------------------------------------------------------------------
   describe('output mapping', () => {
-    it('maps colorFamily to color and occasion to category in output', async () => {
+    it('emits the lean payload only — no primary-color/category echo', async () => {
+      // color/category were dropped from the model-facing payload (token diet):
+      // `colors` already carries the family and results re-enter every step.
       const p = makeProduct({ colorFamily: 'green', occasion: 'عمل' });
       const { mock } = makeProductsMock({
         search: jest.fn().mockResolvedValue([p]),
@@ -334,20 +336,13 @@ describe('buildSearchProductsTool — search_products', () => {
 
       const result = await tool.execute({}, ctx({}));
 
-      expect(result.products[0].color).toBe('green');
-      expect(result.products[0].category).toBe('عمل');
-    });
-
-    it('outputs color as undefined when colorFamily is null', async () => {
-      const p = makeProduct({ colorFamily: null });
-      const { mock } = makeProductsMock({
-        search: jest.fn().mockResolvedValue([p]),
-      });
-      const tool = buildSearchProductsTool(mock) as any;
-
-      const result = await tool.execute({}, ctx({}));
-
-      expect(result.products[0].color).toBeUndefined();
+      expect(Object.keys(result.products[0]).sort()).toEqual([
+        'available',
+        'colors',
+        'id',
+        'name',
+        'price',
+      ]);
     });
 
     it('attaches the full available-colour names from getColorNamesByProducts', async () => {
@@ -371,7 +366,10 @@ describe('buildSearchProductsTool — search_products', () => {
   describe('image-led routing (imageLed in context)', () => {
     it('ignores ad_ref and calls a search method (not findByAdRef) when imageLed=true', async () => {
       const adProduct = makeProduct({ id: 'ad-p', name: 'From Ad' });
-      const searchProduct = makeProduct({ id: 'search-p', name: 'From Search' });
+      const searchProduct = makeProduct({
+        id: 'search-p',
+        name: 'From Search',
+      });
       const { mock, findByAdRef, search } = makeProductsMock({
         findByAdRef: jest.fn().mockResolvedValue([adProduct]),
         search: jest.fn().mockResolvedValue([searchProduct]),

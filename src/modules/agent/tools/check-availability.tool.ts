@@ -11,13 +11,8 @@ import { z } from 'zod';
 import type { ProductsService } from '@/modules/products/products.service';
 
 const inputSchema = z.object({
-  product_id: z
-    .string()
-    .describe('معرّف المنتج (UUID) المراد التحقق من توفره'),
-  size: z
-    .string()
-    .optional()
-    .describe('المقاس المطلوب (اختياري) — إذا ذُكر يتحقق من توفر هذا المقاس تحديداً'),
+  product_id: z.string().describe('Product UUID to check'),
+  size: z.string().optional().describe('Specific size to check (optional)'),
 });
 
 const outputSchema = z.object({
@@ -33,7 +28,7 @@ export function buildCheckAvailabilityTool(products: ProductsService) {
   return createTool({
     id: 'check_availability',
     description:
-      'تحققي من توفر عباءة معينة وما هي المقاسات والألوان المتاحة لها. لا تُخبري الزبونة بالتوفر أو الألوان إلا بعد استخدام هذه الأداة.',
+      "Check a specific model's availability and its in-stock sizes/colors. Never state availability or colors without calling this first.",
     inputSchema,
     outputSchema,
 

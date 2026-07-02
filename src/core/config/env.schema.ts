@@ -42,10 +42,13 @@ export const envSchema = z
     // visible Arabic reply (Arabic is ~2-3x more tokens than English) AND any
     // tool-call JSON the step emits (e.g. a multi-item capture_order payload). The
     // old 512 truncated tool calls and long order-confirmation turns, which Gemini
-    // surfaced as empty/cut-off replies — so the agent fell silent. 2048 gives
-    // ample headroom; replies still stay short via the persona, so cost/latency
-    // impact is negligible. Tunable per-env.
-    AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(2048),
+    // surfaced as empty/cut-off replies — so the agent fell silent. 768 holds the
+    // observed reply sizes (persona keeps replies short; measured turns emit
+    // 200-550 output tokens incl. tool JSON) while still bounding a runaway
+    // generation; the empty-reply retry in AgentService is the safety net if a
+    // legitimate step ever hits the cap — raise to 1024 if `finishReason=length`
+    // shows up on real order turns. Tunable per-env.
+    AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(768),
     // Ceiling on tool-calling round-trips per customer message (Mastra maxSteps;
     // its own default is 5). A runaway-loop / cost guard, NOT a primary saver:
     // normal turns stop early on their own, and an order-confirmation turn can
@@ -64,6 +67,29 @@ export const envSchema = z
     // can't dominate the prompt; the get_knowledge tool stays available for more.
     AGENT_KNOWLEDGE_MAX_ENTRIES: z.coerce.number().int().positive().default(3),
     AGENT_KNOWLEDGE_MAX_CHARS: z.coerce.number().int().positive().default(500),
+    // Knowledge pre-fetch gating. 'gated' (default) injects the FAQ note only
+    // when the inbound text looks like an FAQ question (shipping/returns/
+    // payment/fabric/sizing/policy keywords) — other turns save its ~300-750
+    // tokens and rely on the get_knowledge tool. 'always' = legacy inject-every-
+    // turn behavior; 'off' = never inject (tool-only).
+    KNOWLEDGE_PREFETCH_MODE: z
+      .enum(['always', 'gated', 'off'])
+      .default('gated'),
+    // Which tools' calls/results are stripped from the RECALLED conversation
+    // history before each prompt (Mastra ToolCallFilter). Old product-list and
+    // FAQ payloads are the fattest re-sent tokens and are already superseded by
+    // working memory + the last-shown recap note. 'fat' strips the seven read
+    // tools with big payloads; 'all' strips every tool; 'off' disables filtering
+    // (legacy). The CURRENT turn's in-flight tool results are never touched.
+    AGENT_HISTORY_TOOL_FILTER: z.enum(['fat', 'all', 'off']).default('fat'),
+    // Hard token budget for recalled history per prompt (Mastra
+    // TokenLimiterProcessor, estimated tokens). Trims oldest-first while always
+    // preserving system messages and the newest messages. 0 disables.
+    AGENT_HISTORY_TOKEN_LIMIT: z.coerce
+      .number()
+      .int()
+      .nonnegative()
+      .default(12000),
 
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).
@@ -107,6 +133,16 @@ export const envSchema = z
     // Per-request timeout (ms), and retries on transient failures (429/5xx/network).
     EMBEDDING_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
     EMBEDDING_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
+    // In-memory cache for query-time embeddings (keyed by input hash). Dedupes
+    // the double embed on image turns (knowledge-prefetch resolution + the
+    // find_similar_by_image tool embed the SAME image seconds apart) and
+    // webhook-retry re-embeds. TTL in ms (0 disables) and max entries (LRU).
+    EMBEDDING_CACHE_TTL_MS: z.coerce
+      .number()
+      .int()
+      .nonnegative()
+      .default(900000),
+    EMBEDDING_CACHE_MAX: z.coerce.number().int().nonnegative().default(200),
     // Default number of distinct products visual search returns.
     SIMILARITY_TOP_K: z.coerce.number().int().positive().default(6),
     // Minimum cosine similarity [0..1] a match must clear to be surfaced; below

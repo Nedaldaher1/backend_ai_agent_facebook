@@ -19,9 +19,7 @@ import { HANDOFF_REPLY } from '../handoff.constants';
 const inputSchema = z.object({
   reason: z
     .string()
-    .describe(
-      'سبب التحويل إلى موظف (مثال: استفسار عن الشحن الدولي، طلب تعديل خاص)',
-    ),
+    .describe('Why the handoff is needed (e.g. complaint, special request)'),
 });
 
 const outputSchema = z.object({
@@ -33,19 +31,15 @@ export function buildEscalateToHumanTool(conversations: ConversationsService) {
   return createTool({
     id: 'escalate_to_human',
     description:
-      'حوّلي المحادثة إلى موظف بشري عندما لا تستطيعين مساعدة الزبونة أو عند طلبها ذلك.',
+      'Hand the conversation to a human agent when you cannot help or the customer asks for one.',
     inputSchema,
     outputSchema,
 
     execute: async (input, ctx) => {
       // Identity MUST come from requestContext — never from tool input.
-      const conversationId = ctx?.requestContext?.get('conversationId') as
-        | string
-        | undefined;
+      const conversationId = ctx?.requestContext?.get('conversationId');
       if (!conversationId) {
-        throw new Error(
-          'لا يمكن التحويل: هوية المحادثة غير متوفرة في السياق.',
-        );
+        throw new Error('لا يمكن التحويل: هوية المحادثة غير متوفرة في السياق.');
       }
 
       await conversations.escalateToHuman(conversationId, input.reason);

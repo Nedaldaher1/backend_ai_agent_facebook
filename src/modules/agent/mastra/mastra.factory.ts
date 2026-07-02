@@ -43,6 +43,7 @@
 
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
+import { TokenLimiterProcessor, ToolCallFilter } from '@mastra/core/processors';
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
 import { PinoLogger } from '@mastra/loggers';
@@ -82,7 +83,32 @@ export interface BuildMastraDeps {
   /** Conversation history window kept in every prompt (Mastra lastMessages,
    *  AGENT_LAST_MESSAGES env). Bounds per-call context size. */
   lastMessages: number;
+  /** Which tools' calls/results to strip from RECALLED history before each
+   *  prompt (AGENT_HISTORY_TOOL_FILTER): 'fat' = the big-payload read tools,
+   *  'all' = every tool, 'off' = keep legacy behavior (no filtering). */
+  historyToolFilter: 'fat' | 'all' | 'off';
+  /** Hard estimated-token budget for the recalled history per prompt
+   *  (AGENT_HISTORY_TOKEN_LIMIT). 0 disables the limiter. */
+  historyTokenLimit: number;
 }
+
+/**
+ * Read tools whose results are the fattest recurring history payloads (product
+ * lists, FAQ bodies, media summaries). Their OLD results add hundreds-to-
+ * thousands of re-sent tokens per prompt while working memory + the last-shown
+ * product recap (AgentService) already carry the durable facts. Write tools and
+ * small order-flow tools (capture_order, escalate_to_human, get_order_status,
+ * recommend_size, updateWorkingMemory) stay in history — small and flow-critical.
+ */
+const FAT_HISTORY_TOOLS = [
+  'search_products',
+  'list_all_products',
+  'find_similar_by_image',
+  'get_knowledge',
+  'get_product_media',
+  'check_availability',
+  'get_product_for_order',
+];
 
 /**
  * Builds the single Mastra instance together with the sales agent.
@@ -95,7 +121,20 @@ export function buildMastra(deps: BuildMastraDeps): {
   salesAgent: Agent;
   memory: Memory;
 } {
-  const { connectionString, products, orders, conversations, knowledge, sizing, agentBehavior, modelId, logLevel, lastMessages } = deps;
+  const {
+    connectionString,
+    products,
+    orders,
+    conversations,
+    knowledge,
+    sizing,
+    agentBehavior,
+    modelId,
+    logLevel,
+    lastMessages,
+    historyToolFilter,
+    historyTokenLimit,
+  } = deps;
 
   // ------------------------------------------------------------------ storage
   // schemaName: 'mastra' is CRITICAL — isolates Mastra's tables from Drizzle's
@@ -113,7 +152,13 @@ export function buildMastra(deps: BuildMastraDeps): {
   //   get_product_media, get_knowledge, recommend_size, get_product_for_order,
   //   capture_order, escalate_to_human, find_similar_by_image, get_order_status.
   // `updateWorkingMemory` is auto-registered by Memory and is NOT removed here.
-  const tools = buildSalesTools({ products, orders, conversations, knowledge, sizing });
+  const tools = buildSalesTools({
+    products,
+    orders,
+    conversations,
+    knowledge,
+    sizing,
+  });
 
   // ------------------------------------------------------------------ memory
   // Captured as a variable (not inline in the Agent) so AgentService can reach
@@ -176,6 +221,27 @@ export function buildMastra(deps: BuildMastraDeps): {
     },
   });
 
+  // -------------------------------------------------------- input processors
+  // Token diet for the RECALLED history (memory recall runs before configured
+  // processors, so these see and trim what it injected — the current turn's
+  // in-flight tool results are untouched):
+  //  - ToolCallFilter strips OLD tool calls/results (the fat product-list/FAQ
+  //    payloads re-sent every step of every turn). Durable facts survive via
+  //    working memory and the last-shown product recap note (AgentService).
+  //  - TokenLimiterProcessor caps recalled history at a hard estimated-token
+  //    budget (oldest trimmed first; system messages + newest always kept).
+  const inputProcessors: Array<ToolCallFilter | TokenLimiterProcessor> = [];
+  if (historyToolFilter !== 'off') {
+    inputProcessors.push(
+      new ToolCallFilter(
+        historyToolFilter === 'fat' ? { exclude: FAT_HISTORY_TOOLS } : {},
+      ),
+    );
+  }
+  if (historyTokenLimit > 0) {
+    inputProcessors.push(new TokenLimiterProcessor(historyTokenLimit));
+  }
+
   // ------------------------------------------------------------- sales agent
   const salesAgent = new Agent({
     id: 'sales-agent',
@@ -197,6 +263,8 @@ export function buildMastra(deps: BuildMastraDeps): {
     tools,
 
     memory,
+
+    ...(inputProcessors.length > 0 ? { inputProcessors } : {}),
   });
 
   // ------------------------------------------------------------ mastra root

@@ -29,9 +29,7 @@ const inputSchema = z.object({
     .string()
     .uuid()
     .optional()
-    .describe(
-      'معرّف طلب محدد إن أرادت الزبونة حالة طلب بعينه (UUID). إذا لم يُذكر تُعرض آخر الطلبات كلها.',
-    ),
+    .describe('Specific order UUID; omit to list her recent orders'),
 });
 
 const outputSchema = z.object({
@@ -52,15 +50,13 @@ export function buildGetOrderStatusTool(orders: OrdersService) {
   return createTool({
     id: 'get_order_status',
     description:
-      'اعرضي حالة طلب الزبونة أو طلباتها (وين صار طلبي / هل تم إخراجه). هوية الزبونة تأتي تلقائياً من السياق — لا تطلبي معرّف المحادثة من الزبونة.',
+      'Get the customer\'s order status ("وين صار طلبي؟"). Her identity comes from context automatically — never ask her for ids.',
     inputSchema,
     outputSchema,
 
     execute: async (input, ctx) => {
       // Identity MUST come from requestContext — never from tool input.
-      const conversationId = ctx?.requestContext?.get('conversationId') as
-        | string
-        | undefined;
+      const conversationId = ctx?.requestContext?.get('conversationId');
 
       if (!conversationId) {
         // No identity in context: return structured empty result, never throw.

@@ -28,44 +28,39 @@ const inputSchema = z.object({
   items: z
     .array(
       z.object({
-        product_id: z.string().describe('معرّف المنتج (UUID)'),
+        product_id: z.string().describe('Product UUID'),
         color: z
           .string()
           .optional()
           .describe(
-            'اسم اللون الذي اختارته الزبونة لهذا الصنف كما لفظته (مثلاً "أزرق غامق"). هذا هو المُحدِّد الأساسي للون — مرّريه بدل مفتاح الصورة؛ النظام يطابقه مع صورة هذا اللون ويثبّت اللون تلقائياً. مطلوب للموديلات متعددة الألوان.',
+            'The color the customer chose for THIS item, exactly as she said it (e.g. "أزرق غامق") — the primary selector; the system matches it to the color\'s image. Required for multi-color models.',
           ),
         storage_key: z
           .string()
           .optional()
           .describe(
-            'مفتاح صورة المنتج (اختياري، للحالات المتقدمة فقط مثل تثبيت صورة بعينها). على المسار العادي مرّري color بدلاً منه.',
+            'Image key (advanced fallback only — pass `color` on the normal path).',
           ),
         size: z
           .string()
           .optional()
-          .describe('مقاس هذا المنتج (اختياري — يُستخدم المقاس الموحّد إن لم يُذكر)'),
-        quantity: z
-          .number()
-          .int()
-          .min(1)
-          .default(1)
-          .describe('الكمية (الافتراضي 1)'),
+          .describe("This item's size (falls back to unified_size)"),
+        quantity: z.number().int().min(1).default(1).describe('Qty, default 1'),
       }),
     )
     .min(1)
-    .describe('قائمة المنتجات في الطلب (منتج واحد على الأقل)'),
-  phone: z
-    .string()
-    .describe('رقم موبايل أردني (07XXXXXXXX أو +9627XXXXXXXX)'),
+    .describe('Order items (at least one)'),
+  phone: z.string().describe('Jordanian mobile (07XXXXXXXX or +9627XXXXXXXX)'),
   address: z
     .string()
     .min(1)
-    .describe('عنوان التوصيل كاملاً (المحافظة/المدينة، المنطقة، الشارع، البناية...)'),
+    .describe(
+      'Full delivery address (governorate/city, area, street, building…)',
+    ),
   unified_size: z
     .string()
     .optional()
-    .describe('مقاس موحّد لكل منتج لم يُحدد له مقاس (اختياري)'),
+    .describe('Size applied to items without their own (optional)'),
 });
 
 const outputSchema = z.object({
@@ -99,15 +94,13 @@ export function buildCaptureOrderTool(orders: OrdersService) {
   return createTool({
     id: 'capture_order',
     description:
-      'سجّلي طلب دفع عند الاستلام (COD) بعد التأكد من اختيار المنتجات والمقاسات والعنوان. مرّري لكل صنف اسم اللون الذي اختارته الزبونة (color) كما لفظته. الأسعار والمجاميع تُحسب تلقائياً من الكتالوج — لا تذكري سعراً من عندك. لا تدّعي أن الطلب اكتمل إذا فشلت الأداة.',
+      "Register a cash-on-delivery order AFTER items, colors, sizes, and address are confirmed. Pass each item's color exactly as the customer said it. Prices/fees/totals are computed server-side — never state your own. If it returns ok:false the order was NOT created: relay the reason (e.g. offer the available colors), never claim success.",
     inputSchema,
     outputSchema,
 
     execute: async (input, ctx) => {
       // Identity MUST come from requestContext — never from tool input.
-      const conversationId = ctx?.requestContext?.get('conversationId') as
-        | string
-        | undefined;
+      const conversationId = ctx?.requestContext?.get('conversationId');
       if (!conversationId) {
         throw new Error(
           'لا يمكن تسجيل الطلب: هوية المحادثة غير متوفرة في السياق.',
@@ -116,7 +109,7 @@ export function buildCaptureOrderTool(orders: OrdersService) {
 
       // `source` is derived from the inbound channel (server-set), not the LLM.
       // Today the temp endpoint is messenger; whatsapp is honored when present.
-      const channel = ctx?.requestContext?.get('channel') as string | undefined;
+      const channel = ctx?.requestContext?.get('channel');
       const source = channel === 'whatsapp' ? 'whatsapp' : 'messenger';
 
       const result = await orders.captureCodOrderSafe({
