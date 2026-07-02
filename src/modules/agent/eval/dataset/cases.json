@@ -32,6 +32,11 @@
       "expect": { "productIds": [] }
     },
     {
+      "name": "thanks — triage tier (2nd turn; lite model when TRIAGE_ENABLED)",
+      "input": { "contactId": "eval-greet", "text": "شكرا كتير" },
+      "expect": { "productIds": [] }
+    },
+    {
       "name": "image-led — same design (degraded fetch path)",
       "input": {
         "contactId": "eval-image",

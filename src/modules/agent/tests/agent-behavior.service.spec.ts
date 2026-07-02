@@ -131,7 +131,9 @@ describe('AgentBehaviorService', () => {
     it('composes prompt from active row persona and appends guardrails', async () => {
       const freshRepo = {
         list,
-        findActive: jest.fn().mockResolvedValue(makeBehavior({ persona: 'أنا مساعد متجر ماسة' })),
+        findActive: jest
+          .fn()
+          .mockResolvedValue(makeBehavior({ persona: 'أنا مساعد متجر ماسة' })),
         findById,
         insert,
         updateById,
@@ -143,7 +145,9 @@ describe('AgentBehaviorService', () => {
       const result = await svc.getInstructions();
 
       expect(result).toContain('أنا مساعد متجر ماسة');
-      expect(result).toContain('لا تخترعي أسعاراً');
+      expect(result).toContain(
+        'Prices and availability come only from the search/check tools',
+      );
     });
 
     it('falls back to DEFAULT_PERSONA when no active row exists', async () => {
@@ -162,7 +166,7 @@ describe('AgentBehaviorService', () => {
 
       expect(result.length).toBeGreaterThan(0);
       expect(result).toContain('ماسة');
-      expect(result).toContain('لا تخترعي أسعاراً');
+      expect(result).toContain('NEVER invent information');
     });
 
     it('default persona is emoji-free and instructs no-emoji + greet-once', async () => {
@@ -182,8 +186,8 @@ describe('AgentBehaviorService', () => {
       // Brand voice: the persona text must not itself contain any emoji.
       expect(out).not.toMatch(/\p{Extended_Pictographic}/u);
       // And it must instruct: no emoji at all, and greet only once at the start.
-      expect(out).toContain('بدون أي إيموجي');
-      expect(out).toContain('الترحيب مرة وحدة');
+      expect(out).toContain('No emojis, ever.');
+      expect(out).toContain('Greet ONLY on the very first message');
     });
 
     it('guardrails are present even when active row has persona content', async () => {
@@ -207,12 +211,14 @@ describe('AgentBehaviorService', () => {
 
       const result = await svc.getInstructions();
 
-      // All three guardrail substrings must appear.
-      expect(result).toContain('احفظيها في الـ working memory');
-      expect(result).toContain('لا تخترعي أسعاراً');
-      expect(result).toContain('لا تدّعي أن الطلب اكتمل');
+      // Core guardrail invariants must appear even with an admin persona.
+      expect(result).toContain('working-memory tool');
+      expect(result).toContain(
+        'Prices and availability come only from the search/check tools',
+      );
+      expect(result).toContain('Never claim an order was registered');
       // Knowledge-first directive: consult get_knowledge before answering/acting.
-      expect(result).toContain('المعرفة أولاً');
+      expect(result).toContain('Knowledge-first');
       expect(result).toContain('get_knowledge');
     });
 
@@ -287,10 +293,10 @@ describe('AgentBehaviorService', () => {
       const out = await svc.getInstructions();
 
       expect(out).toContain('recommend_size');
-      expect(out).toContain('لا تذكري أبداً مقاساً');
+      expect(out).toContain('NEVER state a size the tool did not return');
     });
 
-    it('contains order-capture guidance referencing get_product_for_order and capture_order', async () => {
+    it('contains order-capture guidance referencing capture_order and get_product_media', async () => {
       const freshRepo = {
         list,
         findActive: jest.fn().mockResolvedValue(makeBehavior()),
@@ -304,8 +310,10 @@ describe('AgentBehaviorService', () => {
 
       const out = await svc.getInstructions();
 
-      expect(out).toContain('get_product_for_order');
+      // Order mechanics now live in the tool descriptions (one home per rule);
+      // the guardrails keep the flow invariants + the tools they gate.
       expect(out).toContain('capture_order');
+      expect(out).toContain('get_product_media');
     });
 
     it('order-capture guidance confirms color + size per item and reads back a summary', async () => {
@@ -323,14 +331,14 @@ describe('AgentBehaviorService', () => {
       const out = await svc.getInstructions();
 
       // A multi-model/multi-color order is treated as separate items, each confirmed.
-      expect(out).toContain('كأصناف منفصلة');
+      expect(out).toContain('separate items');
       // The agent reads back an itemized summary before capturing the order.
-      expect(out).toContain('ملخص');
-      // Each item's colour is passed BY NAME to capture_order — the selector that
-      // pins the right variant image (fixes all-items-take-the-primary-colour).
-      expect(out).toContain('(color)');
+      expect(out).toContain('per-item summary');
+      // Each item's colour is confirmed BY NAME — the selector that pins the
+      // right variant image (fixes all-items-take-the-primary-colour).
+      expect(out).toContain('BY NAME');
       // And the agent must never guess a colour.
-      expect(out).toContain('لا تخمّني لوناً');
+      expect(out).toContain('never assume');
     });
 
     it('contains escalation guidance referencing escalate_to_human', async () => {
