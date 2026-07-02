@@ -272,6 +272,13 @@ export class AgentService implements OnModuleInit {
   private historyRecapEnabled!: boolean;
 
   /**
+   * Where per-turn dynamic notes ride (AGENT_CONTEXT_PLACEMENT): 'tail' keeps
+   * the system prefix byte-stable for the provider's implicit prompt cache;
+   * 'system' is the legacy placement. Set in onModuleInit.
+   */
+  private contextPlacement!: 'tail' | 'system';
+
+  /**
    * The Mastra Memory instance (working memory + thread/message store). Held so
    * the admin "reset conversation" action can clear a customer's memory.
    */
@@ -328,6 +335,10 @@ export class AgentService implements OnModuleInit {
       rawPrefetchMode === 'always' || rawPrefetchMode === 'off'
         ? rawPrefetchMode
         : 'gated';
+    this.contextPlacement =
+      this.config.get<string>('AGENT_CONTEXT_PLACEMENT') === 'system'
+        ? 'system'
+        : 'tail';
     const lastMessages = Number(
       this.config.get<string>('AGENT_LAST_MESSAGES') ?? '10',
     );
@@ -555,28 +566,24 @@ export class AgentService implements OnModuleInit {
       }
     }
 
-    // Best-effort system context: the FB profile name seed (so the agent saves it
-    // to working memory) and, when present, the vision attribute note. role:
-    // 'system' is valid per @mastra/core's internal AI SDK SystemModelMessage.
-    const systemMessages: Array<{ role: 'system'; content: string }> = [];
+    // Per-turn dynamic notes: the FB profile name seed (so the agent saves it
+    // to working memory), the vision attribute note, the one-shot human-handoff
+    // summary, the knowledge pre-fetch, and the last-shown recap.
+    const notes: string[] = [];
     if (input.name) {
-      systemMessages.push({
-        role: 'system',
-        content: `اسم الزبونة من فيسبوك: ${input.name}`,
-      });
+      notes.push(`اسم الزبونة من فيسبوك: ${input.name}`);
     }
     if (visionNote) {
-      systemMessages.push({ role: 'system', content: visionNote });
+      notes.push(visionNote);
     }
     // Handoff context feedback (WS7): on the first turn after an admin resume, the
     // human's wrap-up summary is injected once so the agent resumes with awareness
     // of what the human did, then cleared so later turns don't repeat it.
     let injectedHumanSummary = false;
     if (convo.humanSummary) {
-      systemMessages.push({
-        role: 'system',
-        content: `ملخص ما تم مع فريق الدعم أثناء التحويل: ${convo.humanSummary}`,
-      });
+      notes.push(
+        `ملخص ما تم مع فريق الدعم أثناء التحويل: ${convo.humanSummary}`,
+      );
       injectedHumanSummary = true;
     }
 
@@ -587,7 +594,7 @@ export class AgentService implements OnModuleInit {
     // undefined on miss/failure and the turn proceeds (the tool stays available).
     const knowledgeNote = await this.prefetchKnowledgeNote(input, convo);
     if (knowledgeNote) {
-      systemMessages.push({ role: 'system', content: knowledgeNote });
+      notes.push(knowledgeNote);
     }
 
     // Last-shown recap: old tool results are stripped from recalled history
@@ -598,11 +605,36 @@ export class AgentService implements OnModuleInit {
     if (this.historyRecapEnabled) {
       const recapNote = await this.buildShownProductsRecap(convo);
       if (recapNote) {
-        systemMessages.push({ role: 'system', content: recapNote });
+        notes.push(recapNote);
       }
     }
 
-    const context = systemMessages.length > 0 ? systemMessages : undefined;
+    // Placement (AGENT_CONTEXT_PLACEMENT). 'tail' (default): ONE user-role
+    // context message carrying all notes, explicitly labelled as a system note.
+    // Mastra routes context system messages into the same system bucket as the
+    // instructions — i.e. BETWEEN the static instructions and everything else —
+    // so any per-turn note there changes the request's system prefix bytes and
+    // busts the provider's implicit prompt cache (Gemini cache reads bill at
+    // 0.1x; the instructions + tool schemas are the big cacheable block).
+    // Context user messages instead sort AFTER recalled history, right before
+    // the customer's new message, and are never persisted to the thread.
+    // 'system' restores the legacy per-note system messages.
+    let context:
+      | Array<{ role: 'system' | 'user'; content: string }>
+      | undefined;
+    if (notes.length > 0) {
+      context =
+        this.contextPlacement === 'system'
+          ? notes.map((content) => ({ role: 'system' as const, content }))
+          : [
+              {
+                role: 'user' as const,
+                content:
+                  '(ملاحظات نظام لهذا الدور — ليست رسالة من الزبونة؛ استخدميها ولا تقتبسيها):\n' +
+                  notes.join('\n\n'),
+              },
+            ];
+    }
 
     // Persist the business record BEFORE generating — public-schema rows for the
     // admin panel + eval (diagram node T), NOT a duplicate of Mastra's LLM context

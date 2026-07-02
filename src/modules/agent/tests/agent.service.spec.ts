@@ -379,6 +379,94 @@ describe('AgentService', () => {
     );
   });
 
+  describe('AGENT_CONTEXT_PLACEMENT (prompt-prefix cache alignment)', () => {
+    it("default 'tail' folds all per-turn notes into ONE user-role context message", async () => {
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        makeConversationsMock(),
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+        name: 'أم محمد',
+      });
+
+      const options = fakeSalesAgent.generate.mock.calls[0][1] as {
+        context?: Array<{ role: string; content: string }>;
+      };
+      expect(options.context).toHaveLength(1);
+      expect(options.context?.[0].role).toBe('user');
+      // Carries the note content + the not-from-the-customer disclaimer.
+      expect(options.context?.[0].content).toContain('أم محمد');
+      expect(options.context?.[0].content).toContain('ليست رسالة من الزبونة');
+      // No system-role context message — the system prefix stays byte-stable.
+      expect(
+        options.context?.some((m) => m.role === 'system'),
+      ).toBe(false);
+    });
+
+    it("'system' restores the legacy per-note system messages", async () => {
+      const service = new AgentService(
+        makeConfigMock('postgres://x', { AGENT_CONTEXT_PLACEMENT: 'system' }),
+        productsMock,
+        makeConversationsMock(),
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+        name: 'أم محمد',
+      });
+
+      const options = fakeSalesAgent.generate.mock.calls[0][1] as {
+        context?: Array<{ role: string; content: string }>;
+      };
+      expect(options.context).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringContaining('أم محمد'),
+          }),
+        ]),
+      );
+    });
+
+    it('passes NO context at all when the turn has no dynamic notes', async () => {
+      const service = new AgentService(
+        makeConfigMock(),
+        productsMock,
+        makeConversationsMock(),
+        ordersMock,
+        agentBehaviorMock,
+        knowledgeMock,
+        sizingMock,
+        visionMock,
+      );
+      service.onModuleInit();
+
+      await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
+
+      const options = fakeSalesAgent.generate.mock.calls[0][1] as {
+        context?: unknown;
+      };
+      expect(options.context).toBeUndefined();
+    });
+  });
+
   it('honours AGENT_TEMPERATURE / AGENT_TOP_P / AGENT_MAX_OUTPUT_TOKENS overrides (coerced to numbers)', async () => {
     const service = new AgentService(
       makeConfigMock('postgres://x', {
@@ -584,13 +672,13 @@ describe('AgentService', () => {
       colorFamily: 'red',
     });
 
-    // A system note steering the agent to search by the photographed design is
-    // passed to generate as context.
+    // A note steering the agent to search by the photographed design is passed
+    // to generate as context (placement-agnostic; the AGENT_CONTEXT_PLACEMENT
+    // tests pin down where it rides).
     const options = fakeSalesAgent.generate.mock.calls[0][1];
     expect(options.context).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          role: 'system',
           content: expect.stringContaining('السمات المستخرجة'),
         }),
       ]),
@@ -1661,14 +1749,14 @@ describe('AgentService', () => {
       await service.handleMessage({ contactId: 'C1', text: 'مرحبا' });
 
       // generate() must have been called with a context array that contains a
-      // system message whose content includes the summary text.
+      // message whose content includes the summary text (placement-agnostic;
+      // the AGENT_CONTEXT_PLACEMENT tests pin down where it rides).
       const options = fakeSalesAgent.generate.mock.calls[0][1] as {
         context?: Array<{ role: string; content: string }>;
       };
       expect(options.context).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            role: 'system',
             content: expect.stringContaining(SUMMARY),
           }),
         ]),

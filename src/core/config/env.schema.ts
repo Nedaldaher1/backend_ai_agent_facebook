@@ -90,6 +90,13 @@ export const envSchema = z
       .int()
       .nonnegative()
       .default(12000),
+    // Where per-turn dynamic notes (name seed, vision note, knowledge, recap,
+    // handoff summary) ride. 'tail' (default) sends them as ONE user-role
+    // context message right before the customer's message, keeping the system
+    // prefix (instructions + tool schemas) byte-stable so the provider's
+    // implicit prompt cache hits (Gemini cache reads bill at 0.1x of input).
+    // 'system' = legacy per-note system messages (busts the cache every turn).
+    AGENT_CONTEXT_PLACEMENT: z.enum(['tail', 'system']).default('tail'),
 
     // Storage driver selection. 'fs' uses the local filesystem (dev only);
     // 'r2' uses Cloudflare R2 via the S3-compatible API (production).
