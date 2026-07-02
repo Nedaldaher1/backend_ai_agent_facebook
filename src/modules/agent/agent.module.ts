@@ -14,6 +14,7 @@ import { DebounceService } from './debounce/debounce.service';
 import { MessengerClient } from './messenger/messenger.client';
 import { MessengerSignatureGuard } from './messenger/messenger-signature.guard';
 import { MessengerWebhookController } from './messenger/messenger-webhook.controller';
+import { TriageService } from './triage/triage.service';
 import { VisionService } from './vision/vision.service';
 
 /**
@@ -47,6 +48,7 @@ import { VisionService } from './vision/vision.service';
     AgentBehaviorService,
     AgentBehaviorRepository,
     VisionService,
+    TriageService,
     DebounceService,
     MessengerClient,
     MessengerSignatureGuard,

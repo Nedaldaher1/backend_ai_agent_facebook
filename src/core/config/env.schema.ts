@@ -21,6 +21,30 @@ export const envSchema = z
     // Legacy Anthropic-direct key. Optional now that OpenRouter is the default
     // provider; only needed if a *_MODEL_ID is pointed back at 'anthropic/...'.
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+
+    // --- Model routing (Mastra model-router strings) ---
+    // Sales agent — the flagship conversation model. Keep on the flash tier:
+    // Jordanian-dialect voice + 11-tool reliability is the product.
+    AGENT_MODEL_ID: z
+      .string()
+      .default('openrouter/google/gemini-3.5-flash'),
+    // Vision extractor — a closed-enum structured-output task; a lite-tier
+    // vision model (e.g. openrouter/google/gemini-3.1-flash-lite, ~6x cheaper)
+    // handles it. Schema-validated output degrades gracefully on failure.
+    VISION_MODEL_ID: z
+      .string()
+      .default('openrouter/google/gemini-3.5-flash'),
+    // Vision pre-step toggle: any value except 'false' keeps it enabled.
+    VISION_ENABLED: z.string().optional(),
+    // Cheap-model triage tier for pure greetings/thanks (opt-in: exactly
+    // 'true'). See TriageService — strict whitelist; all consequential turns
+    // stay on the full agent path.
+    TRIAGE_ENABLED: z.string().optional(),
+    TRIAGE_MODEL_ID: z
+      .string()
+      .default('openrouter/google/gemini-3.1-flash-lite'),
+    // Never triage texts longer than this many chars (post-normalization).
+    TRIAGE_MAX_CHARS: z.coerce.number().int().positive().default(40),
     // Mastra framework logger verbosity (agent steps, tool registration, memory
     // ops) routed through PinoLogger. Per-turn tool-call summaries are logged by
     // AgentService regardless of this. 'silent' disables Mastra's own logs.

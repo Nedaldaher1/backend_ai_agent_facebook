@@ -76,6 +76,7 @@ import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { VisionService } from '../vision/vision.service';
+import type { TriageService } from '../triage/triage.service';
 
 // ---------------------------------------------------------------------------
 // Typed cast helpers
@@ -142,6 +143,16 @@ const visionMock = {
     .fn()
     .mockResolvedValue({ attributes: null, confidence: null }),
 } as unknown as VisionService;
+
+/**
+ * Triage tier disabled in unit tests (opt-in via TRIAGE_ENABLED); the
+ * dedicated triage.service.spec covers its behavior. Turn tests below always
+ * exercise the full agent path.
+ */
+const triageMock = {
+  enabled: false,
+  match: () => null,
+} as unknown as TriageService;
 
 /**
  * A ConversationsService stub with findOrCreateByPsid and addMessage.
@@ -234,6 +245,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
 
     service.onModuleInit();
@@ -254,6 +266,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
 
     service.onModuleInit();
@@ -277,6 +290,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
 
     service.onModuleInit();
@@ -299,6 +313,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
 
     service.onModuleInit();
@@ -319,6 +334,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
 
     service.onModuleInit();
@@ -343,6 +359,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -366,6 +383,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -390,6 +408,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -423,6 +442,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -455,6 +475,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -481,6 +502,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -505,6 +527,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -536,6 +559,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -568,6 +592,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -592,6 +617,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -618,6 +644,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -643,6 +670,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -696,6 +724,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -715,6 +744,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -748,6 +778,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -775,6 +806,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -815,6 +847,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -844,6 +877,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -870,6 +904,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -900,6 +935,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -926,6 +962,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
       return service;
@@ -1134,6 +1171,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1180,6 +1218,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1223,6 +1262,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1250,6 +1290,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1299,6 +1340,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1347,6 +1389,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1390,6 +1433,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1410,6 +1454,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1459,6 +1504,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1488,6 +1534,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1514,6 +1561,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1538,6 +1586,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1566,6 +1615,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1598,6 +1648,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1622,6 +1673,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      triageMock,
     );
     service.onModuleInit();
 
@@ -1649,6 +1701,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
       return service;
@@ -1743,6 +1796,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -1780,6 +1834,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -1814,6 +1869,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -1878,6 +1934,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -1913,6 +1970,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -1945,6 +2003,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -1983,6 +2042,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2024,6 +2084,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2057,6 +2118,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2090,6 +2152,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2113,6 +2176,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2135,6 +2199,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2157,6 +2222,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2180,6 +2246,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2222,6 +2289,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2247,6 +2315,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
 
@@ -2271,6 +2340,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
       fakeMemory.deleteThread.mockRejectedValueOnce(new Error('thread gone'));
@@ -2295,6 +2365,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        triageMock,
       );
       service.onModuleInit();
       fakeMemory.updateWorkingMemory.mockRejectedValueOnce(

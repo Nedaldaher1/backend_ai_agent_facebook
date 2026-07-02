@@ -23,6 +23,7 @@ import { MAX_GALLERY_CARDS } from './messenger/messenger.formatter';
 import { stripEmojis, stripImageMarkup } from './reply-sanitize.util';
 import { FALLBACK_REPLY } from './customer-reply.constants';
 import { formatCostMeta, type TurnUsage } from './token-cost.util';
+import { TriageService } from './triage/triage.service';
 
 /** Window for the content-hash idempotency fallback when no provider id exists. */
 const DEDUP_WINDOW_MS = 10_000;
@@ -293,6 +294,7 @@ export class AgentService implements OnModuleInit {
     private readonly knowledge: KnowledgeService,
     private readonly sizing: SizingService,
     private readonly vision: VisionService,
+    private readonly triage: TriageService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -514,6 +516,13 @@ export class AgentService implements OnModuleInit {
         aiState: aiState as 'bot' | 'human' | 'paused',
       };
     }
+
+    // Cheap-model triage (TRIAGE_ENABLED, opt-in): a pure greeting/thanks turn
+    // needs none of the full prompt (instructions + 11 tool schemas + history,
+    // 4-12k input tokens) — answer it with a lite model at ~1-2% of the cost.
+    // Guards below keep every consequential turn on the full path.
+    const triaged = await this.tryTriage(input, convo, dedupKey, resourceId);
+    if (triaged) return triaged;
 
     // Build the trusted RequestContext that write tools read for identity.
     // Write tools read `conversationId` (identity) from here, never from model
@@ -957,6 +966,68 @@ export class AgentService implements OnModuleInit {
       );
     } catch {
       // Observability must never break the customer reply.
+    }
+  }
+
+  /**
+   * Cheap-model triage for pure social turns. Returns the finished reply when
+   * the turn was triaged, undefined to proceed with the full agent. All the
+   * "is it safe to shortcut?" gates live here:
+   *  - tier disabled → full path;
+   *  - image / ad-ref / referral present → full path (vision + attribution);
+   *  - pending human-handoff summary → full path (must be injected);
+   *  - text not a whitelisted pure greeting/thanks → full path;
+   *  - greeting on a conversation younger than a minute (first touch) → full
+   *    path, so the persona greeting + working-memory seeding behave as today.
+   * The triage turn IS business-logged (admin panel sees it) but is NOT added
+   * to Mastra's thread history — a contentless social exchange is exactly the
+   * history we don't want to pay for again on later turns.
+   */
+  private async tryTriage(
+    input: IncomingMessage,
+    convo: { id: string; humanSummary?: string | null; createdAt?: Date },
+    dedupKey: string,
+    resourceId: string,
+  ): Promise<AgentReply | undefined> {
+    try {
+      if (!this.triage.enabled) return undefined;
+      if (input.lastImageUrl || input.adRef || input.referral) {
+        return undefined;
+      }
+      if (convo.humanSummary) return undefined;
+
+      const kind = this.triage.match(input.text);
+      if (!kind) return undefined;
+      const isFirstTouch =
+        convo.createdAt instanceof Date &&
+        Date.now() - convo.createdAt.getTime() < 60_000;
+      if (kind === 'greeting' && isFirstTouch) return undefined;
+
+      await this.logTurn({
+        conversationId: convo.id,
+        role: 'customer',
+        content: input.text,
+        externalId: dedupKey,
+      });
+      const t = await this.triage.reply(kind, input.text);
+      const reply = stripEmojis(t.reply).trim() || t.reply;
+      await this.logTurn({
+        conversationId: convo.id,
+        role: 'agent',
+        content: reply,
+      });
+      this.logger.log(
+        `agent turn [${resourceId}] triaged: ${kind} via ${this.triage.modelId}${formatCostMeta(this.triage.modelId, t.usage)}`,
+      );
+      return {
+        reply,
+        ran: true,
+        aiState: 'bot',
+        ...(t.usage ? { usage: t.usage } : {}),
+      };
+    } catch {
+      // Any unexpected failure falls through to the full agent path.
+      return undefined;
     }
   }
 

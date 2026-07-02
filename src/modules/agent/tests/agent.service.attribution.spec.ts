@@ -39,6 +39,7 @@ import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { VisionService } from '../vision/vision.service';
+import type { TriageService } from '../triage/triage.service';
 
 const mockBuildMastra = buildMastra as jest.MockedFunction<typeof buildMastra>;
 
@@ -65,6 +66,12 @@ const visionMock: VisionService = {
     .fn()
     .mockResolvedValue({ attributes: null, confidence: null }),
 } as unknown as VisionService;
+
+/** Triage tier disabled in unit tests (opt-in via TRIAGE_ENABLED). */
+const triageMock = {
+  enabled: false,
+  match: () => null,
+} as unknown as TriageService;
 
 const FAKE_REPLY = 'أهلاً';
 
@@ -133,6 +140,7 @@ function makeService(
     knowledgeMock,
     sizingMock,
     visionMock,
+    triageMock,
   );
   svc.onModuleInit();
   return svc;
