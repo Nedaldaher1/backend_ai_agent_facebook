@@ -15,10 +15,14 @@ import { AgentBehaviorService } from './agent-behavior.service';
 import { SizingService } from '@/modules/sizing/sizing.service';
 import { createHash } from 'node:crypto';
 import { buildMastra } from './mastra/mastra.factory';
-import { VisionService, type VisionExtractResult } from './vision/vision.service';
+import {
+  VisionService,
+  type VisionExtractResult,
+} from './vision/vision.service';
 import { MAX_GALLERY_CARDS } from './messenger/messenger.formatter';
 import { stripEmojis, stripImageMarkup } from './reply-sanitize.util';
 import { FALLBACK_REPLY } from './customer-reply.constants';
+import { formatCostMeta, type TurnUsage } from './token-cost.util';
 
 /** Window for the content-hash idempotency fallback when no provider id exists. */
 const DEDUP_WINDOW_MS = 10_000;
@@ -110,6 +114,12 @@ export interface AgentReply {
   ran: boolean;
   /** The conversation's ai_state at the time of the return. */
   aiState?: 'bot' | 'human' | 'paused';
+  /**
+   * Token usage for the turn (summed over the empty-reply retry when it fires),
+   * surfaced so callers — the eval harness above all — can report consumption
+   * and estimated cost per case. Absent when the turn skipped generate().
+   */
+  usage?: TurnUsage & { steps?: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +245,12 @@ export class AgentService implements OnModuleInit {
   private maxSteps!: number;
 
   /**
+   * The sales-agent model id (AGENT_MODEL_ID) — kept for per-turn cost
+   * estimation in the usage log (see token-cost.util).
+   */
+  private modelId!: string;
+
+  /**
    * Knowledge pre-fetch note caps (AGENT_KNOWLEDGE_MAX_ENTRIES / _MAX_CHARS):
    * bound the RAG note injected into context every turn. Set in onModuleInit.
    */
@@ -269,13 +285,16 @@ export class AgentService implements OnModuleInit {
     const modelId =
       this.config.get<string>('AGENT_MODEL_ID') ??
       'openrouter/google/gemini-3.5-flash';
+    this.modelId = modelId;
     // Generation tuning forwarded to the model on every turn (Mastra
     // modelSettings). Config-driven with the production defaults baked in;
     // env.schema validates/coerces, the `?? 'default'` keeps unit tests (which
     // mock ConfigService) honest. Number() guards against a string slipping
     // through either path.
     this.modelSettings = {
-      temperature: Number(this.config.get<string>('AGENT_TEMPERATURE') ?? '0.5'),
+      temperature: Number(
+        this.config.get<string>('AGENT_TEMPERATURE') ?? '0.5',
+      ),
       topP: Number(this.config.get<string>('AGENT_TOP_P') ?? '0.8'),
       maxOutputTokens: Number(
         this.config.get<string>('AGENT_MAX_OUTPUT_TOKENS') ?? '2048',
@@ -397,7 +416,11 @@ export class AgentService implements OnModuleInit {
     );
     if (alreadyProcessed) {
       // Duplicate — do nothing. Empty reply is dropped by the adapter.
-      return { reply: '', ran: false, aiState: convo.aiState as 'bot' | 'human' | 'paused' };
+      return {
+        reply: '',
+        ran: false,
+        aiState: convo.aiState as 'bot' | 'human' | 'paused',
+      };
     }
 
     // Timed-pause expiry (auto-resume): a pause created with `durationMinutes`
@@ -444,7 +467,11 @@ export class AgentService implements OnModuleInit {
       this.logger.log(
         `agent turn [${resourceId}] skipped: ai_state=${aiState} (no reply sent — resume to re-enable the bot)`,
       );
-      return { reply: '', ran: false, aiState: aiState as 'bot' | 'human' | 'paused' };
+      return {
+        reply: '',
+        ran: false,
+        aiState: aiState as 'bot' | 'human' | 'paused',
+      };
     }
 
     // Build the trusted RequestContext that write tools read for identity.
@@ -568,6 +595,9 @@ export class AgentService implements OnModuleInit {
       input.text,
       genOptions,
     )) as GenerateResult;
+    // Turn-level usage: normalized here, summed with the retry below when it
+    // fires, so the log line and reply.usage always cover the WHOLE turn.
+    let turnUsage = this.normalizeUsage(result);
 
     // Sanitise the reply DETERMINISTICALLY (the prompt/tools are not trusted):
     // strip image markup (photos go out as carousel cards, never as text links)
@@ -601,6 +631,7 @@ export class AgentService implements OnModuleInit {
         );
         result = await this.salesAgent.generate(input.text, genOptions);
         replyText = stripEmojis(stripImageMarkup(result.text ?? ''));
+        turnUsage = this.sumUsage(turnUsage, this.normalizeUsage(result));
       }
       if (!replyText.trim()) {
         this.logger.warn(
@@ -614,7 +645,7 @@ export class AgentService implements OnModuleInit {
     // args it supplied and a short result hint. Without this the backend gives no
     // signal of what the agent is doing — Mastra's own logger reports tool
     // *registration*, not per-call invocation. Best-effort (never throws).
-    this.logToolCalls(result, resourceId);
+    this.logToolCalls(result, resourceId, turnUsage);
 
     // One-shot handoff summary (WS7): clear it only AFTER a successful generate()
     // so a failed turn (Claude 429/5xx) leaves it intact for the retry instead of
@@ -639,7 +670,8 @@ export class AgentService implements OnModuleInit {
       ...(evalInfo ? { attributes: { eval: evalInfo } } : {}),
     });
 
-    const { products: extractedProducts, overflow } = this.extractProducts(result);
+    const { products: extractedProducts, overflow } =
+      this.extractProducts(result);
     const images = this.sanitizeMediaUrls(mediaSink);
 
     // Remember the product(s) shown to the customer this turn so the NEXT turn's
@@ -664,6 +696,16 @@ export class AgentService implements OnModuleInit {
       ...(images.length > 0 ? { images } : {}),
       ran: true,
       aiState: 'bot',
+      ...(turnUsage
+        ? {
+            usage: {
+              ...turnUsage,
+              ...(Array.isArray(result.steps)
+                ? { steps: result.steps.length }
+                : {}),
+            },
+          }
+        : {}),
     };
   }
 
@@ -765,20 +807,25 @@ export class AgentService implements OnModuleInit {
    * Best-effort: the whole body is wrapped in try/catch — observability must
    * NEVER break the customer reply.
    */
-  private logToolCalls(result: GenerateResult, resourceId: string): void {
+  private logToolCalls(
+    result: GenerateResult,
+    resourceId: string,
+    turnUsage?: TurnUsage,
+  ): void {
     try {
       // finishReason + reply length make a truncated/empty turn diagnosable: an
       // empty turn now logs e.g. "finishReason=length textLen=0" instead of a
       // bare "(none)" that hides why no reply went out.
       // Per-turn token usage makes consumption visible (the dominant cost is the
-      // re-sent prompt × steps). Field names vary by SDK/provider, so read
-      // defensively; cached input tokens (Gemini implicit cache, 0.25x) show when
-      // the provider reports them.
-      const u = result.usage;
+      // re-sent prompt × steps); cached input tokens (Gemini implicit cache,
+      // billed at the discounted cache-read rate) show when the provider reports
+      // them, alongside the estimated USD cost and cache-hit share so the effect
+      // of prompt/caching changes is directly comparable across turns.
+      const u = turnUsage ?? this.normalizeUsage(result);
       const usageStr = u
-        ? ` tokens(in=${u.inputTokens ?? u.promptTokens ?? '?'}${
+        ? ` tokens(in=${u.inputTokens ?? '?'}${
             u.cachedInputTokens ? ` cached=${u.cachedInputTokens}` : ''
-          } out=${u.outputTokens ?? u.completionTokens ?? '?'} total=${u.totalTokens ?? '?'})`
+          } out=${u.outputTokens ?? '?'} total=${u.totalTokens ?? '?'})${formatCostMeta(this.modelId, u)}`
         : '';
       const stepsStr = Array.isArray(result.steps)
         ? ` steps=${result.steps.length}`
@@ -840,6 +887,55 @@ export class AgentService implements OnModuleInit {
   }
 
   /**
+   * Normalizes the provider's usage block to one field set. AI SDK v5 reports
+   * inputTokens/outputTokens; some providers report promptTokens/completionTokens.
+   * Returns undefined when the result carries no usage at all.
+   */
+  private normalizeUsage(result: GenerateResult): TurnUsage | undefined {
+    const u = result.usage;
+    if (!u) return undefined;
+    const inputTokens = u.inputTokens ?? u.promptTokens;
+    const outputTokens = u.outputTokens ?? u.completionTokens;
+    if (
+      inputTokens === undefined &&
+      outputTokens === undefined &&
+      u.totalTokens === undefined
+    ) {
+      return undefined;
+    }
+    return {
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(u.cachedInputTokens !== undefined
+        ? { cachedInputTokens: u.cachedInputTokens }
+        : {}),
+      ...(outputTokens !== undefined ? { outputTokens } : {}),
+      ...(u.totalTokens !== undefined ? { totalTokens: u.totalTokens } : {}),
+    };
+  }
+
+  /** Field-wise sum of two usage blocks (for the empty-reply retry path). */
+  private sumUsage(
+    a: TurnUsage | undefined,
+    b: TurnUsage | undefined,
+  ): TurnUsage | undefined {
+    if (!a) return b;
+    if (!b) return a;
+    const add = (x?: number, y?: number): number | undefined =>
+      x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
+    const merged: TurnUsage = {};
+    const inputTokens = add(a.inputTokens, b.inputTokens);
+    const cachedInputTokens = add(a.cachedInputTokens, b.cachedInputTokens);
+    const outputTokens = add(a.outputTokens, b.outputTokens);
+    const totalTokens = add(a.totalTokens, b.totalTokens);
+    if (inputTokens !== undefined) merged.inputTokens = inputTokens;
+    if (cachedInputTokens !== undefined)
+      merged.cachedInputTokens = cachedInputTokens;
+    if (outputTokens !== undefined) merged.outputTokens = outputTokens;
+    if (totalTokens !== undefined) merged.totalTokens = totalTokens;
+    return merged;
+  }
+
+  /**
    * Extracts deduplicated product cards from search_products tool results,
    * together with the overflow count (total matched − rendered cap).
    *
@@ -869,7 +965,14 @@ export class AgentService implements OnModuleInit {
         )
         .flatMap((c) => {
           const raw = c.payload?.result as
-            | { products?: Array<{ id: string; name: string; price: string; available?: boolean }> }
+            | {
+                products?: Array<{
+                  id: string;
+                  name: string;
+                  price: string;
+                  available?: boolean;
+                }>;
+              }
             | undefined;
           return raw?.products ?? [];
         });
@@ -946,10 +1049,7 @@ export class AgentService implements OnModuleInit {
     if (input.externalMessageId) return input.externalMessageId;
     // Normalize text: trim outer whitespace, collapse internal runs to one
     // space, and lowercase — so "مرحبا  " and "مرحبا" hash identically.
-    const normalizedText = input.text
-      .trim()
-      .replace(/\s+/g, ' ')
-      .toLowerCase();
+    const normalizedText = input.text.trim().replace(/\s+/g, ' ').toLowerCase();
     const window = Math.floor(Date.now() / DEDUP_WINDOW_MS);
     const digest = createHash('sha256')
       .update(
@@ -1046,7 +1146,9 @@ export class AgentService implements OnModuleInit {
 
     // SKU-based product resolution (publish gate enforced by the repo query).
     if (referral.adProductId) {
-      const product = await this.products.findPublishedBySku(referral.adProductId);
+      const product = await this.products.findPublishedBySku(
+        referral.adProductId,
+      );
       if (product) {
         // Merge into conversation state so the agent picks it up on its next turn.
         await this.conversations.mergeState(conversationId, {
@@ -1155,7 +1257,9 @@ export class AgentService implements OnModuleInit {
     convo: { state?: unknown },
   ): Promise<string[]> {
     if (input.lastImageUrl) {
-      const matches = await this.products.findSimilarByImage(input.lastImageUrl);
+      const matches = await this.products.findSimilarByImage(
+        input.lastImageUrl,
+      );
       const topId = matches[0]?.id;
       if (topId) return [topId];
     }

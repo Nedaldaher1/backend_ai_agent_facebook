@@ -1,13 +1,38 @@
 {
-  "note": "Seed eval cases for `eval:run`. Fill expect.productIds with REAL published catalog UUIDs so precision/recall are meaningful; cases with an empty productIds array are run but not scored. Add cases that cover color/occasion search, image-led search, sizing, and escalation.",
+  "note": "Labelled eval cases for `eval:run`. productIds hold REAL published catalog UUIDs (16225e7b… = عباية صيفي تطريز زهور, red/daily, sizes 1-2, 12 JOD — the only published product in the dev catalog; extend expectations as the catalog grows). Cases with an empty productIds array run but are not scored. Cases sharing a base contactId run as sequential turns of ONE conversation (eval-run suffixes a per-run id).",
   "cases": [
     {
-      "name": "text search — color + occasion",
-      "input": { "contactId": "eval-color", "text": "بدي عباية حمراء للسهرة" },
+      "name": "text search — color",
+      "input": { "contactId": "eval-color", "text": "بدي عباية حمرا" },
+      "expect": { "productIds": ["16225e7b-d6fd-4f67-9263-d28f2163cb53"] }
+    },
+    {
+      "name": "follow-up reference — price of the shown one",
+      "input": { "contactId": "eval-color", "text": "قديش حقها هاي اللي ورجيتيني ياها؟" },
       "expect": { "productIds": [] }
     },
     {
-      "name": "image-led — same design",
+      "name": "browse — show everything",
+      "input": { "contactId": "eval-browse", "text": "شو عندكم عبايات؟" },
+      "expect": { "productIds": ["16225e7b-d6fd-4f67-9263-d28f2163cb53"] }
+    },
+    {
+      "name": "knowledge — warranty question",
+      "input": { "contactId": "eval-browse", "text": "في كفالة عالقطعة؟" },
+      "expect": { "productIds": [] }
+    },
+    {
+      "name": "sizing — weight/height flow",
+      "input": { "contactId": "eval-size", "text": "مش عارفة شو مقاسي، وزني 70 وطولي 160" },
+      "expect": { "productIds": [] }
+    },
+    {
+      "name": "greeting only",
+      "input": { "contactId": "eval-greet", "text": "مرحبا" },
+      "expect": { "productIds": [] }
+    },
+    {
+      "name": "image-led — same design (degraded fetch path)",
       "input": {
         "contactId": "eval-image",
         "text": "بدي زي هاي الصورة",
