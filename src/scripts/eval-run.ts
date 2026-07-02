@@ -115,6 +115,11 @@ async function main(): Promise<void> {
     process.exitCode = agg.scoredCases > 0 && agg.hitRate < 0.5 ? 1 : 0;
   } finally {
     await app.close();
+    // Exit explicitly: lazily-built Mastra agents / the PostgresStore pool can
+    // hold live handles past app.close() (observed after the triage tier's
+    // first model call), leaving the script hanging after all cases finished.
+    // All results are printed by now and exitCode is set — leave deliberately.
+    process.exit(process.exitCode ?? 0);
   }
 }
 
