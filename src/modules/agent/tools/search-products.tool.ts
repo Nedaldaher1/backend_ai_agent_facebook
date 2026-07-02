@@ -108,7 +108,9 @@ export function buildSearchProductsTool(products: ProductsService) {
       if (input.color) {
         colorFamily = await products.normalizeColor(input.color);
       } else if (imageLed) {
-        const seeded = ctx?.requestContext?.get('visionAttributes');
+        const seeded = ctx?.requestContext?.get('visionAttributes') as
+          | { colorFamily?: string }
+          | undefined;
         colorFamily = seeded?.colorFamily;
       }
 

@@ -37,7 +37,9 @@ export function buildEscalateToHumanTool(conversations: ConversationsService) {
 
     execute: async (input, ctx) => {
       // Identity MUST come from requestContext — never from tool input.
-      const conversationId = ctx?.requestContext?.get('conversationId');
+      const conversationId = ctx?.requestContext?.get('conversationId') as
+        | string
+        | undefined;
       if (!conversationId) {
         throw new Error('لا يمكن التحويل: هوية المحادثة غير متوفرة في السياق.');
       }

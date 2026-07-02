@@ -56,7 +56,9 @@ export function buildGetOrderStatusTool(orders: OrdersService) {
 
     execute: async (input, ctx) => {
       // Identity MUST come from requestContext — never from tool input.
-      const conversationId = ctx?.requestContext?.get('conversationId');
+      const conversationId = ctx?.requestContext?.get('conversationId') as
+        | string
+        | undefined;
 
       if (!conversationId) {
         // No identity in context: return structured empty result, never throw.

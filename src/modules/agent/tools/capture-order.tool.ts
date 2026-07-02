@@ -100,7 +100,9 @@ export function buildCaptureOrderTool(orders: OrdersService) {
 
     execute: async (input, ctx) => {
       // Identity MUST come from requestContext — never from tool input.
-      const conversationId = ctx?.requestContext?.get('conversationId');
+      const conversationId = ctx?.requestContext?.get('conversationId') as
+        | string
+        | undefined;
       if (!conversationId) {
         throw new Error(
           'لا يمكن تسجيل الطلب: هوية المحادثة غير متوفرة في السياق.',
@@ -109,7 +111,7 @@ export function buildCaptureOrderTool(orders: OrdersService) {
 
       // `source` is derived from the inbound channel (server-set), not the LLM.
       // Today the temp endpoint is messenger; whatsapp is honored when present.
-      const channel = ctx?.requestContext?.get('channel');
+      const channel = ctx?.requestContext?.get('channel') as string | undefined;
       const source = channel === 'whatsapp' ? 'whatsapp' : 'messenger';
 
       const result = await orders.captureCodOrderSafe({

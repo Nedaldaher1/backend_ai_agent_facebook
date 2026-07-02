@@ -59,7 +59,9 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
     execute: async (input, ctx) => {
       // Read the image URL from the request context (set by AgentService from
       // input.lastImageUrl before the generate() call — never from model input).
-      const url = ctx?.requestContext?.get('lastImageUrl')?.trim();
+      const url = (
+        ctx?.requestContext?.get('lastImageUrl') as string | undefined
+      )?.trim();
       if (!url) {
         // No image in context this turn — empty result; the agent asks for a photo.
         return { products: [] };
