@@ -1,22 +1,22 @@
 /**
- * recommend_size — أوصي بمقاس العباءة بناءً على وزن الزبونة.
+ * recommend_size — أوصي بمقاس القطعة بناءً على وزن الزبونة ومقاسات المنتج نفسه.
  *
- * Thin tool: calls SizingService.recommendSize and returns its result
- * with the only transform being a camelCase→snake_case key rename
- * (needsHuman → needs_human). No logic or calculation here.
- *
- * Identity is NOT needed: weight comes from the conversation as a tool input,
- * not from the request context. This is a pure read tool.
- *
- * If the result carries needs_human=true the agent should escalate
- * via escalate_to_human.
+ * Sizes are per-product now, so this tool takes the product_id whose sizes to
+ * use (from an earlier search/list result), fetches that product, and asks
+ * SizingService to pick a size from ITS own size list. Letter-only products
+ * (no weight bands) come back with the available labels for the customer to
+ * choose; an out-of-range weight comes back with needs_human=true to escalate.
  */
 
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import type { ProductsService } from '@/modules/products/products.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 
 const inputSchema = z.object({
+  product_id: z
+    .string()
+    .describe('Id of the product whose sizes to use (from a search result)'),
   weight_kg: z.number().positive().describe("Customer's weight in kg"),
   height_cm: z
     .number()
@@ -31,16 +31,38 @@ const outputSchema = z.object({
   needs_human: z.boolean().optional(),
 });
 
-export function buildRecommendSizeTool(sizing: SizingService) {
+export function buildRecommendSizeTool(
+  products: ProductsService,
+  sizing: SizingService,
+) {
   return createTool({
     id: 'recommend_size',
     description:
-      "Recommend the abaya size from the customer's weight (height optional). If it returns needs_human=true, hand off via escalate_to_human.",
+      "Recommend a clothing size from the customer's weight (height optional) using the given product's own sizes. If it returns needs_human=true, hand off via escalate_to_human.",
     inputSchema,
     outputSchema,
 
     execute: async (input) => {
-      const r = await sizing.recommendSize(input.weight_kg, input.height_cm);
+      // Only size published products; a missing/unpublished id → soft escalate.
+      let sizes: Awaited<ReturnType<typeof products.getById>>['sizes'];
+      try {
+        const product = await products.getById(input.product_id, {
+          publishedOnly: true,
+        });
+        sizes = product.sizes;
+      } catch {
+        return {
+          size: null,
+          needs_human: true,
+          note: 'ما قدرت ألاقي هذا المنتج لأحدّد مقاسه، رح يساعدك فريقنا.',
+        };
+      }
+
+      const r = sizing.recommendSizeForProduct(
+        sizes,
+        input.weight_kg,
+        input.height_cm,
+      );
       return {
         size: r.size,
         note: r.note,

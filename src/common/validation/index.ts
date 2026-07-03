@@ -10,6 +10,7 @@ import { insertOrderItemSchema } from '@/modules/orders/entities/order-item.enti
 import { insertAdProductLinkSchema } from '@/modules/products/entities/ad-product-link.entity';
 import { insertColorSchema } from '@/modules/products/entities/color.entity';
 import { insertColorSynonymSchema } from '@/modules/products/entities/color-synonym.entity';
+import { insertProductCategorySchema } from '@/modules/products/entities/product-category.entity';
 import { insertProductSchema } from '@/modules/products/entities/product.entity';
 
 export * from './parse';
@@ -43,6 +44,20 @@ export const createProductSchema = insertProductSchema
 export const updateProductSchema = createProductSchema.partial().strict();
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
+
+// --- product_categories (control-plane: clothing categories + attribute schema) ---
+export const createProductCategorySchema = insertProductCategorySchema
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .strict();
+export const updateProductCategorySchema = createProductCategorySchema
+  .partial()
+  .strict();
+export type CreateProductCategoryInput = z.infer<
+  typeof createProductCategorySchema
+>;
+export type UpdateProductCategoryInput = z.infer<
+  typeof updateProductCategorySchema
+>;
 
 // --- ad_product_links (control-plane: maps ad refs to products) ---
 export const createAdProductLinkSchema = insertAdProductLinkSchema

@@ -1,124 +1,81 @@
-import { SizingService, MAX_WEIGHT_KG } from '../sizing.service';
-import type { SizeChartRepository } from '../size-chart.repository';
+import { SizingService } from '../sizing.service';
+import type { ProductSize } from '@/modules/products/entities/product.entity';
 
-// Seeded rows in the same order the repository returns them: desc by min_weight.
-const SEEDED_ROWS = [
-  {
-    id: 'id-2',
-    minWeight: 90,
-    size: '2',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-  {
-    id: 'id-1',
-    minWeight: 60,
-    size: '1',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
+// A weight-based size list (two numbered bands) plus a couple of letter sizes.
+const WEIGHT_SIZES: ProductSize[] = [
+  { label: '1', minWeightKg: 60, maxWeightKg: 90 },
+  { label: '2', minWeightKg: 90, maxWeightKg: 120 },
 ];
 
-describe('SizingService', () => {
-  const findAllOrderedByMinWeightDesc = jest.fn();
+const LETTER_SIZES: ProductSize[] = [
+  { label: 'S' },
+  { label: 'M' },
+  { label: 'L' },
+];
 
-  const repo = {
-    findAllOrderedByMinWeightDesc,
-  } as unknown as SizeChartRepository;
+describe('SizingService.recommendSizeForProduct', () => {
+  const service = new SizingService();
 
-  const service = new SizingService(repo);
+  // ---- weight-based sizing (positive path) --------------------------------
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-    // Default: resolve the seeded chart.
-    findAllOrderedByMinWeightDesc.mockResolvedValue(SEEDED_ROWS);
+  it('picks the band that contains the weight', () => {
+    expect(service.recommendSizeForProduct(WEIGHT_SIZES, 75)).toEqual({
+      size: '1',
+    });
+    expect(service.recommendSizeForProduct(WEIGHT_SIZES, 100)).toEqual({
+      size: '2',
+    });
   });
 
-  // -------------------------------------------------------------------------
-  // In-range weights — positive path
-  // -------------------------------------------------------------------------
-
-  it('recommendSize(75) returns size "1"', async () => {
-    const result = await service.recommendSize(75);
-    expect(result).toEqual({ size: '1' });
+  it('on an overlapping boundary the tighter lower bound wins', () => {
+    // 90 is the max of band "1" and the min of band "2"; greatest min wins → "2".
+    expect(service.recommendSizeForProduct(WEIGHT_SIZES, 90)).toEqual({
+      size: '2',
+    });
   });
 
-  it('recommendSize(89) returns size "1"', async () => {
-    const result = await service.recommendSize(89);
-    expect(result).toEqual({ size: '1' });
+  // ---- out of range -------------------------------------------------------
+
+  it('escalates when the weight is outside every band', () => {
+    const r = service.recommendSizeForProduct(WEIGHT_SIZES, 200);
+    expect(r.size).toBeNull();
+    expect(r.needsHuman).toBe(true);
+    expect(r.note).toBeTruthy();
   });
 
-  it('recommendSize(90) returns size "2" (exact lower-bound match)', async () => {
-    const result = await service.recommendSize(90);
-    expect(result).toEqual({ size: '2' });
+  // ---- missing / invalid weight ------------------------------------------
+
+  it('asks for the weight when it is missing/invalid (weighted product)', () => {
+    for (const w of [undefined, 0, NaN]) {
+      const r = service.recommendSizeForProduct(WEIGHT_SIZES, w);
+      expect(r.size).toBeNull();
+      expect(r.note).toBeTruthy();
+      expect(r.needsHuman).toBeFalsy();
+    }
   });
 
-  it('recommendSize(100) returns size "2"', async () => {
-    const result = await service.recommendSize(100);
-    expect(result).toEqual({ size: '2' });
+  // ---- letter-only product -----------------------------------------------
+
+  it('lists the labels for a letter-only product (no weight bands)', () => {
+    const r = service.recommendSizeForProduct(LETTER_SIZES, 75);
+    expect(r.size).toBeNull();
+    expect(r.needsHuman).toBeFalsy();
+    expect(r.note).toContain('S');
+    expect(r.note).toContain('L');
   });
 
-  it(`recommendSize(${MAX_WEIGHT_KG}) returns size "2" (ceiling inclusive)`, async () => {
-    const result = await service.recommendSize(MAX_WEIGHT_KG);
-    expect(result).toEqual({ size: '2' });
-  });
+  // ---- no sizes at all ----------------------------------------------------
 
-  // -------------------------------------------------------------------------
-  // Out-of-range weights — escalation path
-  // -------------------------------------------------------------------------
-
-  it('recommendSize(130) returns null with needsHuman:true (above ceiling)', async () => {
-    const result = await service.recommendSize(130);
-    expect(result.size).toBeNull();
-    expect(result.needsHuman).toBe(true);
-    expect(result.note).toBeTruthy();
-  });
-
-  it('recommendSize(50) returns null with needsHuman:true (below floor)', async () => {
-    const result = await service.recommendSize(50);
-    expect(result.size).toBeNull();
-    expect(result.needsHuman).toBe(true);
-    expect(result.note).toBeTruthy();
-  });
-
-  // -------------------------------------------------------------------------
-  // Missing / invalid weight — clarification path (repo NOT queried)
-  // -------------------------------------------------------------------------
-
-  it('recommendSize(undefined) returns null with a note and needsHuman falsy; repo is not called', async () => {
-    const result = await service.recommendSize(undefined);
-    expect(result.size).toBeNull();
-    expect(result.note).toBeTruthy();
-    expect(result.needsHuman).toBeFalsy();
-    expect(findAllOrderedByMinWeightDesc).not.toHaveBeenCalled();
-  });
-
-  it('recommendSize(0) returns clarification (not escalation); repo is not called', async () => {
-    const result = await service.recommendSize(0);
-    expect(result.size).toBeNull();
-    expect(result.note).toBeTruthy();
-    expect(result.needsHuman).toBeFalsy();
-    expect(findAllOrderedByMinWeightDesc).not.toHaveBeenCalled();
-  });
-
-  it('recommendSize(NaN) returns clarification (not escalation); repo is not called', async () => {
-    const result = await service.recommendSize(NaN);
-    expect(result.size).toBeNull();
-    expect(result.note).toBeTruthy();
-    expect(result.needsHuman).toBeFalsy();
-    expect(findAllOrderedByMinWeightDesc).not.toHaveBeenCalled();
-  });
-
-  // -------------------------------------------------------------------------
-  // Empty chart — escalation path
-  // -------------------------------------------------------------------------
-
-  it('returns null with needsHuman:true when the chart is empty', async () => {
-    findAllOrderedByMinWeightDesc.mockResolvedValue([]);
-
-    const result = await service.recommendSize(75);
-    expect(result.size).toBeNull();
-    expect(result.needsHuman).toBe(true);
-    expect(result.note).toBeTruthy();
+  it('escalates when the product has no sizes', () => {
+    for (const sizes of [undefined, null, []] as (
+      | ProductSize[]
+      | null
+      | undefined
+    )[]) {
+      const r = service.recommendSizeForProduct(sizes, 75);
+      expect(r.size).toBeNull();
+      expect(r.needsHuman).toBe(true);
+      expect(r.note).toBeTruthy();
+    }
   });
 });

@@ -24,7 +24,6 @@ import { ConfigService } from '@nestjs/config';
 import { Agent } from '@mastra/core/agent';
 import { ProductsService } from '@/modules/products/products.service';
 import { ColorsService } from '@/modules/products/colors.service';
-import { SizingService } from '@/modules/sizing/sizing.service';
 import { downloadImage } from './image-download.util';
 import {
   buildVisionAttributeSchema,
@@ -54,10 +53,10 @@ export interface VisionExtractResult {
 }
 
 const VISION_SYSTEM_PROMPT =
-  'أنتِ محلّلة صور لمتجر عبايات نسائية. مهمتك وصف العباية في الصورة بسمات مُهيكلة ' +
-  'عبر المخطط المطلوب فقط. اختاري اللون والمقاس من القوائم المغلقة المعطاة حصراً، ' +
-  'وضعي null لأي سمة غير واضحة. إن لم تكن الصورة لعباية أو منتج من المتجر فاضبطي ' +
-  'isAbaya=false. لا تخمّني، وعبّري عن مدى ثقتك في الحقل confidence.';
+  'أنتِ محلّلة صور لمتجر ملابس نسائية (عبايات، بجامات، فساتين وغيرها). مهمتك وصف ' +
+  'القطعة في الصورة بسمات مُهيكلة عبر المخطط المطلوب فقط. اختاري اللون من القائمة ' +
+  'المغلقة المعطاة حصراً، وضعي null لأي سمة غير واضحة. إن لم تكن الصورة لقطعة ملابس ' +
+  'من نوع المتجر فاضبطي isClothing=false. لا تخمّني، وعبّري عن مدى ثقتك في الحقل confidence.';
 
 @Injectable()
 export class VisionService {
@@ -77,7 +76,6 @@ export class VisionService {
     private readonly config: ConfigService,
     private readonly products: ProductsService,
     private readonly colors: ColorsService,
-    private readonly sizing: SizingService,
   ) {
     this.enabled = this.config.get<string>('VISION_ENABLED') !== 'false';
     this.modelId =
@@ -169,7 +167,7 @@ export class VisionService {
     }
 
     // 4. Guard non-products, then normalize the color to a canonical family.
-    if (!parsed.isAbaya) {
+    if (!parsed.isClothing) {
       return {
         attributes: null,
         confidence: parsed.confidence,
@@ -212,22 +210,20 @@ export class VisionService {
     if (this.enumsCache && Date.now() < this.enumsCache.expiresAt) {
       return this.enumsCache.value;
     }
-    const [colorFamilies, sizes, occasions, fabrics] = await Promise.all([
+    const [colorFamilies, occasions, fabrics] = await Promise.all([
       this.colors.listActiveFamilies(),
-      this.sizing.listSizeCodes(),
       this.products.distinctPublishedAttribute('occasion'),
       this.products.distinctPublishedAttribute('fabric'),
     ]);
-    const value: VisionEnums = { colorFamilies, sizes, occasions, fabrics };
+    const value: VisionEnums = { colorFamilies, occasions, fabrics };
     this.enumsCache = { value, expiresAt: Date.now() + this.enumsTtlMs };
     return value;
   }
 
   private buildUserPrompt(enums: VisionEnums): string {
     const lines = [
-      'حلّلي صورة العباية واملئي السمات وفق المخطط.',
+      'حلّلي صورة القطعة واملئي السمات وفق المخطط.',
       `الألوان المسموحة (اختاري الأقرب أو null): ${enums.colorFamilies.join('، ') || '—'}`,
-      `المقاسات المسموحة: ${enums.sizes.join('، ') || '—'}`,
     ];
     if (enums.occasions.length) {
       lines.push(`أمثلة مناسبات شائعة: ${enums.occasions.join('، ')}`);

@@ -53,7 +53,7 @@ export async function setupOpenApi(app: NestFastifyApplication): Promise<void> {
     .setTitle('Masa Fashion AI Agent API')
     .setDescription(
       [
-        'Backend REST API for the Masa Fashion (abaya brand) AI sales agent.',
+        "Backend REST API for the Masa Fashion (women's clothing brand) AI sales agent.",
         '',
         'The database is the single source of truth: control-plane data',
         '(products, knowledge, agent behavior) is written by the admin panel,',

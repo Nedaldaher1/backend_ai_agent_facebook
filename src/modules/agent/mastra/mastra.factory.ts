@@ -200,10 +200,9 @@ export function buildMastra(deps: BuildMastraDeps): {
           /** Customer's first name, if shared. */
           name: z.string().optional(),
 
-          /** Abaya size preference — numeric code from the size chart
-           *  (e.g. '1', '2') as returned by the recommend_size tool.
-           *  Stored as a permissive string to accept both legacy letter
-           *  values and current numeric codes without schema rejection. */
+          /** Size preference — a per-product size label (a number like '1'
+           *  or a letter like 'L') as returned by the recommend_size tool.
+           *  Stored as a permissive string since labels vary per product. */
           size: z.string().optional(),
 
           /** Colour preferences expressed in any dialect the customer used

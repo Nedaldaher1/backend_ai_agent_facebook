@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   and,
-  arrayContains,
   arrayOverlaps,
   asc,
   count,
@@ -42,8 +41,13 @@ export interface ProductFilter {
    */
   colorFamilies?: string[];
   size?: string;
-  fabric?: string;
-  occasion?: string;
+  /**
+   * Exact-match structured attributes, keyed by the attribute `key` defined on
+   * the product's category (e.g. `{ fabric: 'crepe', occasion: 'soiree' }`).
+   * Matched against the product's `attributes.values` jsonb. Replaces the fixed
+   * fabric/occasion columns now that attributes are per-category and dynamic.
+   */
+  attributes?: Record<string, string>;
   stockStatus?: string;
   tags?: string[];
   search?: string;
@@ -66,15 +70,17 @@ export class ProductsRepository {
    * Feeds the soft occasion/fabric vocabulary that guides vision attribute
    * extraction. Restricted to known columns — never interpolates arbitrary SQL.
    */
-  async distinctPublishedAttribute(
-    attribute: 'occasion' | 'fabric',
-  ): Promise<string[]> {
-    const col = attribute === 'occasion' ? products.occasion : products.fabric;
+  async distinctPublishedAttribute(attributeKey: string): Promise<string[]> {
+    // attributes.values[key] over published products. The key is a bound
+    // parameter (never interpolated), and jsonb ->> yields text.
+    const value = sql<
+      string | null
+    >`${products.attributes}->'values'->>${attributeKey}`;
     const rows = await this.db
-      .selectDistinct({ value: col })
+      .selectDistinct({ value })
       .from(products)
-      .where(and(eq(products.isPublished, true), isNotNull(col)))
-      .orderBy(asc(col));
+      .where(and(eq(products.isPublished, true), isNotNull(value)))
+      .orderBy(asc(value));
     return rows
       .map((r) => r.value)
       .filter((v): v is string => v != null && v.length > 0);
@@ -113,13 +119,16 @@ export class ProductsRepository {
       );
     }
     if (filter.size) {
-      conditions.push(arrayContains(products.sizes, [filter.size]));
+      // sizes is a jsonb array of { label, ... }; match by label via containment.
+      const needle = JSON.stringify([{ label: filter.size }]);
+      conditions.push(sql`${products.sizes} @> ${needle}::jsonb`);
     }
-    if (filter.fabric) {
-      conditions.push(eq(products.fabric, filter.fabric));
-    }
-    if (filter.occasion) {
-      conditions.push(eq(products.occasion, filter.occasion));
+    if (filter.attributes) {
+      for (const [key, value] of Object.entries(filter.attributes)) {
+        conditions.push(
+          sql`${products.attributes}->'values'->>${key} = ${value}`,
+        );
+      }
     }
     if (filter.stockStatus) {
       conditions.push(eq(products.stockStatus, filter.stockStatus));

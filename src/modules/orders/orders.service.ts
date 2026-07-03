@@ -348,7 +348,8 @@ export class OrdersService {
       }
       // Effective size: per-item → order-level unified → the only size token of
       // a single-size/free-size product. Then validate against the catalog.
-      const sizes = product.sizes ?? [];
+      // Sizes are structured per-product now; match against their labels.
+      const sizes = (product.sizes ?? []).map((s) => s.label);
       let size: string | null = item.size ?? input.unifiedSize ?? null;
       if (size === null && sizes.length === 1) {
         size = sizes[0];

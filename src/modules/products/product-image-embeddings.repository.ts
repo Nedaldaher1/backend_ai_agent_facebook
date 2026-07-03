@@ -18,7 +18,6 @@ export interface SimilarProductRow {
   name: string;
   priceJod: string;
   colorFamily: string | null;
-  occasion: string | null;
   stockStatus: string;
   imageKey: string;
   imageUrls: string[] | null;
@@ -178,7 +177,6 @@ export class ProductImageEmbeddingsRepository {
           p.name,
           p.price_jod,
           p.color_family,
-          p.occasion,
           p.stock_status,
           p.image_urls
         FROM ${productImageEmbeddings} AS e
@@ -190,7 +188,7 @@ export class ProductImageEmbeddingsRepository {
       best AS (
         SELECT DISTINCT ON (product_id)
           product_id, image_key, distance, name, price_jod,
-          color_family, occasion, stock_status, image_urls
+          color_family, stock_status, image_urls
         FROM candidates
         ORDER BY product_id, distance
       )
@@ -204,7 +202,6 @@ export class ProductImageEmbeddingsRepository {
       name: string;
       price_jod: string;
       color_family: string | null;
-      occasion: string | null;
       stock_status: string;
       image_urls: string[] | null;
     }>;
@@ -216,7 +213,6 @@ export class ProductImageEmbeddingsRepository {
         name: r.name,
         priceJod: r.price_jod,
         colorFamily: r.color_family,
-        occasion: r.occasion,
         stockStatus: r.stock_status,
         imageKey: r.image_key,
         imageUrls: r.image_urls,

@@ -120,6 +120,27 @@
       "when": 1783037585543,
       "tag": "0016_add_conversation_pinned_at",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783063047242,
+      "tag": "0017_add_categories_and_sizes",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783063125666,
+      "tag": "0018_drop_legacy_abaya_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783063322219,
+      "tag": "0019_drop_size_chart",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,8 @@
 /**
  * Tests for buildRecommendSizeTool.
  *
- * The tool is THIN: it calls SizingService.recommendSize and remaps
- * the single camelCase key (needsHuman → needs_human). No business logic.
+ * The tool fetches the product (published only) and asks SizingService to pick
+ * a size from that product's own sizes, remapping needsHuman → needs_human.
  */
 
 jest.mock('@mastra/core/tools', () => ({
@@ -10,31 +10,40 @@ jest.mock('@mastra/core/tools', () => ({
 }));
 
 import { buildRecommendSizeTool } from '../recommend-size.tool';
+import type { ProductsService } from '@/modules/products/products.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
+import type { ProductSize } from '@/modules/products/entities/product.entity';
 
-// ---------------------------------------------------------------------------
-// Minimal sizing service mock
-// ---------------------------------------------------------------------------
+const SIZES: ProductSize[] = [
+  { label: '1', minWeightKg: 60, maxWeightKg: 90 },
+  { label: '2', minWeightKg: 90, maxWeightKg: 120 },
+];
 
-function makeSizingMock(recommendSizeImpl: jest.Mock): SizingService {
-  return {
-    recommendSize: recommendSizeImpl,
-  } as unknown as SizingService;
+function makeProductsMock(getById: jest.Mock): ProductsService {
+  return { getById } as unknown as ProductsService;
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+function makeSizingMock(impl: jest.Mock): SizingService {
+  return { recommendSizeForProduct: impl };
+}
 
 describe('buildRecommendSizeTool', () => {
-  it('calls recommendSize with (weight_kg, height_cm) and returns { size } for a normal weight', async () => {
-    const recommendSize = jest.fn().mockResolvedValue({ size: '1' });
-    const sizing = makeSizingMock(recommendSize);
-    const tool = buildRecommendSizeTool(sizing) as any;
+  it('fetches the published product and returns { size } for a normal weight', async () => {
+    const getById = jest.fn().mockResolvedValue({ id: 'p1', sizes: SIZES });
+    const recommend = jest.fn().mockReturnValue({ size: '1' });
+    const tool = buildRecommendSizeTool(
+      makeProductsMock(getById),
+      makeSizingMock(recommend),
+    ) as any;
 
-    const result = await tool.execute({ weight_kg: 75, height_cm: 165 });
+    const result = await tool.execute({
+      product_id: 'p1',
+      weight_kg: 75,
+      height_cm: 165,
+    });
 
-    expect(recommendSize).toHaveBeenCalledWith(75, 165);
+    expect(getById).toHaveBeenCalledWith('p1', { publishedOnly: true });
+    expect(recommend).toHaveBeenCalledWith(SIZES, 75, 165);
     expect(result).toEqual({
       size: '1',
       note: undefined,
@@ -42,49 +51,36 @@ describe('buildRecommendSizeTool', () => {
     });
   });
 
-  it('passes height_cm through when provided', async () => {
-    const recommendSize = jest.fn().mockResolvedValue({ size: '2' });
-    const sizing = makeSizingMock(recommendSize);
-    const tool = buildRecommendSizeTool(sizing) as any;
-
-    await tool.execute({ weight_kg: 90, height_cm: 170 });
-
-    expect(recommendSize).toHaveBeenCalledWith(90, 170);
-  });
-
-  it('passes undefined for height_cm when it is omitted', async () => {
-    const recommendSize = jest.fn().mockResolvedValue({ size: '1' });
-    const sizing = makeSizingMock(recommendSize);
-    const tool = buildRecommendSizeTool(sizing) as any;
-
-    await tool.execute({ weight_kg: 75 });
-
-    expect(recommendSize).toHaveBeenCalledWith(75, undefined);
-  });
-
-  it('maps needsHuman→needs_human and returns size:null when weight is out of range', async () => {
+  it('maps needsHuman→needs_human for an out-of-range weight', async () => {
     const note =
-      'وزنك خارج النطاق المعتاد لمقاساتنا، رح يساعدك فريقنا بالمقاس الأنسب.';
-    const recommendSize = jest
+      'وزنك خارج نطاق مقاسات هذا المنتج، رح يساعدك فريقنا بالمقاس الأنسب.';
+    const getById = jest.fn().mockResolvedValue({ id: 'p1', sizes: SIZES });
+    const recommend = jest
       .fn()
-      .mockResolvedValue({ size: null, needsHuman: true, note });
-    const sizing = makeSizingMock(recommendSize);
-    const tool = buildRecommendSizeTool(sizing) as any;
+      .mockReturnValue({ size: null, needsHuman: true, note });
+    const tool = buildRecommendSizeTool(
+      makeProductsMock(getById),
+      makeSizingMock(recommend),
+    ) as any;
 
-    const result = await tool.execute({ weight_kg: 130 });
+    const result = await tool.execute({ product_id: 'p1', weight_kg: 200 });
 
-    expect(recommendSize).toHaveBeenCalledWith(130, undefined);
     expect(result).toEqual({ size: null, needs_human: true, note });
   });
 
-  it('returns needs_human:undefined (not true) for a normal in-range result', async () => {
-    const recommendSize = jest.fn().mockResolvedValue({ size: '1' });
-    const sizing = makeSizingMock(recommendSize);
-    const tool = buildRecommendSizeTool(sizing) as any;
+  it('soft-escalates when the product is missing/unpublished', async () => {
+    const getById = jest.fn().mockRejectedValue(new Error('not found'));
+    const recommend = jest.fn();
+    const tool = buildRecommendSizeTool(
+      makeProductsMock(getById),
+      makeSizingMock(recommend),
+    ) as any;
 
-    const result = await tool.execute({ weight_kg: 75 });
+    const result = await tool.execute({ product_id: 'ghost', weight_kg: 75 });
 
-    expect(result.needs_human).toBeUndefined();
-    expect(result.size).toBe('1');
+    expect(recommend).not.toHaveBeenCalled();
+    expect(result.size).toBeNull();
+    expect(result.needs_human).toBe(true);
+    expect(result.note).toBeTruthy();
   });
 });

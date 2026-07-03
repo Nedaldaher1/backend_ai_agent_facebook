@@ -27,15 +27,13 @@ import { VisionService } from '../vision.service';
 import type { ConfigService } from '@nestjs/config';
 import type { ProductsService } from '@/modules/products/products.service';
 import type { ColorsService } from '@/modules/products/colors.service';
-import type { SizingService } from '@/modules/sizing/sizing.service';
 
 // color is a value from the closed enum the schema is built with (['red','black']),
 // since the model is constrained to pick a canonical family from that list.
 const FULL_ATTRS = {
-  isAbaya: true,
+  isClothing: true,
   confidence: 0.9,
   color: 'red',
-  size: null,
   occasion: 'سهرة',
   fabric: null,
   sleeveType: null,
@@ -50,14 +48,11 @@ function makeService(configOverrides: Record<string, string> = {}) {
   const colors = {
     listActiveFamilies: jest.fn().mockResolvedValue(['red', 'black']),
   } as unknown as ColorsService;
-  const sizing = {
-    listSizeCodes: jest.fn().mockResolvedValue(['1', '2']),
-  } as unknown as SizingService;
   const config = {
     get: (k: string) => configOverrides[k],
   } as unknown as ConfigService;
-  const service = new VisionService(config, products, colors, sizing);
-  return { service, products, colors, sizing };
+  const service = new VisionService(config, products, colors);
+  return { service, products, colors };
 }
 
 describe('VisionService.extractAttributes', () => {
@@ -145,7 +140,7 @@ describe('VisionService.extractAttributes', () => {
 
   it('returns no attributes when the image is not a product', async () => {
     mockGenerate.mockResolvedValue({
-      object: { ...FULL_ATTRS, isAbaya: false },
+      object: { ...FULL_ATTRS, isClothing: false },
     });
     const { service } = makeService();
 

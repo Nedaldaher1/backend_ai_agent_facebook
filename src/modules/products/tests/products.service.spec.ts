@@ -918,7 +918,7 @@ describe('ProductsService', () => {
       makeProduct({
         id: 'ca1',
         isPublished: true,
-        sizes: ['1', '2'],
+        sizes: [{ label: '1' }, { label: '2' }],
         stockStatus: 'in_stock',
       }),
     );
@@ -1403,7 +1403,7 @@ describe('ProductsService', () => {
       isPublished: true,
       stockStatus: 'in_stock',
       imageUrls: ['primary.jpg', 'secondary.png'],
-      sizes: ['S', 'M', 'L'],
+      sizes: [{ label: 'S' }, { label: 'M' }, { label: 'L' }],
       colorFamily: 'blue',
     });
     findById.mockResolvedValue(product);
@@ -1429,7 +1429,7 @@ describe('ProductsService', () => {
       isPublished: true,
       stockStatus: 'out',
       imageUrls: ['img.jpg'],
-      sizes: ['M', 'L'],
+      sizes: [{ label: 'M' }, { label: 'L' }],
     });
     findById.mockResolvedValue(product);
 

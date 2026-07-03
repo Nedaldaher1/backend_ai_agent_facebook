@@ -1,8 +1,8 @@
 /**
- * list_all_products — أرجِعي كل العبايات المنشورة في الكتالوج (تصفّح).
+ * list_all_products — أرجِعي كل المنتجات المنشورة في الكتالوج (تصفّح).
  *
  * Use when the customer wants to browse everything ("شو عندكم؟",
- * "ورجيني العبايات") rather than search by a specific attribute. For attribute
+ * "ورجيني المنتجات") rather than search by a specific attribute. For attribute
  * search (colour/size/occasion/price/free text) the agent uses search_products.
  *
  * Publish gate: only `is_published = true` products are returned (enforced by

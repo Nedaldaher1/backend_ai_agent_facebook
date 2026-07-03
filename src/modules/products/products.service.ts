@@ -60,6 +60,12 @@ export interface ProductSearchInput {
   color?: string;
   colorFamily?: string;
   size?: string;
+  /**
+   * Structured attribute filters (e.g. `{ fabric: 'crepe', occasion: 'soiree' }`),
+   * matched against the product's category-defined `attributes.values`.
+   */
+  attributes?: Record<string, string>;
+  /** Convenience shortcuts folded into `attributes` (common abaya filters). */
   fabric?: string;
   occasion?: string;
   stockStatus?: string;
@@ -121,7 +127,6 @@ export interface SimilarProduct {
   name: string;
   priceJod: string;
   colorFamily: string | null;
-  occasion: string | null;
   stockStatus: string;
   imageUrl: string;
   similarity: number;
@@ -228,13 +233,12 @@ export class ProductsService {
   }
 
   /**
-   * Distinct published values for a free-text attribute (occasion/fabric).
-   * Used to build the soft vocabulary that guides vision attribute extraction.
+   * Distinct published values of a category attribute (e.g. 'occasion',
+   * 'fabric'), read from products.attributes.values. Used to build the soft
+   * vocabulary that guides vision attribute extraction.
    */
-  distinctPublishedAttribute(
-    attribute: 'occasion' | 'fabric',
-  ): Promise<string[]> {
-    return this.repo.distinctPublishedAttribute(attribute);
+  distinctPublishedAttribute(attributeKey: string): Promise<string[]> {
+    return this.repo.distinctPublishedAttribute(attributeKey);
   }
 
   /**
@@ -354,9 +358,16 @@ export class ProductsService {
    * values themselves stay strings end-to-end.
    */
   private matchesStructuredFilter(p: Product, f: ProductFilter): boolean {
-    if (f.size && !(p.sizes ?? []).includes(f.size)) return false;
-    if (f.fabric && p.fabric !== f.fabric) return false;
-    if (f.occasion && p.occasion !== f.occasion) return false;
+    if (f.size && !(p.sizes ?? []).some((s) => s.label === f.size))
+      return false;
+    if (f.attributes) {
+      const values = (
+        p.attributes as { values?: Record<string, unknown> } | null
+      )?.values;
+      for (const [key, value] of Object.entries(f.attributes)) {
+        if (values?.[key] !== value) return false;
+      }
+    }
     if (f.stockStatus && p.stockStatus !== f.stockStatus) return false;
     if (f.tags && f.tags.length > 0) {
       const tags = new Set(p.tags ?? []);
@@ -395,7 +406,9 @@ export class ProductsService {
     }
 
     let available = product.stockStatus !== 'out';
-    const inStockSizes = available ? (product.sizes ?? []) : [];
+    const inStockSizes = available
+      ? (product.sizes ?? []).map((s) => s.label)
+      : [];
 
     if (size !== undefined) {
       available = available && inStockSizes.includes(size);
@@ -458,7 +471,9 @@ export class ProductsService {
         priceJod: product.priceJod,
         colorFamily: product.colorFamily,
         available,
-        availableSizes: available ? (product.sizes ?? []) : [],
+        availableSizes: available
+          ? (product.sizes ?? []).map((s) => s.label)
+          : [],
       },
     };
   }
@@ -764,7 +779,6 @@ export class ProductsService {
         name: r.name,
         priceJod: r.priceJod,
         colorFamily: r.colorFamily,
-        occasion: r.occasion,
         stockStatus: r.stockStatus,
         // Prefer the product's primary image (index 0); fall back to the matched one.
         imageUrl: await this.storage.getUrl(r.imageUrls?.[0] ?? r.imageKey),
@@ -1332,8 +1346,13 @@ export class ProductsService {
       colorFamily: input.colorFamily,
       colorFamilies,
       size: input.size,
-      fabric: input.fabric,
-      occasion: input.occasion,
+      // Fold the fabric/occasion convenience fields into the generic attribute
+      // map (attributes are per-category now; these are just common shortcuts).
+      attributes: {
+        ...input.attributes,
+        ...(input.fabric ? { fabric: input.fabric } : {}),
+        ...(input.occasion ? { occasion: input.occasion } : {}),
+      },
       stockStatus: input.stockStatus,
       tags: input.tags,
       search: input.search,

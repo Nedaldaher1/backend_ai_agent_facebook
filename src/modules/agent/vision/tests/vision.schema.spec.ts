@@ -6,23 +6,21 @@ import {
 describe('buildVisionAttributeSchema', () => {
   const enums = {
     colorFamilies: ['red', 'black'],
-    sizes: ['1', '2'],
     occasions: ['سهرة'],
     fabrics: ['crepe'],
   };
 
   const valid = {
-    isAbaya: true,
+    isClothing: true,
     confidence: 0.8,
     color: 'red',
-    size: '1',
     occasion: 'سهرة',
     fabric: 'crepe',
     sleeveType: null,
     embellishment: null,
   };
 
-  it('accepts an object whose color/size are within the closed enums', () => {
+  it('accepts an object whose color is within the closed enum', () => {
     expect(buildVisionAttributeSchema(enums).safeParse(valid).success).toBe(
       true,
     );
@@ -36,14 +34,6 @@ describe('buildVisionAttributeSchema', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects a size outside the closed enum', () => {
-    const r = buildVisionAttributeSchema(enums).safeParse({
-      ...valid,
-      size: '99',
-    });
-    expect(r.success).toBe(false);
-  });
-
   it('allows a null color (design unclear)', () => {
     const r = buildVisionAttributeSchema(enums).safeParse({
       ...valid,
@@ -52,16 +42,15 @@ describe('buildVisionAttributeSchema', () => {
     expect(r.success).toBe(true);
   });
 
-  it('widens color/size to free strings when the catalog is empty', () => {
+  it('widens color to a free string when the catalog is empty', () => {
     const r = buildVisionAttributeSchema(EMPTY_VISION_ENUMS).safeParse({
       ...valid,
       color: 'anything',
-      size: 'XXL',
     });
     expect(r.success).toBe(true);
   });
 
-  it('requires isAbaya and confidence', () => {
+  it('requires isClothing and confidence', () => {
     expect(
       buildVisionAttributeSchema(enums).safeParse({ color: 'red' }).success,
     ).toBe(false);

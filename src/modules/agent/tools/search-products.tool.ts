@@ -1,5 +1,5 @@
 /**
- * search_products — البحث في كتالوج العبايات المنشورة.
+ * search_products — البحث في كتالوج الملابس المنشورة.
  *
  * Priority order:
  *  1. If `ad_ref` is provided, surface products linked to that ad first.
@@ -66,7 +66,7 @@ export function buildSearchProductsTool(products: ProductsService) {
   return createTool({
     id: 'search_products',
     description:
-      'Search the published abaya catalog by color, size, occasion, price, or free text. Always use this (never invent products, prices, or availability).',
+      'Search the published clothing catalog by color, size, occasion, price, or free text. Always use this (never invent products, prices, or availability).',
     inputSchema,
     outputSchema,
 

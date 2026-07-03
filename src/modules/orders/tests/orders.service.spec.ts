@@ -30,7 +30,7 @@ const makeProduct = (overrides: Record<string, unknown> = {}) => ({
   id: PRODUCT_ID,
   name: 'عباية كلاسيك',
   priceJod: '45.000',
-  sizes: ['S', 'M', 'L'],
+  sizes: [{ label: 'S' }, { label: 'M' }, { label: 'L' }],
   imageUrls: ['img-1.jpg', 'img-2.jpg'],
   stockStatus: 'in_stock',
   isPublished: true,
@@ -350,7 +350,7 @@ describe('OrdersService', () => {
     });
 
     it('auto-resolves a single-size (free-size) product', async () => {
-      mockCatalog(makeProduct({ sizes: ['onesize'] }));
+      mockCatalog(makeProduct({ sizes: [{ label: 'onesize' }] }));
       mockPersist();
 
       const input = {
@@ -459,7 +459,11 @@ describe('OrdersService', () => {
     });
 
     it('rejects a size not in the product sizes[]', async () => {
-      mockCatalog(makeProduct({ sizes: ['S', 'M', 'L'] }));
+      mockCatalog(
+        makeProduct({
+          sizes: [{ label: 'S' }, { label: 'M' }, { label: 'L' }],
+        }),
+      );
       mockPersist();
 
       await expect(
@@ -479,7 +483,11 @@ describe('OrdersService', () => {
     });
 
     it('rejects when a required size is missing (multi-size product, no size)', async () => {
-      mockCatalog(makeProduct({ sizes: ['S', 'M', 'L'] }));
+      mockCatalog(
+        makeProduct({
+          sizes: [{ label: 'S' }, { label: 'M' }, { label: 'L' }],
+        }),
+      );
       mockPersist();
 
       await expect(
@@ -576,7 +584,7 @@ describe('OrdersService', () => {
       // Mirrors the field report: an old draft (أسود/بنفسجي, size 1) must NOT be
       // returned when the customer now wants أحمر/أخضر at size 2.
       const product = makeProduct({
-        sizes: ['1', '2'],
+        sizes: [{ label: '1' }, { label: '2' }],
         imageUrls: ['img-red.jpg', 'img-black.jpg', 'img-green.jpg'],
       });
       checkAvailability.mockResolvedValue({ available: true, product });
@@ -675,7 +683,7 @@ describe('OrdersService', () => {
       makeProduct({
         name: 'عباية صيفي تطريز زهور',
         imageUrls: ['red.jpg', 'blue.jpg', 'green.jpg'],
-        sizes: ['1', '2'],
+        sizes: [{ label: '1' }, { label: '2' }],
       });
 
     it('maps each item to its chosen colour image (different colours → different images/colours)', async () => {
@@ -790,7 +798,10 @@ describe('OrdersService', () => {
     it('uses the only image for a single-image product with no colour (back-compat)', async () => {
       checkAvailability.mockResolvedValue({
         available: true,
-        product: makeProduct({ imageUrls: ['only.jpg'], sizes: ['M'] }),
+        product: makeProduct({
+          imageUrls: ['only.jpg'],
+          sizes: [{ label: 'M' }],
+        }),
       });
       getImageColorName.mockResolvedValue('أسود');
       mockPersist();

@@ -52,7 +52,7 @@ export function buildSalesTools(deps: SalesToolsDeps) {
     check_availability: buildCheckAvailabilityTool(products),
     get_product_media: buildGetProductMediaTool(products),
     get_knowledge: buildGetKnowledgeTool(knowledge),
-    recommend_size: buildRecommendSizeTool(sizing),
+    recommend_size: buildRecommendSizeTool(products, sizing),
     get_product_for_order: buildGetProductForOrderTool(products),
     capture_order: buildCaptureOrderTool(orders),
     escalate_to_human: buildEscalateToHumanTool(conversations),
