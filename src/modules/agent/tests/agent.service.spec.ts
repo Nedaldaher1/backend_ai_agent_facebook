@@ -66,6 +66,7 @@ jest.mock('@mastra/core/di', () => {
 import { Logger } from '@nestjs/common';
 import { AgentService } from '../agent.service';
 import { FALLBACK_REPLY } from '../customer-reply.constants';
+import { HANDOFF_REPLY } from '../handoff.constants';
 import { buildMastra } from '../mastra/mastra.factory';
 import { RequestContext } from '@mastra/core/di';
 import type { ConfigService } from '@nestjs/config';
@@ -205,6 +206,12 @@ function makeConversationsMock(
     recordEvent: jest.fn().mockResolvedValue({}),
     // Knowledge pre-fetch (B): remembers the product(s) shown to the customer.
     mergeState: jest.fn().mockResolvedValue({}),
+    // Hard-failure escalation (generate() threw / final-empty reply). Tests
+    // asserting this path must ALSO expect the call — a missing mock would
+    // silently downgrade the path to FALLBACK_REPLY via the nested catch.
+    escalateToHuman: jest
+      .fn()
+      .mockResolvedValue({ id: conversationId, aiState: 'human' }),
   } as unknown as ConversationsService;
 }
 
@@ -1004,7 +1011,7 @@ describe('AgentService', () => {
       return service;
     };
 
-    it('retries once and falls back to a clean line when generate returns empty text twice', async () => {
+    it('retries once, then escalates to human when generate returns empty text twice', async () => {
       const conversations = makeConversationsMock();
       const service = make(conversations);
 
@@ -1018,10 +1025,35 @@ describe('AgentService', () => {
       });
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(2);
-      expect(result.reply).toBe(FALLBACK_REPLY);
-      // The outbound business-log row carries the fallback, never an empty string.
+      expect(conversations.escalateToHuman).toHaveBeenCalledWith(
+        'convo-1',
+        expect.stringContaining('ai_failure'),
+      );
+      expect(result.reply).toBe(HANDOFF_REPLY);
+      expect(result.aiState).toBe('human');
+      // The outbound business-log row carries the handoff line, never an empty string.
       const outbound = (conversations.addMessage as jest.Mock).mock.calls[1][0];
-      expect(outbound.content).toBe(FALLBACK_REPLY);
+      expect(outbound.content).toBe(HANDOFF_REPLY);
+    });
+
+    it('falls back WITHOUT flipping state when the empty-reply escalation itself fails', async () => {
+      const conversations = makeConversationsMock();
+      (conversations.escalateToHuman as jest.Mock).mockRejectedValue(
+        new Error('db down'),
+      );
+      const service = make(conversations);
+
+      fakeSalesAgent.generate
+        .mockResolvedValueOnce({ text: '', finishReason: 'length' })
+        .mockResolvedValueOnce({ text: '', finishReason: 'length' });
+
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
+
+      expect(result.reply).toBe(FALLBACK_REPLY);
+      expect(result.aiState).toBe('bot');
     });
 
     it('retries once and uses the retry text when the second generate succeeds', async () => {
@@ -1039,6 +1071,8 @@ describe('AgentService', () => {
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(2);
       expect(result.reply).toBe('رجعت بنص هالمرة');
+      // A recovered retry is a normal turn — no escalation.
+      expect(conversations.escalateToHuman).not.toHaveBeenCalled();
     });
 
     it('does NOT retry when the first generation already has text', async () => {
@@ -1056,12 +1090,12 @@ describe('AgentService', () => {
       expect(result.reply).toBe('رد مباشر');
     });
 
-    it('does NOT retry on a clean empty stop — goes straight to fallback (token-saving)', async () => {
+    it('does NOT retry on a clean empty stop — escalates to human directly (token-saving)', async () => {
       const conversations = makeConversationsMock();
       const service = make(conversations);
 
       // finishReason 'stop' with empty text = the model deliberately said nothing;
-      // a retry would just burn another full generation, so use the fallback.
+      // a retry would just burn another full generation. "Can't answer" ⇒ escalate.
       fakeSalesAgent.generate.mockResolvedValueOnce({
         text: '',
         finishReason: 'stop',
@@ -1073,7 +1107,12 @@ describe('AgentService', () => {
       });
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
-      expect(result.reply).toBe(FALLBACK_REPLY);
+      expect(conversations.escalateToHuman).toHaveBeenCalledWith(
+        'convo-1',
+        expect.stringContaining('ai_failure'),
+      );
+      expect(result.reply).toBe(HANDOFF_REPLY);
+      expect(result.aiState).toBe('human');
     });
 
     it('forwards the configured maxSteps to generate()', async () => {
@@ -1093,7 +1132,7 @@ describe('AgentService', () => {
       const service = make(conversations);
 
       // Hitting maxSteps while still wanting tools → empty text + 'tool-calls'; a
-      // re-run hits the same wall, so go straight to the fallback (no 2x cost).
+      // re-run hits the same wall, so escalate directly (no 2x cost).
       fakeSalesAgent.generate.mockResolvedValueOnce({
         text: '',
         finishReason: 'tool-calls',
@@ -1105,7 +1144,64 @@ describe('AgentService', () => {
       });
 
       expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
-      expect(result.reply).toBe(FALLBACK_REPLY);
+      expect(conversations.escalateToHuman).toHaveBeenCalledWith(
+        'convo-1',
+        expect.stringContaining('ai_failure'),
+      );
+      expect(result.reply).toBe(HANDOFF_REPLY);
+      expect(result.aiState).toBe('human');
+    });
+
+    it('escalates and replies HANDOFF_REPLY when generate() throws', async () => {
+      const conversations = makeConversationsMock();
+      const service = make(conversations);
+
+      fakeSalesAgent.generate.mockRejectedValueOnce(
+        new Error('OpenRouter 500'),
+      );
+
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
+
+      expect(conversations.escalateToHuman).toHaveBeenCalledWith(
+        'convo-1',
+        expect.stringContaining('ai_failure'),
+      );
+      expect(result).toMatchObject({
+        reply: HANDOFF_REPLY,
+        ran: true,
+        aiState: 'human',
+      });
+      // Inbound row + outbound handoff row — the customer turn is never orphaned.
+      const calls = (conversations.addMessage as jest.Mock).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1][0]).toMatchObject({
+        role: 'agent',
+        content: HANDOFF_REPLY,
+      });
+    });
+
+    it('falls back to FALLBACK_REPLY when generate() throws AND escalation fails', async () => {
+      const conversations = makeConversationsMock();
+      (conversations.escalateToHuman as jest.Mock).mockRejectedValue(
+        new Error('db down'),
+      );
+      const service = make(conversations);
+
+      fakeSalesAgent.generate.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
+
+      expect(result).toMatchObject({
+        reply: FALLBACK_REPLY,
+        ran: true,
+        aiState: 'bot',
+      });
     });
 
     it('strips emoji from the reply deterministically', async () => {
@@ -1928,12 +2024,15 @@ describe('AgentService', () => {
       );
       service.onModuleInit();
 
-      // The turn fails after the summary was injected into context.
+      // The turn fails after the summary was injected into context. The throw
+      // no longer propagates — it escalates to a human + replies HANDOFF_REPLY.
       fakeSalesAgent.generate.mockRejectedValueOnce(new Error('Claude 429'));
 
-      await expect(
-        service.handleMessage({ contactId: 'C1', text: 'مرحبا' }),
-      ).rejects.toThrow('Claude 429');
+      const result = await service.handleMessage({
+        contactId: 'C1',
+        text: 'مرحبا',
+      });
+      expect(result.reply).toBe(HANDOFF_REPLY);
 
       // The one-shot summary must survive a failed turn so the next attempt
       // still injects it (before the fix it was cleared before generate()).

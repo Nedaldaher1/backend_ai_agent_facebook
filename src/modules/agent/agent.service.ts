@@ -26,7 +26,7 @@ import {
 import { MAX_GALLERY_CARDS } from './messenger/messenger.formatter';
 import { stripEmojis, stripImageMarkup } from './reply-sanitize.util';
 import { FALLBACK_REPLY } from './customer-reply.constants';
-import { HANDOFF_REPLY } from './handoff.constants';
+import { AI_FAILURE_ESCALATE_REASON, HANDOFF_REPLY } from './handoff.constants';
 import {
   VOICE_ESCALATE_REASON,
   VOICE_FAIL_ESCALATE_THRESHOLD,
@@ -735,9 +735,10 @@ export class AgentService implements OnModuleInit {
         : {}),
     });
 
-    // TODO (AIA-32 webhook): if generate() throws, the inbound row above is left
-    //   without a matching reply. Handle generate failures there (idempotency +
-    //   mark/clean the orphan turn) once the Messenger webhook owns delivery.
+    // Hard AI failures are handled below (try/catch → escalateOnAiFailure):
+    // a generate() throw or a still-empty reply after the retry policy
+    // escalates the conversation to a human and replies HANDOFF_REPLY, so the
+    // inbound row above always gets a matching outbound row.
     const genOptions = {
       memory: { resource: resourceId, thread: threadId },
       requestContext,
@@ -752,10 +753,21 @@ export class AgentService implements OnModuleInit {
       ...(context ? { context } : {}),
     };
 
-    let result = (await this.salesAgent.generate(
-      voiceParts.llmText,
-      genOptions,
-    )) as GenerateResult;
+    let result: GenerateResult;
+    try {
+      result = await this.salesAgent.generate(voiceParts.llmText, genOptions);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `agent turn [${resourceId}] generate() threw: ${detail}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return this.finishFailedTurn(
+        convo.id,
+        resourceId,
+        `generate() threw — ${detail}`,
+      );
+    }
     // Turn-level usage: normalized here, summed with the retry below when it
     // fires, so the log line and reply.usage always cover the WHOLE turn.
     let turnUsage = this.normalizeUsage(result);
@@ -765,6 +777,9 @@ export class AgentService implements OnModuleInit {
     // and strip emoji (the brand voice forbids them, so a slipped-in emoji is
     // removed here regardless of what the persona says).
     let replyText = stripEmojis(stripImageMarkup(result.text ?? ''));
+    // Set when a final-empty reply forces the escalation below; flips the
+    // returned aiState to 'human' so the delivered state stays honest.
+    let failureEscalated = false;
 
     // Empty-generation guard. Gemini occasionally returns no text (a step
     // truncated by the token cap, or a transient blip). An empty reply is sent as
@@ -790,15 +805,37 @@ export class AgentService implements OnModuleInit {
         this.logger.warn(
           `agent turn [${resourceId}] empty reply (finishReason=${reason}) — retrying once`,
         );
-        result = await this.salesAgent.generate(voiceParts.llmText, genOptions);
+        try {
+          result = await this.salesAgent.generate(
+            voiceParts.llmText,
+            genOptions,
+          );
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `agent turn [${resourceId}] generate() retry threw: ${detail}`,
+            err instanceof Error ? err.stack : undefined,
+          );
+          return this.finishFailedTurn(
+            convo.id,
+            resourceId,
+            `generate() retry threw — ${detail}`,
+          );
+        }
         replyText = stripEmojis(stripImageMarkup(result.text ?? ''));
         turnUsage = this.sumUsage(turnUsage, this.normalizeUsage(result));
       }
       if (!replyText.trim()) {
         this.logger.warn(
-          `agent turn [${resourceId}] empty reply (finishReason=${result.finishReason ?? 'unknown'}) — using fallback`,
+          `agent turn [${resourceId}] empty reply (finishReason=${result.finishReason ?? 'unknown'}) — escalating to human`,
         );
-        replyText = FALLBACK_REPLY;
+        const failure = await this.escalateOnAiFailure(
+          convo.id,
+          resourceId,
+          `empty reply (finishReason=${result.finishReason ?? 'unknown'})`,
+        );
+        replyText = failure.reply;
+        failureEscalated = failure.escalated;
       }
     }
 
@@ -856,7 +893,7 @@ export class AgentService implements OnModuleInit {
       ...(overflow > 0 ? { productOverflow: overflow } : {}),
       ...(images.length > 0 ? { images } : {}),
       ran: true,
-      aiState: 'bot',
+      aiState: failureEscalated ? 'human' : 'bot',
       ...(turnUsage
         ? {
             usage: {
@@ -867,6 +904,65 @@ export class AgentService implements OnModuleInit {
             },
           }
         : {}),
+    };
+  }
+
+  /**
+   * Escalate a hard AI failure (generate() threw, or the reply stayed empty
+   * after the retry policy) through the SAME machinery as the
+   * escalate_to_human tool — ai_state='human', handoff event, admin badge and
+   * the staff Telegram alert all come from ConversationsService.escalateToHuman.
+   * Nested fallback: when the escalation write itself fails, the customer
+   * still gets FALLBACK_REPLY and the bot stays on.
+   */
+  private async escalateOnAiFailure(
+    conversationId: string,
+    resourceId: string,
+    detail: string,
+  ): Promise<{ reply: string; escalated: boolean }> {
+    try {
+      await this.conversations.escalateToHuman(
+        conversationId,
+        `${AI_FAILURE_ESCALATE_REASON}: ${detail}`,
+      );
+      this.logger.warn(
+        `agent turn [${resourceId}] hard AI failure escalated to human: ${detail}`,
+      );
+      return { reply: HANDOFF_REPLY, escalated: true };
+    } catch (err) {
+      this.logger.error(
+        `agent turn [${resourceId}] escalation after AI failure also failed: ${String(err)} (original failure: ${detail})`,
+      );
+      return { reply: FALLBACK_REPLY, escalated: false };
+    }
+  }
+
+  /**
+   * Terminal path for a generate() throw: escalate, business-log the outbound
+   * reply row (the inbound row is already persisted), and produce the
+   * customer-facing AgentReply. Skips tool-call logging / eval metadata /
+   * product extraction — there is no generation result to read them from —
+   * and deliberately leaves any injected human summary intact for the retry.
+   */
+  private async finishFailedTurn(
+    conversationId: string,
+    resourceId: string,
+    detail: string,
+  ): Promise<AgentReply> {
+    const failure = await this.escalateOnAiFailure(
+      conversationId,
+      resourceId,
+      detail,
+    );
+    await this.logTurn({
+      conversationId,
+      role: 'agent',
+      content: failure.reply,
+    });
+    return {
+      reply: failure.reply,
+      ran: true,
+      aiState: failure.escalated ? 'human' : 'bot',
     };
   }
 
