@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { ListOptions } from '@/common/types/query';
+import { EscalationNotifier } from '@/modules/notifications/escalation-notifier';
 import {
   createConversationSchema,
   createMessageSchema,
@@ -34,7 +35,12 @@ export interface FindOrCreateConversationInput {
  */
 @Injectable()
 export class ConversationsService {
-  constructor(private readonly repo: ConversationsRepository) {}
+  private readonly logger = new Logger(ConversationsService.name);
+
+  constructor(
+    private readonly repo: ConversationsRepository,
+    private readonly escalationNotifier: EscalationNotifier,
+  ) {}
 
   // --- conversations ---
 
@@ -182,6 +188,17 @@ export class ConversationsService {
     if (!updated) {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
+
+    // Staff Telegram alert — fire-and-forget: notification latency or failure
+    // must never block or break the escalation itself.
+    void this.escalationNotifier
+      .notify({ conversationId, psid: convo.psid, reason })
+      .catch((err) =>
+        this.logger.warn(
+          `escalation notification failed for ${conversationId}: ${String(err)}`,
+        ),
+      );
+
     return updated;
   }
 
