@@ -38,6 +38,7 @@ import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { VisionService } from '../vision/vision.service';
+import type { TranscriptionService } from '../transcription/transcription.service';
 import type { TriageService } from '../triage/triage.service';
 
 const mockBuildMastra = buildMastra as jest.MockedFunction<typeof buildMastra>;
@@ -63,8 +64,21 @@ const agentBehaviorMock = {
 const knowledgeMock = {} as unknown as KnowledgeService;
 const sizingMock = { recommendSize: jest.fn() } as unknown as SizingService;
 const visionMock = {
-  extractAttributes: jest.fn().mockResolvedValue({ attributes: null, confidence: null }),
+  extractAttributes: jest
+    .fn()
+    .mockResolvedValue({ attributes: null, confidence: null }),
 } as unknown as VisionService;
+
+/** Transcription pre-step disabled in unit tests (opt-in via TRANSCRIPTION_ENABLED). */
+const transcriptionMock = {
+  transcribe: jest.fn().mockResolvedValue({
+    ok: false,
+    transcript: null,
+    confidence: null,
+    reason: 'disabled',
+    meta: { model: 'test', latencyMs: 0 },
+  }),
+} as unknown as TranscriptionService;
 
 /** Triage tier disabled in unit tests (opt-in via TRIAGE_ENABLED). */
 const triageMock = {
@@ -76,7 +90,9 @@ const triageMock = {
  * Builds a ConversationsService stub where findMessageByExternalId starts
  * returning undefined (not a duplicate). Tests mutate the mock per scenario.
  */
-function makeConversations(conversationId = 'convo-dedup'): ConversationsService {
+function makeConversations(
+  conversationId = 'convo-dedup',
+): ConversationsService {
   return {
     findOrCreateByPsid: jest
       .fn()
@@ -96,6 +112,7 @@ function buildService(conversations: ConversationsService): AgentService {
     knowledgeMock,
     sizingMock,
     visionMock,
+    transcriptionMock,
     triageMock,
   );
   svc.onModuleInit();
@@ -114,7 +131,9 @@ describe('AgentService — idempotency / dedup-key derivation', () => {
     fakeSalesAgent.generate.mockResolvedValue({ text: 'أهلاً' });
     mockBuildMastra.mockReturnValue({
       mastra: {} as ReturnType<typeof buildMastra>['mastra'],
-      salesAgent: fakeSalesAgent as unknown as ReturnType<typeof buildMastra>['salesAgent'],
+      salesAgent: fakeSalesAgent as unknown as ReturnType<
+        typeof buildMastra
+      >['salesAgent'],
     });
   });
 
@@ -187,7 +206,10 @@ describe('AgentService — idempotency / dedup-key derivation', () => {
       },
     );
 
-    const result = await svc.handleMessage({ contactId: 'C1', text: '   مرحبا' }); // leading spaces
+    const result = await svc.handleMessage({
+      contactId: 'C1',
+      text: '   مرحبا',
+    }); // leading spaces
 
     expect(result.reply).toBe('');
     // generate was called for the FIRST turn only — not for the second.
@@ -215,7 +237,10 @@ describe('AgentService — idempotency / dedup-key derivation', () => {
       },
     );
 
-    const result = await svc.handleMessage({ contactId: 'C1', text: 'بدي عباية' }); // single space
+    const result = await svc.handleMessage({
+      contactId: 'C1',
+      text: 'بدي عباية',
+    }); // single space
 
     expect(result.reply).toBe('');
     expect(fakeSalesAgent.generate).toHaveBeenCalledTimes(1);
@@ -254,12 +279,16 @@ describe('AgentService — idempotency / dedup-key derivation', () => {
 
     // First call — not a dup.
     await svc.handleMessage({ contactId: 'C1', text: 'مرحبا' });
-    (conversations.findMessageByExternalId as jest.Mock).mockResolvedValue({ id: 'existing' });
+    (conversations.findMessageByExternalId as jest.Mock).mockResolvedValue({
+      id: 'existing',
+    });
 
     // Second call — dup.
-    const addCallsBefore = (conversations.addMessage as jest.Mock).mock.calls.length;
+    const addCallsBefore = (conversations.addMessage as jest.Mock).mock.calls
+      .length;
     await svc.handleMessage({ contactId: 'C1', text: 'مرحبا' });
-    const addCallsAfter = (conversations.addMessage as jest.Mock).mock.calls.length;
+    const addCallsAfter = (conversations.addMessage as jest.Mock).mock.calls
+      .length;
 
     // No new addMessage calls for the duplicate turn.
     expect(addCallsAfter).toBe(addCallsBefore);

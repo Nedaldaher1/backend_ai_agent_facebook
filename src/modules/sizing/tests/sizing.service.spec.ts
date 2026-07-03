@@ -3,8 +3,20 @@ import type { SizeChartRepository } from '../size-chart.repository';
 
 // Seeded rows in the same order the repository returns them: desc by min_weight.
 const SEEDED_ROWS = [
-  { id: 'id-2', minWeight: 90, size: '2', createdAt: new Date(), updatedAt: new Date() },
-  { id: 'id-1', minWeight: 60, size: '1', createdAt: new Date(), updatedAt: new Date() },
+  {
+    id: 'id-2',
+    minWeight: 90,
+    size: '2',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  },
+  {
+    id: 'id-1',
+    minWeight: 60,
+    size: '1',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  },
 ];
 
 describe('SizingService', () => {

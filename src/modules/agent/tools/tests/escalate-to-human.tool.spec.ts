@@ -26,9 +26,7 @@ function ctx(vals: Record<string, string>) {
 // Minimal conversations mock
 // ---------------------------------------------------------------------------
 
-function makeConversationsMock(
-  escalateImpl: jest.Mock,
-): ConversationsService {
+function makeConversationsMock(escalateImpl: jest.Mock): ConversationsService {
   return {
     escalateToHuman: escalateImpl,
   } as unknown as ConversationsService;
@@ -64,9 +62,7 @@ describe('buildEscalateToHumanTool', () => {
     const conversations = makeConversationsMock(escalateToHuman);
     const tool = buildEscalateToHumanTool(conversations) as any;
 
-    await expect(
-      tool.execute({ reason: 'اختبار' }, ctx({})),
-    ).rejects.toThrow();
+    await expect(tool.execute({ reason: 'اختبار' }, ctx({}))).rejects.toThrow();
 
     expect(escalateToHuman).not.toHaveBeenCalled();
   });

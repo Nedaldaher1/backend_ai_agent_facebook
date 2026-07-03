@@ -36,7 +36,7 @@ function mockFetchOnce(init: FakeResponseInit): void {
 
 describe('downloadImage', () => {
   beforeEach(() => {
-    global.fetch = jest.fn() as unknown as typeof fetch;
+    global.fetch = jest.fn();
   });
 
   it('returns buffer + media type from a 2xx image response', async () => {
@@ -63,7 +63,9 @@ describe('downloadImage', () => {
   });
 
   it('throws ImageFetchError when fetch itself rejects', async () => {
-    (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('network down'));
+    (global.fetch as jest.Mock).mockRejectedValueOnce(
+      new Error('network down'),
+    );
     await expect(downloadImage('https://cdn/down')).rejects.toBeInstanceOf(
       ImageFetchError,
     );
@@ -106,9 +108,9 @@ describe('downloadImage', () => {
   });
 
   it('throws ImageFetchError for a loopback URL (SSRF guard)', async () => {
-    await expect(downloadImage('http://127.0.0.1:3000/x')).rejects.toBeInstanceOf(
-      ImageFetchError,
-    );
+    await expect(
+      downloadImage('http://127.0.0.1:3000/x'),
+    ).rejects.toBeInstanceOf(ImageFetchError);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 

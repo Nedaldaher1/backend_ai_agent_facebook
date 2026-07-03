@@ -17,6 +17,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpCode,
@@ -50,18 +51,21 @@ import { AI_STATES } from './entities/conversation.entity';
 import { ConversationControlService } from './conversation-control.service';
 import {
   assignConversationSchema,
+  CONVERSATION_SORT_KEYS,
   ConversationListResponseDto,
   ConversationThreadDto,
   handoffConversationSchema,
   humanMessageSchema,
   listConversationsQuerySchema,
   pauseConversationSchema,
+  pinConversationSchema,
   resumeConversationSchema,
   type AssignConversationInput,
   type HandoffConversationInput,
   type HumanMessageInput,
   type ListConversationsQuery,
   type PauseConversationInput,
+  type PinConversationInput,
   type ResumeConversationInput,
 } from './dto/conversation-control.dto';
 
@@ -87,12 +91,20 @@ export class ConversationsAdminController {
       '(read-tracking deferred to a later workstream).',
   })
   @ApiQuery({ name: 'state', required: false, enum: AI_STATES })
-  @ApiQuery({ name: 'assignedTo', required: false, example: 'agent@example.com' })
+  @ApiQuery({
+    name: 'assignedTo',
+    required: false,
+    example: 'agent@example.com',
+  })
   @ApiQuery({ name: 'q', required: false, example: '123456' })
   @ApiQuery({ name: 'limit', required: false, example: 50 })
   @ApiQuery({ name: 'offset', required: false, example: 0 })
+  @ApiQuery({ name: 'sort', required: false, enum: CONVERSATION_SORT_KEYS })
   @ApiQuery({ name: 'orderBy', required: false, enum: ['asc', 'desc'] })
-  @ApiOkResponse({ description: 'Paginated conversation list.', type: ConversationListResponseDto })
+  @ApiOkResponse({
+    description: 'Paginated conversation list.',
+    type: ConversationListResponseDto,
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   list(
@@ -114,7 +126,10 @@ export class ConversationsAdminController {
       'humanSummary, pausedUntil, createdAt) together with all messages in ' +
       'ascending order.',
   })
-  @ApiOkResponse({ description: 'Conversation with messages.', type: ConversationThreadDto })
+  @ApiOkResponse({
+    description: 'Conversation with messages.',
+    type: ConversationThreadDto,
+  })
   @ApiNotFoundResponse({ description: 'No conversation exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -133,12 +148,16 @@ export class ConversationsAdminController {
           ? conversation.pausedUntil.toISOString()
           : null,
         createdAt: conversation.createdAt.toISOString(),
+        pinned: conversation.pinnedAt != null,
       },
       messages: messages.map((m) => ({
         id: m.id,
         role: m.role,
         content: m.content ?? null,
         imageUrl: m.imageUrl ?? null,
+        // Extraction metadata (vision/eval/audio) — the thread UI reads
+        // attributes.audio to render the voice-note badge + player.
+        attributes: (m.attributes as Record<string, unknown> | null) ?? null,
         createdAt: m.createdAt.toISOString(),
       })),
     };
@@ -185,7 +204,9 @@ export class ConversationsAdminController {
       'pausedUntil timestamp (durationMinutes ≤ 1440). The AI gate in ' +
       'AgentService enforces the paused state on all subsequent inbound turns.',
   })
-  @ApiBody({ schema: { example: { reason: 'Customer upset', durationMinutes: 60 } } })
+  @ApiBody({
+    schema: { example: { reason: 'Customer upset', durationMinutes: 60 } },
+  })
   @ApiOkResponse({ description: 'Conversation paused.' })
   @ApiBadRequestResponse({ description: 'Validation failure.' })
   @ApiNotFoundResponse({ description: 'No conversation exists with that id.' })
@@ -193,7 +214,8 @@ export class ConversationsAdminController {
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   pause(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(pauseConversationSchema)) body: PauseConversationInput,
+    @Body(new ZodValidationPipe(pauseConversationSchema))
+    body: PauseConversationInput,
     @CurrentUser() user: { email: string },
   ) {
     return this.control.pause(id, user.email, body);
@@ -211,14 +233,19 @@ export class ConversationsAdminController {
       'Sets ai_state=bot and clears pausedUntil. An optional human summary is ' +
       'stored in humanSummary and injected into the agent on the next turn (WS7).',
   })
-  @ApiBody({ schema: { example: { summary: 'Customer agreed to size 2 for the white abaya.' } } })
+  @ApiBody({
+    schema: {
+      example: { summary: 'Customer agreed to size 2 for the white abaya.' },
+    },
+  })
   @ApiOkResponse({ description: 'Conversation resumed.' })
   @ApiNotFoundResponse({ description: 'No conversation exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   resume(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(resumeConversationSchema)) body: ResumeConversationInput,
+    @Body(new ZodValidationPipe(resumeConversationSchema))
+    body: ResumeConversationInput,
     @CurrentUser() user: { email: string },
   ) {
     return this.control.resume(id, user.email, body);
@@ -243,10 +270,62 @@ export class ConversationsAdminController {
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   assign(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(assignConversationSchema)) body: AssignConversationInput,
+    @Body(new ZodValidationPipe(assignConversationSchema))
+    body: AssignConversationInput,
     @CurrentUser() user: { email: string },
   ) {
     return this.control.assign(id, user.email, body);
+  }
+
+  // ---------------------------------------------------------------------------
+  // PATCH /admin/conversations/:id/pin
+  // ---------------------------------------------------------------------------
+
+  @Patch(':id/pin')
+  @ApiOperation({
+    summary: 'Pin or unpin a conversation in the admin inbox',
+    description:
+      'Sets (or clears) the inbox pin. Pinned conversations always sort first ' +
+      'in GET /admin/conversations regardless of the sort key. A pure UI ' +
+      'preference — ai_state is untouched and no audit event is recorded.',
+  })
+  @ApiBody({ schema: { example: { pinned: true } } })
+  @ApiOkResponse({ description: 'Pin updated. Returns { id, pinned }.' })
+  @ApiBadRequestResponse({ description: 'Validation failure.' })
+  @ApiNotFoundResponse({ description: 'No conversation exists with that id.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  @ApiForbiddenResponse({ description: 'Insufficient role.' })
+  pin(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(pinConversationSchema))
+    body: PinConversationInput,
+  ) {
+    return this.control.setPinned(id, body.pinned);
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /admin/conversations/:id
+  // ---------------------------------------------------------------------------
+
+  @Delete(':id')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Delete a conversation permanently (admin only)',
+    description:
+      'Hard-deletes the conversation row and clears the agent memory for the ' +
+      'customer. Messages and audit events cascade; orders keep their rows ' +
+      'with conversation_id nulled. Intended for cleaning up test threads. ' +
+      'Irreversible.',
+  })
+  @ApiOkResponse({ description: 'Conversation deleted. Returns { id }.' })
+  @ApiNotFoundResponse({ description: 'No conversation exists with that id.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  @ApiForbiddenResponse({ description: 'Insufficient role (admin required).' })
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: { email: string },
+  ) {
+    return this.control.deleteConversation(id, user.email);
   }
 
   // ---------------------------------------------------------------------------
@@ -268,7 +347,8 @@ export class ConversationsAdminController {
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   handoff(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(handoffConversationSchema)) body: HandoffConversationInput,
+    @Body(new ZodValidationPipe(handoffConversationSchema))
+    body: HandoffConversationInput,
     @CurrentUser() user: { email: string },
   ) {
     return this.control.handoff(id, user.email, body);
@@ -283,15 +363,20 @@ export class ConversationsAdminController {
   @ApiOperation({
     summary: 'Send a human-agent message to the customer',
     description:
-      'Inserts a role=human message and delivers it to the customer via Messenger. ' +
+      'Inserts a role=human message and delivers it to the customer via Messenger — ' +
+      'as a plain RESPONSE within 24h of the last customer message, or with the ' +
+      'HUMAN_AGENT tag outside that window (requires the human_agent permission). ' +
       'The conversation must NOT be in ai_state=bot — pause or hand off first. ' +
       'Pass an Idempotency-Key header to make the call safe to retry; duplicate ' +
-      'requests with the same key return the original message with delivered=false.',
+      'requests with the same key return the original message with delivered=false. ' +
+      'A failed Messenger send is reported via delivered=false + deliveryError; ' +
+      'the message row is persisted either way.',
   })
-  @ApiCreatedResponse({ description: 'Message sent (or duplicate acknowledged).' })
+  @ApiCreatedResponse({
+    description: 'Message sent (or duplicate acknowledged).',
+  })
   @ApiBadRequestResponse({
-    description:
-      'Validation failure or conversation is still in ai_state=bot.',
+    description: 'Validation failure or conversation is still in ai_state=bot.',
   })
   @ApiNotFoundResponse({ description: 'No conversation exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })

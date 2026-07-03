@@ -42,7 +42,7 @@ const BASE_ENV = {
 
 describe('MessengerClient', () => {
   beforeEach(() => {
-    global.fetch = jest.fn() as unknown as typeof fetch;
+    global.fetch = jest.fn();
   });
 
   afterEach(() => {
@@ -164,11 +164,15 @@ describe('MessengerClient', () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: false,
       status: 400,
-      json: async () => ({ error: { message: 'Invalid parameter', code: 100 } }),
+      json: async () => ({
+        error: { message: 'Invalid parameter', code: 100 },
+      }),
     });
     const client = makeClient(BASE_ENV);
 
-    await expect(client.sendText('PSID-1', 'test')).rejects.toThrow(MessengerSendError);
+    await expect(client.sendText('PSID-1', 'test')).rejects.toThrow(
+      MessengerSendError,
+    );
   });
 
   it('MessengerSendError carries the HTTP status and graph error body', async () => {
@@ -228,7 +232,11 @@ describe('MessengerClient', () => {
     const client = makeClient(BASE_ENV);
 
     await client.sendTemplate('PSID-1', [
-      { title: 'عباية زرقاء', subtitle: '45.000 د.أ', image_url: 'https://cdn/p1.jpg' },
+      {
+        title: 'عباية زرقاء',
+        subtitle: '45.000 د.أ',
+        image_url: 'https://cdn/p1.jpg',
+      },
     ]);
 
     const [, init] = (global.fetch as jest.Mock).mock.calls[0];
@@ -237,7 +245,9 @@ describe('MessengerClient', () => {
     expect(body.tag).toBeUndefined();
     expect(body.message.attachment.type).toBe('template');
     expect(body.message.attachment.payload.template_type).toBe('generic');
-    expect(body.message.attachment.payload.elements[0].title).toBe('عباية زرقاء');
+    expect(body.message.attachment.payload.elements[0].title).toBe(
+      'عباية زرقاء',
+    );
   });
 
   // -------------------------------------------------------------------------

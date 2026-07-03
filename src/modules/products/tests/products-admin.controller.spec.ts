@@ -62,7 +62,11 @@ describe('ProductsAdminController', () => {
   // --- POST /admin/products ---
 
   it('create delegates to ProductsService.create with the parsed dto', async () => {
-    const dto = { name: 'عباءة', priceJod: '45.000', stockStatus: 'in_stock' as const };
+    const dto = {
+      name: 'عباءة',
+      priceJod: '45.000',
+      stockStatus: 'in_stock' as const,
+    };
     const product = makeProduct(dto);
     create.mockResolvedValue(product);
 
@@ -76,7 +80,11 @@ describe('ProductsAdminController', () => {
     create.mockRejectedValue(new NotFoundException('not found'));
 
     await expect(
-      controller.create({ name: 'X', priceJod: '10.000', stockStatus: 'in_stock' }),
+      controller.create({
+        name: 'X',
+        priceJod: '10.000',
+        stockStatus: 'in_stock',
+      }),
     ).rejects.toThrow(NotFoundException);
   });
 
@@ -119,7 +127,9 @@ describe('ProductsAdminController', () => {
     const product = makeProduct({ isPublished: true });
     setPublished.mockResolvedValue(product);
 
-    const result = await controller.setPublished('prod-1', { is_published: true });
+    const result = await controller.setPublished('prod-1', {
+      is_published: true,
+    });
 
     expect(setPublished).toHaveBeenCalledWith('prod-1', true);
     expect(result.isPublished).toBe(true);
@@ -129,7 +139,9 @@ describe('ProductsAdminController', () => {
     const product = makeProduct({ isPublished: false });
     setPublished.mockResolvedValue(product);
 
-    const result = await controller.setPublished('prod-1', { is_published: false });
+    const result = await controller.setPublished('prod-1', {
+      is_published: false,
+    });
 
     expect(setPublished).toHaveBeenCalledWith('prod-1', false);
     expect(result.isPublished).toBe(false);
@@ -155,12 +167,21 @@ describe('ProductsAdminController', () => {
   });
 
   it('list with published=true passes isPublished: true filter', async () => {
-    const page = { items: [makeProduct({ isPublished: true })], total: 1, limit: 50, offset: 0 };
+    const page = {
+      items: [makeProduct({ isPublished: true })],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    };
     list.mockResolvedValue(page);
 
     // The ZodValidationPipe transforms the string query param to boolean before
     // the handler is invoked; in the unit test we supply the already-coerced value.
-    await controller.list({ published: true, limit: undefined, offset: undefined });
+    await controller.list({
+      published: true,
+      limit: undefined,
+      offset: undefined,
+    });
 
     expect(list).toHaveBeenCalledWith(
       { isPublished: true },
@@ -171,7 +192,11 @@ describe('ProductsAdminController', () => {
   it('list with published=false passes isPublished: false filter', async () => {
     list.mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
 
-    await controller.list({ published: false, limit: undefined, offset: undefined });
+    await controller.list({
+      published: false,
+      limit: undefined,
+      offset: undefined,
+    });
 
     expect(list).toHaveBeenCalledWith(
       { isPublished: false },

@@ -107,7 +107,10 @@ export class KnowledgeService {
 
     // Merge product-specific first, dedupe by id, cap at LIMIT.
     const seen = new Set(specific.map((e) => e.id));
-    return [...specific, ...global.filter((e) => !seen.has(e.id))].slice(0, LIMIT);
+    return [...specific, ...global.filter((e) => !seen.has(e.id))].slice(
+      0,
+      LIMIT,
+    );
   }
 
   // --- Admin read path (drafts visible) ---

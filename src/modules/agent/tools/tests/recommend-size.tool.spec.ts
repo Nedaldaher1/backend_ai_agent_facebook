@@ -35,7 +35,11 @@ describe('buildRecommendSizeTool', () => {
     const result = await tool.execute({ weight_kg: 75, height_cm: 165 });
 
     expect(recommendSize).toHaveBeenCalledWith(75, 165);
-    expect(result).toEqual({ size: '1', note: undefined, needs_human: undefined });
+    expect(result).toEqual({
+      size: '1',
+      note: undefined,
+      needs_human: undefined,
+    });
   });
 
   it('passes height_cm through when provided', async () => {
@@ -59,7 +63,8 @@ describe('buildRecommendSizeTool', () => {
   });
 
   it('maps needsHuman→needs_human and returns size:null when weight is out of range', async () => {
-    const note = 'وزنك خارج النطاق المعتاد لمقاساتنا، رح يساعدك فريقنا بالمقاس الأنسب.';
+    const note =
+      'وزنك خارج النطاق المعتاد لمقاساتنا، رح يساعدك فريقنا بالمقاس الأنسب.';
     const recommendSize = jest
       .fn()
       .mockResolvedValue({ size: null, needsHuman: true, note });

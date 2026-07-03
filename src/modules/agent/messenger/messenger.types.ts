@@ -112,6 +112,8 @@ export interface InboundMessage {
   text: string;
   /** URL of the first image attachment, when present. */
   imageUrl?: string;
+  /** URL of the first audio attachment (voice note), when present. */
+  audioUrl?: string;
   /** Messenger mid — used as idempotency key. */
   mid?: string;
   /** Event timestamp from Meta (epoch ms). */

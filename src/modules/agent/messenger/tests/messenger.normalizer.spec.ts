@@ -23,7 +23,9 @@ import type { RawMessagingEvent } from '../messenger.types';
 // Helper: build a minimal messaging event
 // ---------------------------------------------------------------------------
 
-function makeEvent(overrides: Partial<RawMessagingEvent> = {}): RawMessagingEvent {
+function makeEvent(
+  overrides: Partial<RawMessagingEvent> = {},
+): RawMessagingEvent {
   return {
     sender: { id: 'PSID-123' },
     recipient: { id: 'PAGE-456' },
@@ -115,6 +117,55 @@ describe('normalizeEvent — image attachment', () => {
     });
     const result = normalizeEvent(event);
     expect(result?.imageUrl).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audio attachment (voice notes)
+// ---------------------------------------------------------------------------
+
+describe('normalizeEvent — audio attachment', () => {
+  it('returns a valid InboundMessage (not null) for a voice-only event', () => {
+    const event = makeEvent({
+      message: {
+        mid: 'mid-voice',
+        attachments: [
+          { type: 'audio', payload: { url: 'https://cdn.fb.com/voice.mp4' } },
+        ],
+      },
+    });
+    const result = normalizeEvent(event);
+    expect(result).not.toBeNull();
+    expect(result?.audioUrl).toBe('https://cdn.fb.com/voice.mp4');
+    expect(result?.text).toBe('');
+    expect(result?.mid).toBe('mid-voice');
+  });
+
+  it('carries audio and image together from a mixed-attachment event', () => {
+    const event = makeEvent({
+      message: {
+        mid: 'mid-mixed',
+        attachments: [
+          { type: 'audio', payload: { url: 'https://cdn.fb.com/voice.mp4' } },
+          { type: 'image', payload: { url: 'https://cdn.fb.com/photo.jpg' } },
+        ],
+      },
+    });
+    const result = normalizeEvent(event);
+    expect(result?.audioUrl).toBe('https://cdn.fb.com/voice.mp4');
+    expect(result?.imageUrl).toBe('https://cdn.fb.com/photo.jpg');
+  });
+
+  it('still returns null for a video-only event (unhandled by design)', () => {
+    const event = makeEvent({
+      message: {
+        mid: 'mid-video',
+        attachments: [
+          { type: 'video', payload: { url: 'https://cdn.fb.com/clip.mp4' } },
+        ],
+      },
+    });
+    expect(normalizeEvent(event)).toBeNull();
   });
 });
 
@@ -225,7 +276,10 @@ describe('normalizeEvent — referral extraction (constraint #5)', () => {
       adId: 'ad_111',
       source: 'ADS',
       type: 'OPEN_THREAD',
-      adsContext: { ad_title: 'Spring Collection', photo_url: 'https://cdn.fb.com/ad.jpg' },
+      adsContext: {
+        ad_title: 'Spring Collection',
+        photo_url: 'https://cdn.fb.com/ad.jpg',
+      },
     });
   });
 

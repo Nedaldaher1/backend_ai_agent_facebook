@@ -54,6 +54,11 @@ export const conversations = pgTable(
     aiStateUpdatedAt: timestamp('ai_state_updated_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // Admin inbox pin (WS — inbox controls). NULL = not pinned; the timestamp
+    // (when it was pinned) doubles as the pin sort key: the admin list orders
+    // by `pinned_at DESC NULLS LAST`, so pinned threads float first, most
+    // recently pinned on top.
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }),
   },
   (t) => [
     index('conversations_psid_idx').on(t.psid),

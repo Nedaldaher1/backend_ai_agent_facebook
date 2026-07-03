@@ -64,7 +64,10 @@ describe('AdProductLinksService', () => {
 
     expect(productsGetById).toHaveBeenCalledWith(PRODUCT_UUID);
     expect(repoInsert).toHaveBeenCalledWith(
-      expect.objectContaining({ adRef: 'summer_2025', productId: PRODUCT_UUID }),
+      expect.objectContaining({
+        adRef: 'summer_2025',
+        productId: PRODUCT_UUID,
+      }),
     );
     expect(result).toBe(link);
   });

@@ -12,7 +12,10 @@
  *  - MAX_GALLERY_CARDS is defined in messenger.formatter (8, the canonical value).
  */
 
-import { formatMessengerReply, MAX_GALLERY_CARDS } from '../messenger.formatter';
+import {
+  formatMessengerReply,
+  MAX_GALLERY_CARDS,
+} from '../messenger.formatter';
 
 describe('formatMessengerReply', () => {
   // -------------------------------------------------------------------------
@@ -37,7 +40,14 @@ describe('formatMessengerReply', () => {
   it('returns text + template when products are present', () => {
     const payloads = formatMessengerReply({
       reply: 'خيارات',
-      products: [{ id: 'p1', name: 'عباية زرقاء', price: '45.000', imageUrl: 'https://cdn/p1.jpg' }],
+      products: [
+        {
+          id: 'p1',
+          name: 'عباية زرقاء',
+          price: '45.000',
+          imageUrl: 'https://cdn/p1.jpg',
+        },
+      ],
     });
     expect(payloads).toHaveLength(2);
     expect(payloads[0]).toMatchObject({ kind: 'text', text: 'خيارات' });

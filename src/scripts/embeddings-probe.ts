@@ -3,10 +3,11 @@
  *
  *   pnpm embeddings:probe <dir> [--text "label a,label b,..."]
  *
- * Empirically answers: does Marqo-FashionSigLIP produce DISCRIMINATIVE
- * embeddings for abayas? i.e. do visually-similar abayas score high cosine and
- * different ones score lower? It reuses the REAL EmbeddingService.embedImage
- * (production code path, incl. L2-normalization), so cosine = dot product.
+ * Empirically answers: does the configured embedding model (gemini-embedding-2
+ * via OpenRouter) produce DISCRIMINATIVE embeddings for abayas? i.e. do
+ * visually-similar abayas score high cosine and different ones score lower? It
+ * reuses the REAL EmbeddingService.embedImage (production code path, incl.
+ * L2-normalization), so cosine = dot product.
  *
  * Standalone: NO database, NO R2, NO server. It boots a minimal Nest context
  * (ConfigModule + EmbeddingsModule) only to construct EmbeddingService exactly
@@ -20,8 +21,9 @@
  *     neighbours + spread only (no separation metric).
  *
  * What matters is the SEPARATION (intra-group vs inter-group), NOT the absolute
- * cosine values — SigLIP cosines can run high in absolute terms, so a raw "0.9"
- * between two images means nothing without the same-vs-different comparison.
+ * cosine values — embedding cosines can run high in absolute terms, so a raw
+ * "0.9" between two images means nothing without the same-vs-different
+ * comparison.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { extname, join } from 'node:path';

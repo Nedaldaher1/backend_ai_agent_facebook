@@ -17,7 +17,9 @@
  *    code. We fold BOTH (title first) so the agent sees a natural phrase and
  *    the machine payload for routing, separated by a newline.
  *
- * Image extraction: first attachment of type 'image' wins; others are ignored.
+ * Attachment extraction: the first attachment of type 'image' and the first of
+ * type 'audio' (voice note) win; video/file/location/fallback attachments are
+ * dropped by design (no handler downstream).
  *
  * Pure + side-effect-free — no I/O, no logging. Fully unit-testable.
  */
@@ -31,7 +33,9 @@ import type {
 } from './messenger.types';
 
 /** Normalize a raw referral object into NormalizedReferral. */
-function normalizeReferral(raw: RawReferral | undefined): NormalizedReferral | undefined {
+function normalizeReferral(
+  raw: RawReferral | undefined,
+): NormalizedReferral | undefined {
   if (!raw) return undefined;
   const adsContext: RawAdsContextData | undefined = raw.ads_context_data
     ? { ...raw.ads_context_data }
@@ -53,11 +57,11 @@ function normalizeReferral(raw: RawReferral | undefined): NormalizedReferral | u
  * (messaging_referrals) that normalizeEvent returns null for, but where
  * first-touch attribution should still be persisted (WS3).
  */
-export function extractReferral(event: RawMessagingEvent): NormalizedReferral | undefined {
+export function extractReferral(
+  event: RawMessagingEvent,
+): NormalizedReferral | undefined {
   const raw =
-    event.message?.referral ??
-    event.referral ??
-    event.postback?.referral;
+    event.message?.referral ?? event.referral ?? event.postback?.referral;
   return normalizeReferral(raw);
 }
 
@@ -101,24 +105,37 @@ function extractImageUrl(event: RawMessagingEvent): string | undefined {
 }
 
 /**
+ * Extract the URL of the first audio attachment (voice note), if any.
+ */
+function extractAudioUrl(event: RawMessagingEvent): string | undefined {
+  const attachments = event.message?.attachments ?? [];
+  const audio = attachments.find((a) => a.type === 'audio');
+  return audio?.payload?.url;
+}
+
+/**
  * Normalize a single raw Messenger messaging event into an InboundMessage.
  * Returns null when the event has no usable content (no text, no image, no
  * postback) so the controller can skip it without noise.
  */
-export function normalizeEvent(event: RawMessagingEvent): InboundMessage | null {
+export function normalizeEvent(
+  event: RawMessagingEvent,
+): InboundMessage | null {
   const text = extractText(event);
   const imageUrl = extractImageUrl(event);
+  const audioUrl = extractAudioUrl(event);
   const referral = extractReferral(event);
   const mid = event.message?.mid;
 
   // Skip events that carry no usable signal at all (e.g. delivery/read receipts
   // that sneak through despite not being subscribed).
-  if (!text && !imageUrl) return null;
+  if (!text && !imageUrl && !audioUrl) return null;
 
   return {
     psid: event.sender.id,
     text,
     ...(imageUrl ? { imageUrl } : {}),
+    ...(audioUrl ? { audioUrl } : {}),
     ...(mid ? { mid } : {}),
     timestamp: event.timestamp,
     ...(referral && Object.keys(referral).length > 0 ? { referral } : {}),

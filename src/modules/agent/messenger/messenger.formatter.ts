@@ -43,9 +43,7 @@ export interface MessengerFormatterInput {
 }
 
 /** A single Send API message payload (either text or generic template). */
-export type MessengerPayload =
-  | TextPayload
-  | TemplatePayload;
+export type MessengerPayload = TextPayload | TemplatePayload;
 
 interface TextPayload {
   kind: 'text';

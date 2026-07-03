@@ -4,7 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { z } from 'zod';
-import { addJod, milliToJod, multiplyJodByQty, sumJod } from '@/common/money.util';
+import {
+  addJod,
+  milliToJod,
+  multiplyJodByQty,
+  sumJod,
+} from '@/common/money.util';
 import type { ListOptions } from '@/common/types/query';
 import {
   createOrderItemSchema,
@@ -14,7 +19,11 @@ import {
   type CreateOrderItemInput,
 } from '@/common/validation';
 import { ProductsService } from '@/modules/products/products.service';
-import { OrdersRepository, type NewOrderItemInput } from './orders.repository';
+import {
+  OrdersRepository,
+  type NewOrderItemInput,
+  type OrderDashboardStats,
+} from './orders.repository';
 import { ORDER_STATUSES, type Order } from './entities/order.entity';
 import type { OrderItem } from './entities/order-item.entity';
 import { DELIVERY_FEE_MILLI } from './delivery-fees';
@@ -136,6 +145,11 @@ export class OrdersService {
 
   list(opts?: ListOptions): Promise<Order[]> {
     return this.repo.list(opts);
+  }
+
+  /** SQL-side dashboard aggregates (status counts + per-day series). */
+  dashboardStats(days: number, timeZone: string): Promise<OrderDashboardStats> {
+    return this.repo.dashboardStats(days, timeZone);
   }
 
   async getById(id: string): Promise<Order> {

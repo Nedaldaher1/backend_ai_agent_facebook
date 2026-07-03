@@ -19,7 +19,9 @@ jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
 jest.mock('@mastra/core/agent', () => ({ Agent: jest.fn() }));
 jest.mock('@mastra/core/di', () => ({ RequestContext: jest.fn() }));
-jest.mock('../../../agent/mastra/mastra.factory', () => ({ buildMastra: jest.fn() }));
+jest.mock('../../../agent/mastra/mastra.factory', () => ({
+  buildMastra: jest.fn(),
+}));
 
 import { MessengerWebhookController } from '../messenger-webhook.controller';
 import type { AgentService } from '../../agent.service';
@@ -50,7 +52,9 @@ interface ControllerOpts {
 
 function makeController(opts: ControllerOpts = {}) {
   const agent: AgentService = {
-    handleMessage: jest.fn().mockResolvedValue({ reply: 'أهلاً', ran: true, aiState: 'bot' }),
+    handleMessage: jest
+      .fn()
+      .mockResolvedValue({ reply: 'أهلاً', ran: true, aiState: 'bot' }),
   } as unknown as AgentService;
 
   const products: ProductsService = {
@@ -59,19 +63,29 @@ function makeController(opts: ControllerOpts = {}) {
 
   const conversationId = opts.findOrCreateId ?? 'conv-ws3';
   const conversations: ConversationsService = {
-    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: conversationId, aiState: 'bot' }),
-    recordFirstTouchAttribution: jest.fn().mockResolvedValue(
-      opts.attributionResolves === false
-        ? Promise.reject(new Error('DB error'))
-        : { id: conversationId, attributedAt: new Date() },
-    ),
+    findOrCreateByPsid: jest
+      .fn()
+      .mockResolvedValue({ id: conversationId, aiState: 'bot' }),
+    recordFirstTouchAttribution: jest
+      .fn()
+      .mockResolvedValue(
+        opts.attributionResolves === false
+          ? Promise.reject(new Error('DB error'))
+          : { id: conversationId, attributedAt: new Date() },
+      ),
   } as unknown as ConversationsService;
 
   let lastFlush: Promise<void> | undefined;
   const debounce: DebounceService = {
-    enqueue: jest.fn((_k: string, item: unknown, flush: (items: unknown[]) => Promise<void>) => {
-      lastFlush = Promise.resolve(flush([item]));
-    }),
+    enqueue: jest.fn(
+      (
+        _k: string,
+        item: unknown,
+        flush: (items: unknown[]) => Promise<void>,
+      ) => {
+        lastFlush = Promise.resolve(flush([item]));
+      },
+    ),
   } as unknown as DebounceService;
 
   const messengerClient: MessengerClient = {
@@ -89,7 +103,14 @@ function makeController(opts: ControllerOpts = {}) {
     makeConfig(),
   );
 
-  return { controller, agent, conversations, debounce, messengerClient, flush: () => lastFlush };
+  return {
+    controller,
+    agent,
+    conversations,
+    debounce,
+    messengerClient,
+    flush: () => lastFlush,
+  };
 }
 
 function makeReq(body: unknown): FastifyRequest {
@@ -213,7 +234,11 @@ describe('MessengerWebhookController — WS3: toIncoming referral mapping', () =
               message: {
                 mid: 'mid-1',
                 text: 'مرحبا',
-                referral: { ref: 'ad-slug-1', source: 'ADS', type: 'OPEN_THREAD' },
+                referral: {
+                  ref: 'ad-slug-1',
+                  source: 'ADS',
+                  type: 'OPEN_THREAD',
+                },
               },
             },
           ],
@@ -336,7 +361,8 @@ describe('MessengerWebhookController — WS3: toIncoming referral mapping', () =
 
     controller.handleWebhook(req);
 
-    const enqueueArg = (debounce.enqueue as jest.Mock).mock.calls[0][1] as Record<string, unknown>;
+    const enqueueArg = (debounce.enqueue as jest.Mock).mock
+      .calls[0][1] as Record<string, unknown>;
     expect(enqueueArg.referral).toBeUndefined();
   });
 });
@@ -359,7 +385,11 @@ describe('MessengerWebhookController — WS3: extractReferral precedence on cont
               sender: { id: 'PSID-5' },
               recipient: { id: 'PAGE-1' },
               timestamp: Date.now(),
-              referral: { ref: 'returning-ref', source: 'SHORTLINK', type: 'OPEN_THREAD' },
+              referral: {
+                ref: 'returning-ref',
+                source: 'SHORTLINK',
+                type: 'OPEN_THREAD',
+              },
             },
           ],
         },

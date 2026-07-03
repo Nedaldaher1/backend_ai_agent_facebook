@@ -46,7 +46,9 @@ export function buildVisionAttributeSchema(enums: VisionEnums) {
   return z.object({
     isAbaya: z
       .boolean()
-      .describe('هل الصورة فعلاً لعباية أو منتج من نوع المتجر؟ false لأي صورة أخرى'),
+      .describe(
+        'هل الصورة فعلاً لعباية أو منتج من نوع المتجر؟ false لأي صورة أخرى',
+      ),
     confidence: z
       .number()
       .min(0)

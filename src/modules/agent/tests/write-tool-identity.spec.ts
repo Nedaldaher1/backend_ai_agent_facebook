@@ -30,12 +30,19 @@ describe('write-tool identity (AIA-27 DoD #3b)', () => {
 
     // createTool passthrough means the returned object IS the config object.
     const tool = buildEscalateToHumanTool(conversations) as unknown as {
-      execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
+      execute: (
+        input: Record<string, unknown>,
+        ctx: unknown,
+      ) => Promise<unknown>;
     };
 
     await tool.execute(
       { reason: 'x' },
-      { requestContext: { get: (k: string) => ({ conversationId: 'conv-9' }[k]) } },
+      {
+        requestContext: {
+          get: (k: string) => ({ conversationId: 'conv-9' })[k],
+        },
+      },
     );
 
     expect(escalateToHuman).toHaveBeenCalledWith('conv-9', 'x');

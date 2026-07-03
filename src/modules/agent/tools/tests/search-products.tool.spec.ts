@@ -151,10 +151,9 @@ describe('buildSearchProductsTool — search_products', () => {
   // (b) ad_ref unmapped → fallthrough to search branch
   // -------------------------------------------------------------------------
   describe('ad_ref fallthrough', () => {
-    it('falls through to search when findByAdRef returns [] and uses normalizeColor', async () => {
-      const { mock, findByAdRef, normalizeColor, search } = makeProductsMock({
+    it('falls through to search when findByAdRef returns [] and passes the raw color', async () => {
+      const { mock, findByAdRef, search } = makeProductsMock({
         findByAdRef: jest.fn().mockResolvedValue([]),
-        normalizeColor: jest.fn().mockResolvedValue('red'),
         search: jest.fn().mockResolvedValue([]),
       });
       const tool = buildSearchProductsTool(mock) as any;
@@ -162,9 +161,10 @@ describe('buildSearchProductsTool — search_products', () => {
       await tool.execute({ ad_ref: 'ad-none', color: 'نبيتي' }, ctx({}));
 
       expect(findByAdRef).toHaveBeenCalledWith('ad-none');
-      expect(normalizeColor).toHaveBeenCalledWith('نبيتي');
+      // The RAW term goes to the service, which fans it out to every family
+      // it can mean — pre-normalizing to one family hid variant colors.
       expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({ colorFamily: 'red' }),
+        expect.objectContaining({ color: 'نبيتي' }),
       );
     });
   });
@@ -173,9 +173,8 @@ describe('buildSearchProductsTool — search_products', () => {
   // (c) Color normalization (no ad_ref)
   // -------------------------------------------------------------------------
   describe('color normalization', () => {
-    it('normalizes dialect color term and passes colorFamily + mapped fields to search', async () => {
+    it('passes the raw color term and mapped fields to search (service fans out families)', async () => {
       const { mock, normalizeColor, search } = makeProductsMock({
-        normalizeColor: jest.fn().mockResolvedValue('red'),
         search: jest.fn().mockResolvedValue([]),
       });
       const tool = buildSearchProductsTool(mock) as any;
@@ -190,9 +189,12 @@ describe('buildSearchProductsTool — search_products', () => {
         ctx({}),
       );
 
-      expect(normalizeColor).toHaveBeenCalledWith('نبيتي');
+      // Normalization moved server-side (multi-family fan-out); the tool no
+      // longer collapses the term to a single family.
+      expect(normalizeColor).not.toHaveBeenCalled();
       expect(search).toHaveBeenCalledWith({
-        colorFamily: 'red',
+        color: 'نبيتي',
+        colorFamily: undefined,
         size: 'L',
         // tool `category` input → service `occasion` key
         occasion: 'سهرة',

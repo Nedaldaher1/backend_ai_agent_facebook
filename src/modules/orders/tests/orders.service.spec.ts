@@ -466,7 +466,12 @@ describe('OrdersService', () => {
         service.captureCodOrder({
           ...baseInput(),
           items: [
-            { productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'XXL', qty: 1 },
+            {
+              productId: PRODUCT_ID,
+              storageKey: 'img-1.jpg',
+              size: 'XXL',
+              qty: 1,
+            },
           ],
         }),
       ).rejects.toThrow(/المقاس/);
@@ -494,7 +499,12 @@ describe('OrdersService', () => {
         service.captureCodOrder({
           ...baseInput(),
           items: [
-            { productId: PRODUCT_ID, storageKey: 'ghost.jpg', size: 'M', qty: 1 },
+            {
+              productId: PRODUCT_ID,
+              storageKey: 'ghost.jpg',
+              size: 'M',
+              qty: 1,
+            },
           ],
         }),
       ).rejects.toThrow(/الصورة/);
@@ -700,9 +710,9 @@ describe('OrdersService', () => {
       expect(
         itemRows.map((r: Record<string, unknown>) => r.storageKey),
       ).toEqual(['red.jpg', 'blue.jpg']);
-      expect(
-        itemRows.map((r: Record<string, unknown>) => r.colorName),
-      ).toEqual(['أحمر', 'ازرق غامق']);
+      expect(itemRows.map((r: Record<string, unknown>) => r.colorName)).toEqual(
+        ['أحمر', 'ازرق غامق'],
+      );
       expect(result.confirmation.lines.map((l) => l.colorName)).toEqual([
         'أحمر',
         'ازرق غامق',
@@ -827,7 +837,9 @@ describe('OrdersService', () => {
         source: 'messenger',
         phone: '0791234567',
         address: 'عمّان، الصويفية',
-        items: [{ productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 1 }],
+        items: [
+          { productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 1 },
+        ],
       });
 
       expect(result.ok).toBe(true);
@@ -844,7 +856,9 @@ describe('OrdersService', () => {
         source: 'messenger',
         phone: '06-invalid',
         address: 'عمّان',
-        items: [{ productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 1 }],
+        items: [
+          { productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 1 },
+        ],
       });
 
       expect(result.ok).toBe(false);
@@ -865,7 +879,14 @@ describe('OrdersService', () => {
           source: 'messenger',
           phone: '0791234567',
           address: 'عمّان',
-          items: [{ productId: PRODUCT_ID, storageKey: 'img-1.jpg', size: 'M', qty: 1 }],
+          items: [
+            {
+              productId: PRODUCT_ID,
+              storageKey: 'img-1.jpg',
+              size: 'M',
+              qty: 1,
+            },
+          ],
         }),
       ).rejects.toBe(boom);
     });
@@ -880,9 +901,7 @@ describe('OrdersService', () => {
     const ORDER_ID_1 = '11111111-1111-1111-1111-111111111111';
     const ORDER_ID_2 = '22222222-2222-2222-2222-222222222222';
 
-    function makeOrderRow(
-      overrides: Record<string, unknown> = {},
-    ) {
+    function makeOrderRow(overrides: Record<string, unknown> = {}) {
       return {
         id: ORDER_ID_1,
         conversationId: CONV_ID,
@@ -933,7 +952,12 @@ describe('OrdersService', () => {
       listItemsByOrder
         .mockResolvedValueOnce([
           makeItemRow({ qty: 1, colorName: 'أسود' }),
-          makeItemRow({ id: 'item-2', productName: 'عباية سهرة', colorName: null, qty: 2 }),
+          makeItemRow({
+            id: 'item-2',
+            productName: 'عباية سهرة',
+            colorName: null,
+            qty: 2,
+          }),
         ])
         // items for order 2: single item
         .mockResolvedValueOnce([
@@ -969,21 +993,32 @@ describe('OrdersService', () => {
       findById.mockResolvedValue(order);
       listItemsByOrder.mockResolvedValue([makeItemRow()]);
 
-      const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+      const result = await service.getStatusForConversation(
+        CONV_ID,
+        ORDER_ID_1,
+      );
 
       expect(findById).toHaveBeenCalledWith(ORDER_ID_1);
       expect(listByConversation).not.toHaveBeenCalled();
       expect(result.orders).toHaveLength(1);
       expect(result.orders[0].orderId).toBe(ORDER_ID_1);
-      expect(result.orders[0].statusLabelAr).toBe('طلبك مسجّل عنا وقيد المراجعة');
+      expect(result.orders[0].statusLabelAr).toBe(
+        'طلبك مسجّل عنا وقيد المراجعة',
+      );
     });
 
     it('(c) orderId belonging to a DIFFERENT conversation → returns empty (security)', async () => {
       // The order exists but belongs to another conversation.
-      const order = makeOrderRow({ id: ORDER_ID_1, conversationId: OTHER_CONV_ID });
+      const order = makeOrderRow({
+        id: ORDER_ID_1,
+        conversationId: OTHER_CONV_ID,
+      });
       findById.mockResolvedValue(order);
 
-      const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+      const result = await service.getStatusForConversation(
+        CONV_ID,
+        ORDER_ID_1,
+      );
 
       expect(result.orders).toEqual([]);
       expect(listItemsByOrder).not.toHaveBeenCalled();
@@ -992,7 +1027,10 @@ describe('OrdersService', () => {
     it('(c) unknown orderId (findById returns undefined) → returns empty', async () => {
       findById.mockResolvedValue(undefined);
 
-      const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+      const result = await service.getStatusForConversation(
+        CONV_ID,
+        ORDER_ID_1,
+      );
 
       expect(result.orders).toEqual([]);
       expect(listItemsByOrder).not.toHaveBeenCalled();
@@ -1021,7 +1059,10 @@ describe('OrdersService', () => {
         findById.mockResolvedValue(order);
         listItemsByOrder.mockResolvedValue([]);
 
-        const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+        const result = await service.getStatusForConversation(
+          CONV_ID,
+          ORDER_ID_1,
+        );
 
         expect(result.orders[0].statusLabelAr).toBe(expected);
       }
@@ -1032,12 +1073,22 @@ describe('OrdersService', () => {
       findById.mockResolvedValue(order);
       listItemsByOrder.mockResolvedValue([
         makeItemRow({ productName: 'عباية A', colorName: 'أسود', qty: 1 }),
-        makeItemRow({ id: 'item-2', productName: 'عباية B', colorName: null, qty: 3 }),
+        makeItemRow({
+          id: 'item-2',
+          productName: 'عباية B',
+          colorName: null,
+          qty: 3,
+        }),
       ]);
 
-      const result = await service.getStatusForConversation(CONV_ID, ORDER_ID_1);
+      const result = await service.getStatusForConversation(
+        CONV_ID,
+        ORDER_ID_1,
+      );
 
-      expect(result.orders[0].itemsSummary).toBe('عباية A (أسود) ×1، عباية B ×3');
+      expect(result.orders[0].itemsSummary).toBe(
+        'عباية A (أسود) ×1، عباية B ×3',
+      );
     });
   });
 });

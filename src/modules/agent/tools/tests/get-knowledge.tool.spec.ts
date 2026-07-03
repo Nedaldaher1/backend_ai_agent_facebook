@@ -52,7 +52,11 @@ describe('buildGetKnowledgeTool', () => {
   });
 
   it('maps entries to output shape including product_id when set', async () => {
-    const entry = makeEntry({ id: 'k1', productId: 'p1', category: 'product_info' });
+    const entry = makeEntry({
+      id: 'k1',
+      productId: 'p1',
+      category: 'product_info',
+    });
     const getRelevant = jest.fn().mockResolvedValue([entry]);
     const knowledge = makeKnowledgeMock(getRelevant);
     const tool = buildGetKnowledgeTool(knowledge) as any;
@@ -70,7 +74,11 @@ describe('buildGetKnowledgeTool', () => {
   });
 
   it('omits product_id from output when the entry productId is null', async () => {
-    const entry = makeEntry({ id: 'k2', productId: null, category: 'shipping' });
+    const entry = makeEntry({
+      id: 'k2',
+      productId: null,
+      category: 'shipping',
+    });
     const getRelevant = jest.fn().mockResolvedValue([entry]);
     const knowledge = makeKnowledgeMock(getRelevant);
     const tool = buildGetKnowledgeTool(knowledge) as any;
@@ -93,7 +101,11 @@ describe('buildGetKnowledgeTool', () => {
 
   it('maps multiple entries preserving order', async () => {
     const e1 = makeEntry({ id: 'k1', productId: null, category: 'faq' });
-    const e2 = makeEntry({ id: 'k2', productId: 'p5', category: 'product_info' });
+    const e2 = makeEntry({
+      id: 'k2',
+      productId: 'p5',
+      category: 'product_info',
+    });
     const getRelevant = jest.fn().mockResolvedValue([e1, e2]);
     const knowledge = makeKnowledgeMock(getRelevant);
     const tool = buildGetKnowledgeTool(knowledge) as any;

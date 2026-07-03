@@ -38,6 +38,7 @@ import {
   pauseConversationSchema,
   humanMessageSchema,
   listConversationsQuerySchema,
+  pinConversationSchema,
   resumeConversationSchema,
   assignConversationSchema,
   handoffConversationSchema,
@@ -95,6 +96,8 @@ function makeMockService() {
     assign: jest.fn(),
     handoff: jest.fn(),
     sendHumanMessage: jest.fn(),
+    setPinned: jest.fn(),
+    deleteConversation: jest.fn(),
   } as unknown as ConversationControlService;
 }
 
@@ -118,24 +121,23 @@ describe('ConversationsAdminController', () => {
 
   describe('metadata', () => {
     it('declares @Roles("admin", "editor") on the controller class', () => {
-      const roles = Reflect.getMetadata(ROLES_KEY, ConversationsAdminController);
+      const roles = Reflect.getMetadata(
+        ROLES_KEY,
+        ConversationsAdminController,
+      );
       expect(roles).toEqual(['admin', 'editor']);
     });
 
     it('applies JwtAuthGuard via @UseGuards on the controller', () => {
       // NestJS stores guards in __guards__ metadata on the target.
-      const guards: unknown[] = Reflect.getMetadata(
-        '__guards__',
-        ConversationsAdminController,
-      ) ?? [];
+      const guards: unknown[] =
+        Reflect.getMetadata('__guards__', ConversationsAdminController) ?? [];
       expect(guards).toContain(JwtAuthGuard);
     });
 
     it('applies RolesGuard via @UseGuards on the controller', () => {
-      const guards: unknown[] = Reflect.getMetadata(
-        '__guards__',
-        ConversationsAdminController,
-      ) ?? [];
+      const guards: unknown[] =
+        Reflect.getMetadata('__guards__', ConversationsAdminController) ?? [];
       expect(guards).toContain(RolesGuard);
     });
   });
@@ -151,7 +153,11 @@ describe('ConversationsAdminController', () => {
 
       const result = await ctrl.list({ limit: 10, offset: 0, state: 'bot' });
 
-      expect(control.listConversations).toHaveBeenCalledWith({ limit: 10, offset: 0, state: 'bot' });
+      expect(control.listConversations).toHaveBeenCalledWith({
+        limit: 10,
+        offset: 0,
+        state: 'bot',
+      });
       expect(result).toBe(expected);
     });
   });
@@ -164,14 +170,31 @@ describe('ConversationsAdminController', () => {
     it('returns serialized conversation + messages from control.getThread', async () => {
       const convo = makeConvo({ pausedUntil: null });
       const msgs = [makeMsg({ id: 'msg-a' })];
-      (control.getThread as jest.Mock).mockResolvedValue({ conversation: convo, messages: msgs });
+      (control.getThread as jest.Mock).mockResolvedValue({
+        conversation: convo,
+        messages: msgs,
+      });
 
       const result = await ctrl.getOne(CONV_ID);
 
       expect(control.getThread).toHaveBeenCalledWith(CONV_ID);
       expect(result.conversation.id).toBe(CONV_ID);
+      expect(result.conversation.pinned).toBe(false);
       expect(result.messages).toHaveLength(1);
       expect(result.messages[0].id).toBe('msg-a');
+    });
+
+    it('maps pinnedAt to pinned=true in the thread header', async () => {
+      (control.getThread as jest.Mock).mockResolvedValue({
+        conversation: makeConvo({
+          pinnedAt: new Date('2025-01-02T00:00:00Z'),
+        }),
+        messages: [],
+      });
+
+      const result = await ctrl.getOne(CONV_ID);
+
+      expect(result.conversation.pinned).toBe(true);
     });
 
     it('serializes dates to ISO strings', async () => {
@@ -179,7 +202,10 @@ describe('ConversationsAdminController', () => {
         pausedUntil: new Date('2025-06-01T10:00:00Z'),
         createdAt: new Date('2025-01-01T00:00:00Z'),
       });
-      (control.getThread as jest.Mock).mockResolvedValue({ conversation: convo, messages: [] });
+      (control.getThread as jest.Mock).mockResolvedValue({
+        conversation: convo,
+        messages: [],
+      });
 
       const result = await ctrl.getOne(CONV_ID);
 
@@ -249,7 +275,9 @@ describe('ConversationsAdminController', () => {
 
   describe('resume', () => {
     it('delegates to control.resume with id, user.email, and body', async () => {
-      (control.resume as jest.Mock).mockResolvedValue(makeConvo({ aiState: 'bot' }));
+      (control.resume as jest.Mock).mockResolvedValue(
+        makeConvo({ aiState: 'bot' }),
+      );
       const body = { summary: 'Customer agreed' };
 
       await ctrl.resume(CONV_ID, body, USER);
@@ -264,7 +292,9 @@ describe('ConversationsAdminController', () => {
 
   describe('assign', () => {
     it('delegates to control.assign with id, user.email, and body', async () => {
-      (control.assign as jest.Mock).mockResolvedValue(makeConvo({ aiState: 'human' }));
+      (control.assign as jest.Mock).mockResolvedValue(
+        makeConvo({ aiState: 'human' }),
+      );
       const body = { assignedTo: 'agent@masa.com' };
 
       await ctrl.assign(CONV_ID, body, USER);
@@ -283,12 +313,71 @@ describe('ConversationsAdminController', () => {
   });
 
   // -------------------------------------------------------------------------
+  // PATCH /admin/conversations/:id/pin
+  // -------------------------------------------------------------------------
+
+  describe('pin', () => {
+    it('delegates to control.setPinned with id and pinned flag', async () => {
+      (control.setPinned as jest.Mock).mockResolvedValue({
+        id: CONV_ID,
+        pinned: true,
+      });
+
+      const result = await ctrl.pin(CONV_ID, { pinned: true });
+
+      expect(control.setPinned).toHaveBeenCalledWith(CONV_ID, true);
+      expect(result).toEqual({ id: CONV_ID, pinned: true });
+    });
+
+    it('delegates pinned=false for unpin', async () => {
+      (control.setPinned as jest.Mock).mockResolvedValue({
+        id: CONV_ID,
+        pinned: false,
+      });
+
+      await ctrl.pin(CONV_ID, { pinned: false });
+
+      expect(control.setPinned).toHaveBeenCalledWith(CONV_ID, false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // DELETE /admin/conversations/:id
+  // -------------------------------------------------------------------------
+
+  describe('remove', () => {
+    it('delegates to control.deleteConversation with id and user.email', async () => {
+      (control.deleteConversation as jest.Mock).mockResolvedValue({
+        id: CONV_ID,
+      });
+
+      const result = await ctrl.remove(CONV_ID, USER);
+
+      expect(control.deleteConversation).toHaveBeenCalledWith(
+        CONV_ID,
+        USER.email,
+      );
+      expect(result).toEqual({ id: CONV_ID });
+    });
+
+    it('restricts DELETE to the admin role (method-level @Roles overrides class)', () => {
+      const roles = Reflect.getMetadata(
+        ROLES_KEY,
+        ConversationsAdminController.prototype.remove,
+      );
+      expect(roles).toEqual(['admin']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // POST /admin/conversations/:id/handoff
   // -------------------------------------------------------------------------
 
   describe('handoff', () => {
     it('delegates to control.handoff with id, user.email, and body', async () => {
-      (control.handoff as jest.Mock).mockResolvedValue(makeConvo({ aiState: 'human' }));
+      (control.handoff as jest.Mock).mockResolvedValue(
+        makeConvo({ aiState: 'human' }),
+      );
       const body = { reason: 'Custom size' };
 
       await ctrl.handoff(CONV_ID, body, USER);
@@ -304,7 +393,10 @@ describe('ConversationsAdminController', () => {
   describe('sendMessage', () => {
     it('delegates to control.sendHumanMessage with id, user.email, body, and idempotency-key header', async () => {
       const msg = makeMsg({ id: 'sent-msg' });
-      (control.sendHumanMessage as jest.Mock).mockResolvedValue({ message: msg, delivered: true });
+      (control.sendHumanMessage as jest.Mock).mockResolvedValue({
+        message: msg,
+        delivered: true,
+      });
       const body = { text: 'طلبك جاهز للتوصيل' };
 
       await ctrl.sendMessage(CONV_ID, body, USER, 'idem-key-abc');
@@ -325,7 +417,8 @@ describe('ConversationsAdminController', () => {
 
       await ctrl.sendMessage(CONV_ID, { text: 'hello' }, USER, undefined);
 
-      const [, , , keyArg] = (control.sendHumanMessage as jest.Mock).mock.calls[0];
+      const [, , , keyArg] = (control.sendHumanMessage as jest.Mock).mock
+        .calls[0];
       expect(keyArg).toBeUndefined();
     });
   });
@@ -338,7 +431,10 @@ describe('ConversationsAdminController', () => {
     describe('pauseConversationSchema', () => {
       it('accepts a valid body', () => {
         expect(
-          pauseConversationSchema.safeParse({ reason: 'test', durationMinutes: 60 }).success,
+          pauseConversationSchema.safeParse({
+            reason: 'test',
+            durationMinutes: 60,
+          }).success,
         ).toBe(true);
       });
 
@@ -347,22 +443,33 @@ describe('ConversationsAdminController', () => {
       });
 
       it('rejects durationMinutes <= 0', () => {
-        expect(pauseConversationSchema.safeParse({ durationMinutes: 0 }).success).toBe(false);
-        expect(pauseConversationSchema.safeParse({ durationMinutes: -1 }).success).toBe(false);
+        expect(
+          pauseConversationSchema.safeParse({ durationMinutes: 0 }).success,
+        ).toBe(false);
+        expect(
+          pauseConversationSchema.safeParse({ durationMinutes: -1 }).success,
+        ).toBe(false);
       });
 
       it('rejects durationMinutes > 1440', () => {
-        expect(pauseConversationSchema.safeParse({ durationMinutes: 1441 }).success).toBe(false);
+        expect(
+          pauseConversationSchema.safeParse({ durationMinutes: 1441 }).success,
+        ).toBe(false);
       });
 
       it('rejects unknown keys (strict)', () => {
-        expect(pauseConversationSchema.safeParse({ reason: 'ok', extra: true }).success).toBe(false);
+        expect(
+          pauseConversationSchema.safeParse({ reason: 'ok', extra: true })
+            .success,
+        ).toBe(false);
       });
     });
 
     describe('humanMessageSchema', () => {
       it('accepts a valid body with non-empty text', () => {
-        expect(humanMessageSchema.safeParse({ text: 'مرحبا' }).success).toBe(true);
+        expect(humanMessageSchema.safeParse({ text: 'مرحبا' }).success).toBe(
+          true,
+        );
       });
 
       it('rejects an empty text string', () => {
@@ -374,7 +481,9 @@ describe('ConversationsAdminController', () => {
       });
 
       it('rejects unknown keys (strict)', () => {
-        expect(humanMessageSchema.safeParse({ text: 'ok', extra: true }).success).toBe(false);
+        expect(
+          humanMessageSchema.safeParse({ text: 'ok', extra: true }).success,
+        ).toBe(false);
       });
     });
 
@@ -384,17 +493,66 @@ describe('ConversationsAdminController', () => {
       });
 
       it('rejects state values not in the AI_STATES enum', () => {
-        expect(listConversationsQuerySchema.safeParse({ state: 'nope' }).success).toBe(false);
+        expect(
+          listConversationsQuerySchema.safeParse({ state: 'nope' }).success,
+        ).toBe(false);
       });
 
       it('accepts state values in the AI_STATES enum', () => {
-        expect(listConversationsQuerySchema.safeParse({ state: 'bot' }).success).toBe(true);
-        expect(listConversationsQuerySchema.safeParse({ state: 'human' }).success).toBe(true);
-        expect(listConversationsQuerySchema.safeParse({ state: 'paused' }).success).toBe(true);
+        expect(
+          listConversationsQuerySchema.safeParse({ state: 'bot' }).success,
+        ).toBe(true);
+        expect(
+          listConversationsQuerySchema.safeParse({ state: 'human' }).success,
+        ).toBe(true);
+        expect(
+          listConversationsQuerySchema.safeParse({ state: 'paused' }).success,
+        ).toBe(true);
       });
 
       it('rejects unknown keys (strict)', () => {
-        expect(listConversationsQuerySchema.safeParse({ foo: 'bar' }).success).toBe(false);
+        expect(
+          listConversationsQuerySchema.safeParse({ foo: 'bar' }).success,
+        ).toBe(false);
+      });
+
+      it('accepts sort=activity|created and rejects other values', () => {
+        expect(
+          listConversationsQuerySchema.safeParse({ sort: 'activity' }).success,
+        ).toBe(true);
+        expect(
+          listConversationsQuerySchema.safeParse({ sort: 'created' }).success,
+        ).toBe(true);
+        expect(
+          listConversationsQuerySchema.safeParse({ sort: 'psid' }).success,
+        ).toBe(false);
+      });
+    });
+
+    describe('pinConversationSchema', () => {
+      it('accepts pinned=true and pinned=false', () => {
+        expect(pinConversationSchema.safeParse({ pinned: true }).success).toBe(
+          true,
+        );
+        expect(pinConversationSchema.safeParse({ pinned: false }).success).toBe(
+          true,
+        );
+      });
+
+      it('rejects a missing pinned field', () => {
+        expect(pinConversationSchema.safeParse({}).success).toBe(false);
+      });
+
+      it('rejects non-boolean pinned values', () => {
+        expect(
+          pinConversationSchema.safeParse({ pinned: 'yes' }).success,
+        ).toBe(false);
+      });
+
+      it('rejects unknown keys (strict)', () => {
+        expect(
+          pinConversationSchema.safeParse({ pinned: true, extra: 1 }).success,
+        ).toBe(false);
       });
     });
 
@@ -404,21 +562,30 @@ describe('ConversationsAdminController', () => {
       });
 
       it('accepts a non-empty summary', () => {
-        expect(resumeConversationSchema.safeParse({ summary: 'done' }).success).toBe(true);
+        expect(
+          resumeConversationSchema.safeParse({ summary: 'done' }).success,
+        ).toBe(true);
       });
 
       it('rejects empty summary string', () => {
-        expect(resumeConversationSchema.safeParse({ summary: '' }).success).toBe(false);
+        expect(
+          resumeConversationSchema.safeParse({ summary: '' }).success,
+        ).toBe(false);
       });
     });
 
     describe('assignConversationSchema', () => {
       it('accepts a string assignedTo', () => {
-        expect(assignConversationSchema.safeParse({ assignedTo: 'agent@masa.com' }).success).toBe(true);
+        expect(
+          assignConversationSchema.safeParse({ assignedTo: 'agent@masa.com' })
+            .success,
+        ).toBe(true);
       });
 
       it('accepts assignedTo=null', () => {
-        expect(assignConversationSchema.safeParse({ assignedTo: null }).success).toBe(true);
+        expect(
+          assignConversationSchema.safeParse({ assignedTo: null }).success,
+        ).toBe(true);
       });
 
       it('rejects a missing assignedTo field', () => {
@@ -432,11 +599,15 @@ describe('ConversationsAdminController', () => {
       });
 
       it('accepts a reason', () => {
-        expect(handoffConversationSchema.safeParse({ reason: 'size' }).success).toBe(true);
+        expect(
+          handoffConversationSchema.safeParse({ reason: 'size' }).success,
+        ).toBe(true);
       });
 
       it('rejects empty reason string', () => {
-        expect(handoffConversationSchema.safeParse({ reason: '' }).success).toBe(false);
+        expect(
+          handoffConversationSchema.safeParse({ reason: '' }).success,
+        ).toBe(false);
       });
     });
   });

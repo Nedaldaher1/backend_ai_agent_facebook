@@ -41,15 +41,24 @@ export class DebounceService implements OnModuleDestroy {
    * fires after `windowMs` of quiet, but never later than `maxMs` after the first
    * item in the batch. `flush` receives every buffered item in arrival order.
    */
-  enqueue<T>(key: string, item: T, flush: (items: T[]) => void | Promise<void>): void {
+  enqueue<T>(
+    key: string,
+    item: T,
+    flush: (items: T[]) => void | Promise<void>,
+  ): void {
     let batch = this.buffers.get(key);
     if (!batch) {
-      batch = { items: [], firstAt: Date.now(), timer: undefined, flush: flush as FlushFn };
+      batch = {
+        items: [],
+        firstAt: Date.now(),
+        timer: undefined,
+        flush: flush,
+      };
       this.buffers.set(key, batch);
     }
     batch.items.push(item);
     // Keep the latest handler (closures capture the latest request context).
-    batch.flush = flush as FlushFn;
+    batch.flush = flush;
 
     if (batch.timer) clearTimeout(batch.timer);
     const elapsed = Date.now() - batch.firstAt;

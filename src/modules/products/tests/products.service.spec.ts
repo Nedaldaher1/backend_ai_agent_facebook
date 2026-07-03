@@ -59,6 +59,7 @@ const makeProduct = (overrides: Record<string, unknown> = {}) => ({
 
 describe('ProductsService', () => {
   const resolveColorFamily = jest.fn();
+  const resolveColorFamilies = jest.fn();
   const list = jest.fn();
   const count = jest.fn();
   const findById = jest.fn();
@@ -69,6 +70,7 @@ describe('ProductsService', () => {
   const appendImageUrls = jest.fn();
   const findPublishedBySku = jest.fn();
   const searchFuzzy = jest.fn();
+  const findPublishedByIds = jest.fn();
 
   const repo = {
     list,
@@ -81,10 +83,12 @@ describe('ProductsService', () => {
     appendImageUrls,
     findPublishedBySku,
     searchFuzzy,
+    findPublishedByIds,
   } as unknown as ProductsRepository;
 
   const colors = {
     resolveColorFamily,
+    resolveColorFamilies,
   } as unknown as ColorSynonymsService;
 
   const saveImage = jest.fn();
@@ -125,10 +129,12 @@ describe('ProductsService', () => {
 
   const embedImage = jest.fn();
   const embedImageWithText = jest.fn();
+  const embedText = jest.fn();
   const embeddingService = {
     modelId: 'test-model',
     embedImage,
     embedImageWithText,
+    embedText,
   } as unknown as EmbeddingService;
 
   const upsertEmbedding = jest.fn();
@@ -177,6 +183,7 @@ describe('ProductsService', () => {
     // sync fired by create/publish/image changes never rejects during a test.
     embedImage.mockResolvedValue(new Array(1536).fill(0));
     embedImageWithText.mockResolvedValue(new Array(1536).fill(0));
+    embedText.mockResolvedValue(new Array(1536).fill(0));
     getDescMapByProduct.mockResolvedValue({});
     upsertDescription.mockResolvedValue(undefined);
     deleteDescForImage.mockResolvedValue(undefined);
@@ -185,26 +192,52 @@ describe('ProductsService', () => {
     findEmbeddedKeys.mockResolvedValue([]);
     countEmbeddedByProduct.mockResolvedValue([]);
     searchSimilarByEmbedding.mockResolvedValue([]);
+    // Color-term fan-out: default "unknown term" (no filter applied).
+    resolveColorFamilies.mockResolvedValue([]);
+    findPublishedByIds.mockResolvedValue([]);
     configGet.mockReturnValue(undefined);
   });
 
   // --- existing cases (kept) ---
 
-  it('normalizes a dialect color term to its family before searching', async () => {
-    resolveColorFamily.mockResolvedValue('red');
+  it('fans a dialect color term out to all its families before searching', async () => {
+    resolveColorFamilies.mockResolvedValue(['red']);
 
     await service.search({ color: 'نبيتي' });
 
-    expect(resolveColorFamily).toHaveBeenCalledWith('نبيتي');
+    expect(resolveColorFamilies).toHaveBeenCalledWith('نبيتي');
     expect(list).toHaveBeenCalledWith(
-      expect.objectContaining({ colorFamily: 'red', isPublished: true }),
+      expect.objectContaining({ colorFamilies: ['red'], isPublished: true }),
+    );
+  });
+
+  it('a generic color term searches every family it can mean', async () => {
+    resolveColorFamilies.mockResolvedValue(['green', 'light_green']);
+
+    await service.search({ color: 'اخضر' });
+
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({
+        colorFamilies: ['green', 'light_green'],
+        isPublished: true,
+      }),
+    );
+  });
+
+  it('an unknown color term applies NO color filter (broad beats zero results)', async () => {
+    resolveColorFamilies.mockResolvedValue([]);
+
+    await service.search({ color: 'لون خيالي' });
+
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ colorFamilies: undefined, isPublished: true }),
     );
   });
 
   it('passes an explicit colorFamily through without a synonym lookup', async () => {
     await service.search({ colorFamily: 'blue' });
 
-    expect(resolveColorFamily).not.toHaveBeenCalled();
+    expect(resolveColorFamilies).not.toHaveBeenCalled();
     expect(list).toHaveBeenCalledWith(
       expect.objectContaining({ colorFamily: 'blue', isPublished: true }),
     );
@@ -241,8 +274,97 @@ describe('ProductsService', () => {
       'عباية صيفي',
       expect.objectContaining({ isPublished: true }),
     );
-    expect(result).toBe(hits);
+    expect(result).toEqual(hits);
     expect(list).not.toHaveBeenCalled();
+  });
+
+  // --- searchFuzzy: semantic (text→embedding) leg ---
+
+  it('searchFuzzy merges semantic hits AFTER trigram hits, deduplicated', async () => {
+    const trgm = [makeProduct({ id: 'p1' })];
+    searchFuzzy.mockResolvedValue(trgm);
+    embedText.mockResolvedValue([0.1, 0.2]);
+    searchSimilarByEmbedding.mockResolvedValue([
+      { productId: 'p1', similarity: 0.9 }, // duplicate of the trigram hit
+      { productId: 'p2', similarity: 0.55 },
+    ]);
+    const p2 = makeProduct({ id: 'p2', name: 'عباية صيفي #001' });
+    findPublishedByIds.mockResolvedValue([p2]);
+
+    const result = await service.searchFuzzy('عباية تطريز ع الصدر', {});
+
+    expect(embedText).toHaveBeenCalledWith('عباية تطريز ع الصدر');
+    expect(result.map((p) => p.id)).toEqual(['p1', 'p2']);
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it('searchFuzzy finds a product via semantics alone when trigrams miss', async () => {
+    searchFuzzy.mockResolvedValue([]);
+    searchSimilarByEmbedding.mockResolvedValue([
+      { productId: 'p2', similarity: 0.5 },
+    ]);
+    const p2 = makeProduct({ id: 'p2' });
+    findPublishedByIds.mockResolvedValue([p2]);
+
+    const result = await service.searchFuzzy('عباية بتطريز عند الاكمام', {});
+
+    expect(result).toEqual([p2]);
+    expect(list).not.toHaveBeenCalled(); // no structured fallback needed
+  });
+
+  it('searchFuzzy drops semantic hits below SEMANTIC_TEXT_MIN_SCORE', async () => {
+    searchFuzzy.mockResolvedValue([]);
+    list.mockResolvedValue([]);
+    searchSimilarByEmbedding.mockResolvedValue([
+      { productId: 'p2', similarity: 0.3 }, // below the 0.42 default
+    ]);
+
+    await service.searchFuzzy('عباية ملونة', {});
+
+    expect(findPublishedByIds).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalled(); // fell through to the structured fallback
+  });
+
+  it('searchFuzzy passes resolved color families into the semantic ANN search', async () => {
+    resolveColorFamilies.mockResolvedValue(['light_beige']);
+    searchFuzzy.mockResolvedValue([]);
+    list.mockResolvedValue([]);
+
+    await service.searchFuzzy('عباية بيج', { color: 'بيج' });
+
+    expect(searchSimilarByEmbedding).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Number),
+      { colorFamilies: ['light_beige'] },
+    );
+  });
+
+  it('searchFuzzy degrades to trigram-only when the embedding call fails', async () => {
+    const trgm = [makeProduct({ id: 'p1' })];
+    searchFuzzy.mockResolvedValue(trgm);
+    embedText.mockRejectedValue(new Error('embeddings down'));
+
+    const result = await service.searchFuzzy('عباية صيفي', {});
+
+    expect(result).toEqual(trgm);
+  });
+
+  it('semantic hits still honor structured filters the ANN cannot apply', async () => {
+    searchFuzzy.mockResolvedValue([]);
+    list.mockResolvedValue([]);
+    searchSimilarByEmbedding.mockResolvedValue([
+      { productId: 'p2', similarity: 0.6 },
+    ]);
+    // Product costs 15 JOD; the customer capped at 10 — must be filtered out.
+    findPublishedByIds.mockResolvedValue([
+      makeProduct({ id: 'p2', priceJod: '15.000' }),
+    ]);
+
+    const result = await service.searchFuzzy('عباية تطريز', {
+      priceMax: '10',
+    });
+
+    expect(result).toEqual([]); // structured fallback (list) returned []
   });
 
   it('searchFuzzy falls back to the structured published catalog when fuzzy finds nothing', async () => {
@@ -571,9 +693,27 @@ describe('ProductsService', () => {
       imageUrls: ['a.jpg', 'b.png', 'c.jpg'],
     });
   const mediaColorRows = () => [
-    { storageKey: 'a.jpg', id: 'c-red', name: 'أحمر', family: 'red', hex: null },
-    { storageKey: 'b.png', id: 'c-blk', name: 'أسود', family: 'black', hex: null },
-    { storageKey: 'c.jpg', id: 'c-blu', name: 'أزرق', family: 'blue', hex: null },
+    {
+      storageKey: 'a.jpg',
+      id: 'c-red',
+      name: 'أحمر',
+      family: 'red',
+      hex: null,
+    },
+    {
+      storageKey: 'b.png',
+      id: 'c-blk',
+      name: 'أسود',
+      family: 'black',
+      hex: null,
+    },
+    {
+      storageKey: 'c.jpg',
+      id: 'c-blu',
+      name: 'أزرق',
+      family: 'blue',
+      hex: null,
+    },
   ];
 
   it('getProductMediaByColors: a single requested colour sends only that colour', async () => {
@@ -683,8 +823,20 @@ describe('ProductsService', () => {
     );
     // x.jpg is tagged BOTH red and gold.
     findColorsByProduct.mockResolvedValue([
-      { storageKey: 'x.jpg', id: 'c-red', name: 'أحمر', family: 'red', hex: null },
-      { storageKey: 'x.jpg', id: 'c-gld', name: 'ذهبي', family: 'gold', hex: null },
+      {
+        storageKey: 'x.jpg',
+        id: 'c-red',
+        name: 'أحمر',
+        family: 'red',
+        hex: null,
+      },
+      {
+        storageKey: 'x.jpg',
+        id: 'c-gld',
+        name: 'ذهبي',
+        family: 'gold',
+        hex: null,
+      },
     ]);
     resolveColorFamily.mockResolvedValue(null); // no synonym → direct name match
 
@@ -772,7 +924,13 @@ describe('ProductsService', () => {
     );
     findColorsByProduct.mockResolvedValue([
       { storageKey: 'a.jpg', id: 'c1', name: 'أحمر', family: 'red', hex: null },
-      { storageKey: 'b.jpg', id: 'c2', name: 'أخضر', family: 'green', hex: null },
+      {
+        storageKey: 'b.jpg',
+        id: 'c2',
+        name: 'أخضر',
+        family: 'green',
+        hex: null,
+      },
       { storageKey: 'c.jpg', id: 'c1', name: 'أحمر', family: 'red', hex: null }, // dup name
     ]);
 
@@ -824,7 +982,9 @@ describe('ProductsService', () => {
   it('listImages throws NotFoundException for a missing product', async () => {
     findById.mockResolvedValue(undefined);
 
-    await expect(service.listImages('ghost')).rejects.toThrow(NotFoundException);
+    await expect(service.listImages('ghost')).rejects.toThrow(
+      NotFoundException,
+    );
   });
 
   // --- removeImage ---
@@ -860,9 +1020,7 @@ describe('ProductsService', () => {
   });
 
   it('removeImage throws NotFoundException when the key is not in imageUrls', async () => {
-    findById.mockResolvedValue(
-      makeProduct({ id: 'p1', imageUrls: ['a.jpg'] }),
-    );
+    findById.mockResolvedValue(makeProduct({ id: 'p1', imageUrls: ['a.jpg'] }));
 
     await expect(service.removeImage('p1', 'missing.jpg')).rejects.toThrow(
       NotFoundException,
@@ -920,9 +1078,7 @@ describe('ProductsService', () => {
   });
 
   it('setPrimaryImage throws NotFoundException when key is absent from imageUrls', async () => {
-    findById.mockResolvedValue(
-      makeProduct({ id: 'p1', imageUrls: ['a.jpg'] }),
-    );
+    findById.mockResolvedValue(makeProduct({ id: 'p1', imageUrls: ['a.jpg'] }));
 
     await expect(service.setPrimaryImage('p1', 'missing.jpg')).rejects.toThrow(
       NotFoundException,
@@ -937,8 +1093,20 @@ describe('ProductsService', () => {
       makeProduct({ id: 'p1', imageUrls: ['a.jpg', 'b.png'] }),
     );
     findColorsByProduct.mockResolvedValue([
-      { storageKey: 'a.jpg', id: 'C-red', name: 'أحمر', family: 'red', hex: '#B0212F' },
-      { storageKey: 'a.jpg', id: 'C-black', name: 'أسود', family: 'black', hex: null },
+      {
+        storageKey: 'a.jpg',
+        id: 'C-red',
+        name: 'أحمر',
+        family: 'red',
+        hex: '#B0212F',
+      },
+      {
+        storageKey: 'a.jpg',
+        id: 'C-black',
+        name: 'أسود',
+        family: 'black',
+        hex: null,
+      },
     ]);
 
     const images = await service.listImages('p1');
@@ -964,7 +1132,11 @@ describe('ProductsService', () => {
 
   it('listImages flags hasEmbedding per image from findEmbeddedKeys (published)', async () => {
     findById.mockResolvedValue(
-      makeProduct({ id: 'p1', isPublished: true, imageUrls: ['a.jpg', 'b.png'] }),
+      makeProduct({
+        id: 'p1',
+        isPublished: true,
+        imageUrls: ['a.jpg', 'b.png'],
+      }),
     );
     findEmbeddedKeys.mockResolvedValue(['a.jpg']);
 
@@ -977,7 +1149,11 @@ describe('ProductsService', () => {
 
   it('listImages skips the embedding query for a draft (all hasEmbedding false)', async () => {
     findById.mockResolvedValue(
-      makeProduct({ id: 'p1', isPublished: false, imageUrls: ['a.jpg', 'b.png'] }),
+      makeProduct({
+        id: 'p1',
+        isPublished: false,
+        imageUrls: ['a.jpg', 'b.png'],
+      }),
     );
 
     const images = await service.listImages('p1');
@@ -1087,48 +1263,54 @@ describe('ProductsService', () => {
     expect(embedImage).not.toHaveBeenCalled();
   });
 
-  it('findSimilarByImage with targetColor resolves color family and forwards it to the repo', async () => {
-    resolveColorFamily.mockResolvedValue('red');
-    embedImage.mockResolvedValue(new Array(768).fill(0.1));
-    searchSimilarByEmbedding.mockResolvedValue([makeEmbeddingRow({ colorFamily: 'red' })]);
+  it('findSimilarByImage with targetColor fans out to color families and forwards them to the repo', async () => {
+    resolveColorFamilies.mockResolvedValue(['red']);
+    embedImage.mockResolvedValue(new Array(1536).fill(0.1));
+    searchSimilarByEmbedding.mockResolvedValue([
+      makeEmbeddingRow({ colorFamily: 'red' }),
+    ]);
 
-    await service.findSimilarByImage('https://x/y.jpg', { targetColor: 'نبيتي' });
+    await service.findSimilarByImage('https://x/y.jpg', {
+      targetColor: 'نبيتي',
+    });
 
-    expect(resolveColorFamily).toHaveBeenCalledWith('نبيتي');
+    expect(resolveColorFamilies).toHaveBeenCalledWith('نبيتي');
     expect(searchSimilarByEmbedding).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Number),
-      { colorFamily: 'red' },
+      { colorFamilies: ['red'] },
     );
   });
 
   it('findSimilarByImage without targetColor calls the repo with no color filter', async () => {
-    embedImage.mockResolvedValue(new Array(768).fill(0.1));
+    embedImage.mockResolvedValue(new Array(1536).fill(0.1));
     searchSimilarByEmbedding.mockResolvedValue([makeEmbeddingRow()]);
 
     await service.findSimilarByImage('https://x/y.jpg');
 
-    expect(resolveColorFamily).not.toHaveBeenCalled();
+    expect(resolveColorFamilies).not.toHaveBeenCalled();
     expect(searchSimilarByEmbedding).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Number),
-      { colorFamily: undefined },
+      { colorFamilies: [] },
     );
   });
 
-  it('findSimilarByImage falls back to unfiltered when resolveColorFamily returns null', async () => {
-    resolveColorFamily.mockResolvedValue(null);
-    embedImage.mockResolvedValue(new Array(768).fill(0.1));
+  it('findSimilarByImage falls back to unfiltered when the color term is unknown', async () => {
+    resolveColorFamilies.mockResolvedValue([]);
+    embedImage.mockResolvedValue(new Array(1536).fill(0.1));
     searchSimilarByEmbedding.mockResolvedValue([makeEmbeddingRow()]);
 
-    await service.findSimilarByImage('https://x/y.jpg', { targetColor: 'مجهول' });
+    await service.findSimilarByImage('https://x/y.jpg', {
+      targetColor: 'مجهول',
+    });
 
-    expect(resolveColorFamily).toHaveBeenCalledWith('مجهول');
-    // null resolved → colorFamily is undefined → no color filter
+    expect(resolveColorFamilies).toHaveBeenCalledWith('مجهول');
+    // no families resolved → empty list → no color filter
     expect(searchSimilarByEmbedding).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Number),
-      { colorFamily: undefined },
+      { colorFamilies: [] },
     );
   });
 
@@ -1204,7 +1386,9 @@ describe('ProductsService', () => {
     findById.mockResolvedValue(
       makeProduct({ id: 'p1', imageUrls: ['a.jpg', 'b.png'] }),
     );
-    updateById.mockResolvedValue(makeProduct({ id: 'p1', imageUrls: ['b.png'] }));
+    updateById.mockResolvedValue(
+      makeProduct({ id: 'p1', imageUrls: ['b.png'] }),
+    );
 
     await service.removeImage('p1', 'a.jpg');
 
@@ -1269,7 +1453,9 @@ describe('ProductsService', () => {
   });
 
   it('resolveForOrder returns found:false for an unpublished product (no throw)', async () => {
-    findById.mockResolvedValue(makeProduct({ id: 'draft-1', isPublished: false }));
+    findById.mockResolvedValue(
+      makeProduct({ id: 'draft-1', isPublished: false }),
+    );
 
     const result = await service.resolveForOrder('draft-1');
 
@@ -1308,13 +1494,21 @@ describe('ProductsService', () => {
   // ---------------------------------------------------------------------------
 
   it('findPublishedBySku returns the product when the SKU matches and is_published=true', async () => {
-    const published = makeProduct({ id: 'p-sku', sku: 'SKU-BLACK', isPublished: true });
+    const published = makeProduct({
+      id: 'p-sku',
+      sku: 'SKU-BLACK',
+      isPublished: true,
+    });
     findPublishedBySku.mockResolvedValue(published);
 
     const result = await service.findPublishedBySku('SKU-BLACK');
 
     expect(findPublishedBySku).toHaveBeenCalledWith('SKU-BLACK');
-    expect(result).toMatchObject({ id: 'p-sku', sku: 'SKU-BLACK', isPublished: true });
+    expect(result).toMatchObject({
+      id: 'p-sku',
+      sku: 'SKU-BLACK',
+      isPublished: true,
+    });
   });
 
   it('findPublishedBySku (publish gate): returns undefined when the product exists but is NOT published', async () => {

@@ -100,23 +100,26 @@ export function buildSearchProductsTool(products: ProductsService) {
         logger.warn('unmapped ad_ref: ' + effectiveAdRef);
       }
 
-      // 2. Resolve the color filter. Prefer the agent-supplied color; otherwise,
-      // on an image-led turn, fall back to the vision-extracted color family
-      // seeded into the request context (already normalized) so the photo's
-      // color still constrains the search even if the agent omits it.
+      // 2. Resolve the color filter. Prefer the agent-supplied color — passed
+      // RAW: the service fans a dialect term out to EVERY canonical family it
+      // can mean ("اخضر" → green + light_green). Normalizing to a single family
+      // here made the agent deny variant colors it actually stocked. On an
+      // image-led turn with no agent color, fall back to the vision-extracted
+      // color family seeded into the request context (already canonical).
+      const color = input.color;
       let colorFamily: string | undefined;
-      if (input.color) {
-        colorFamily = await products.normalizeColor(input.color);
-      } else if (imageLed) {
-        const seeded = ctx?.requestContext?.get('visionAttributes') as
-          | { colorFamily?: string }
-          | undefined;
+      if (!color && imageLed) {
+        const seeded = ctx?.requestContext?.get<
+          string,
+          { colorFamily?: string } | undefined
+        >('visionAttributes');
         colorFamily = seeded?.colorFamily;
       }
 
       // 3. Build structured filter.
       // tool `category` → product `occasion` (no category column exists).
       const structured = {
+        color,
         colorFamily,
         size: input.size,
         occasion: input.category,

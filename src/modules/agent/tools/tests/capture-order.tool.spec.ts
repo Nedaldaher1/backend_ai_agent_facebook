@@ -58,7 +58,9 @@ const CONFIRMATION = {
 const HAPPY_SAFE_RESULT = { ok: true as const, confirmation: CONFIRMATION };
 
 const HAPPY_INPUT = {
-  items: [{ product_id: 'p1', storage_key: 'img-1.jpg', size: 'M', quantity: 2 }],
+  items: [
+    { product_id: 'p1', storage_key: 'img-1.jpg', size: 'M', quantity: 2 },
+  ],
   phone: '0791234567',
   address: 'عمّان، الصويفية، شارع الثقافة',
 };
@@ -81,7 +83,9 @@ describe('buildCaptureOrderTool', () => {
         phone: '0791234567',
         address: 'عمّان، الصويفية، شارع الثقافة',
         unifiedSize: undefined,
-        items: [{ productId: 'p1', storageKey: 'img-1.jpg', size: 'M', qty: 2 }],
+        items: [
+          { productId: 'p1', storageKey: 'img-1.jpg', size: 'M', qty: 2 },
+        ],
       });
     });
 
@@ -147,9 +151,10 @@ describe('buildCaptureOrderTool', () => {
     });
 
     it('returns { ok: false, reason } and NO order fields when service returns ok:false', async () => {
-      const safeCapture = jest
-        .fn()
-        .mockResolvedValue({ ok: false as const, reason: 'رقم الهاتف غير صالح.' });
+      const safeCapture = jest.fn().mockResolvedValue({
+        ok: false as const,
+        reason: 'رقم الهاتف غير صالح.',
+      });
       const tool = buildCaptureOrderTool(makeOrdersMock(safeCapture)) as any;
 
       const result = await tool.execute(HAPPY_INPUT, HAPPY_CTX);
@@ -255,7 +260,12 @@ describe('buildCaptureOrderTool', () => {
 
       const itemKeys = Object.keys(tool.inputSchema.shape.items.element.shape);
       expect(itemKeys).toEqual(
-        expect.arrayContaining(['product_id', 'storage_key', 'size', 'quantity']),
+        expect.arrayContaining([
+          'product_id',
+          'storage_key',
+          'size',
+          'quantity',
+        ]),
       );
       expect(itemKeys).not.toContain('unit_price');
       expect(itemKeys).not.toContain('price');

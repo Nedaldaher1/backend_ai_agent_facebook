@@ -51,26 +51,34 @@ export class MessengerSignatureGuard implements CanActivate {
     if (!this.appSecret) {
       this.warnMissingSecretOnce();
       if (this.isProduction) {
-        throw new UnauthorizedException('Messenger App Secret is not configured');
+        throw new UnauthorizedException(
+          'Messenger App Secret is not configured',
+        );
       }
       return true;
     }
 
-    const req = context.switchToHttp().getRequest<FastifyRequest & { rawBody?: Buffer }>();
+    const req = context
+      .switchToHttp()
+      .getRequest<FastifyRequest & { rawBody?: Buffer }>();
 
     const raw = req.headers[SIGNATURE_HEADER];
     // Only a single string header is valid; absent or duplicated (array) → fail.
     const providedHeader = typeof raw === 'string' ? raw : undefined;
 
     if (!providedHeader || !providedHeader.startsWith(SCHEME)) {
-      throw new UnauthorizedException('Missing or malformed X-Hub-Signature-256 header');
+      throw new UnauthorizedException(
+        'Missing or malformed X-Hub-Signature-256 header',
+      );
     }
 
     const providedHex = providedHeader.slice(SCHEME.length);
 
     const rawBody = req.rawBody;
     if (!rawBody || rawBody.length === 0) {
-      throw new UnauthorizedException('Raw body unavailable for signature verification');
+      throw new UnauthorizedException(
+        'Raw body unavailable for signature verification',
+      );
     }
 
     if (!this.signatureMatches(rawBody, providedHex, this.appSecret)) {
@@ -85,7 +93,11 @@ export class MessengerSignatureGuard implements CanActivate {
    * using timingSafeEqual. Length-guards first (different-length strings cannot
    * be equal, and timingSafeEqual requires equal-length buffers).
    */
-  private signatureMatches(rawBody: Buffer, providedHex: string, secret: string): boolean {
+  private signatureMatches(
+    rawBody: Buffer,
+    providedHex: string,
+    secret: string,
+  ): boolean {
     const expectedHex = createHmac('sha256', secret)
       .update(rawBody)
       .digest('hex');

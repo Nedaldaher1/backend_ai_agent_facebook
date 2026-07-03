@@ -50,4 +50,6 @@ export const deleteColorResultSchema = z.object({
   affectedProducts: z.number().int(),
 });
 export type DeleteColorResult = z.infer<typeof deleteColorResultSchema>;
-export class DeleteColorResultDto extends createZodDto(deleteColorResultSchema) {}
+export class DeleteColorResultDto extends createZodDto(
+  deleteColorResultSchema,
+) {}

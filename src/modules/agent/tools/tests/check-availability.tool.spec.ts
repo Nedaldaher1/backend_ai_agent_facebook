@@ -13,9 +13,7 @@ import type { ProductsService } from '@/modules/products/products.service';
 // Minimal products service mock
 // ---------------------------------------------------------------------------
 
-function makeProductsMock(
-  checkAvailabilityImpl: jest.Mock,
-): ProductsService {
+function makeProductsMock(checkAvailabilityImpl: jest.Mock): ProductsService {
   return {
     checkAvailability: checkAvailabilityImpl,
   } as unknown as ProductsService;

@@ -70,9 +70,7 @@ describe('RolesGuard', () => {
   });
 
   it('allows when no @Roles metadata is present (open by default)', () => {
-    jest
-      .spyOn(reflector, 'getAllAndOverride')
-      .mockReturnValue(undefined);
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(undefined);
 
     // Even with a user whose role isn't 'admin', the guard should pass
     // because there is no @Roles requirement on this handler.

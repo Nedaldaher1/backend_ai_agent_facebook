@@ -90,11 +90,17 @@ export interface ImageWithColors {
   isPrimary: boolean;
   colors: ImageColorBrief[];
   /**
-   * Whether this image has a CLIP embedding for the current model (i.e. it is
-   * indexed for visual search). Reported by `listImages`; other producers of
-   * this shape may omit it.
+   * Whether this image has an embedding for the current embedding model
+   * (gemini-embedding-2, i.e. it is indexed for visual search). Reported by
+   * `listImages`; other producers of this shape may omit it.
    */
   hasEmbedding?: boolean;
+  /**
+   * Admin-authored description embedded together with the image (see
+   * EmbeddingService.embedImageWithText). `null` when none was written.
+   * Reported by `listImages`; other producers of this shape may omit it.
+   */
+  description?: string | null;
 }
 
 /** One product image with its admin-authored description (set-description response). */
@@ -265,14 +271,100 @@ export class ProductsService {
     input: ProductSearchInput = {},
   ): Promise<Product[]> {
     const filter = await this.toPublishedFilter(input);
-    const hits = await this.repo.searchFuzzy(query, filter);
-    if (hits.length > 0) return hits;
+    const trgmHits = await this.repo.searchFuzzy(query, filter);
+    // Semantic leg: the SAME multimodal index the visual search uses, queried
+    // with the text embedding. Catches what trigrams structurally can't — a
+    // customer paraphrasing what a product LOOKS like ("تطريز ع الصدر
+    // والأكمام") when name/description/tags never contain those words. Additive
+    // and fail-open: an embedding outage degrades to trigram-only results.
+    let semanticHits: Product[] = [];
+    try {
+      semanticHits = await this.searchSemanticByText(query, filter);
+    } catch (err) {
+      this.logger.warn(
+        `semantic text search failed (falling back to trigram-only): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    // Trigram hits first (deterministic, exact-word evidence), then semantic
+    // discoveries — order within each leg is that leg's own relevance ranking.
+    const merged = [...trgmHits];
+    const seen = new Set(trgmHits.map((p) => p.id));
+    for (const p of semanticHits) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        merged.push(p);
+      }
+    }
+    if (merged.length > 0) return merged.slice(0, 8);
     // Fallback: when the free-text match finds nothing — a browse query
     // ("شو عندكم؟") or an Arabic morphological variant trigrams miss — return the
     // structured published catalog for the SAME filters, so the agent never tells
     // the customer "no products" while matching products exist. Publish gate and
     // any structured filters (colour/occasion/price) still apply.
     return this.repo.list(filter, { limit: 8 });
+  }
+
+  /**
+   * Text → multimodal-embedding search over product_image_embeddings (the
+   * text/image shared space is the point of the embedding model: a described
+   * look retrieves the pictured product). Color families constrain the ANN scan
+   * itself (variant-aware, pre-LIMIT); the remaining structured filters are
+   * applied to the loaded product rows afterwards, mirroring buildConditions
+   * semantics. Results keep ANN relevance order.
+   *
+   * Threshold: text↔image cosines run LOWER than image↔image (live probe:
+   * right variant ≈ 0.50, wrong product ≈ 0.40), so this path has its own
+   * SEMANTIC_TEXT_MIN_SCORE (default 0.42) — SIMILARITY_MIN_SCORE (0.6) would
+   * reject every correct text match.
+   */
+  private async searchSemanticByText(
+    query: string,
+    filter: ProductFilter,
+    limit = 8,
+  ): Promise<Product[]> {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const minScore = this.config.get<number>('SEMANTIC_TEXT_MIN_SCORE') ?? 0.42;
+    const families = [
+      ...(filter.colorFamily ? [filter.colorFamily] : []),
+      ...(filter.colorFamilies ?? []),
+    ];
+    const vector = await this.embeddingService.embedText(trimmed);
+    const rows = await this.embeddings.searchSimilarByEmbedding(vector, limit, {
+      colorFamilies: families,
+    });
+    const ids = rows
+      .filter((r) => r.similarity >= minScore)
+      .map((r) => r.productId);
+    if (ids.length === 0) return [];
+    const found = await this.repo.findPublishedByIds(ids);
+    const byId = new Map(found.map((p) => [p.id, p]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter((p): p is Product => p !== undefined)
+      .filter((p) => this.matchesStructuredFilter(p, filter));
+  }
+
+  /**
+   * Post-filter for semantic hits: the structured constraints buildConditions
+   * would have applied in SQL (minus color, already applied inside the ANN
+   * query). Price compare is numeric-via-Number for FILTERING only — money
+   * values themselves stay strings end-to-end.
+   */
+  private matchesStructuredFilter(p: Product, f: ProductFilter): boolean {
+    if (f.size && !(p.sizes ?? []).includes(f.size)) return false;
+    if (f.fabric && p.fabric !== f.fabric) return false;
+    if (f.occasion && p.occasion !== f.occasion) return false;
+    if (f.stockStatus && p.stockStatus !== f.stockStatus) return false;
+    if (f.tags && f.tags.length > 0) {
+      const tags = new Set(p.tags ?? []);
+      if (!f.tags.some((t) => tags.has(t))) return false;
+    }
+    if (f.priceMin && Number(p.priceJod) < Number(f.priceMin)) return false;
+    if (f.priceMax && Number(p.priceJod) > Number(f.priceMax)) return false;
+    return true;
   }
 
   /**
@@ -482,12 +574,18 @@ export class ProductsService {
       const mediaUrls = await Promise.all(
         keys.map((key) => this.storage.getUrl(key)),
       );
-      return { productFound: true, sentColors, unavailableColors: [], mediaUrls };
+      return {
+        productFound: true,
+        sentColors,
+        unavailableColors: [],
+        mediaUrls,
+      };
     }
 
     // Colour filter → resolve each term to a family present on this product.
     const familyByLower = new Map<string, string>(); // lower(family) → family
-    for (const fam of productFamilies) familyByLower.set(fam.toLowerCase(), fam);
+    for (const fam of productFamilies)
+      familyByLower.set(fam.toLowerCase(), fam);
     const familyByName = new Map<string, string>(); // lower(name) → family
     for (const [fam, name] of familyToName) {
       familyByName.set(name.toLowerCase(), fam);
@@ -540,7 +638,10 @@ export class ProductsService {
     productId: string,
     storageKey: string,
   ): Promise<string | null> {
-    const rows = await this.imageColors.findColorsByImage(productId, storageKey);
+    const rows = await this.imageColors.findColorsByImage(
+      productId,
+      storageKey,
+    );
     if (rows.length === 0) return null;
     return rows.map((r) => r.name).join('، ');
   }
@@ -590,7 +691,8 @@ export class ProductsService {
     if (productFamilies.size === 0) return null;
 
     const familyByLower = new Map<string, string>(); // lower(family) → family
-    for (const fam of productFamilies) familyByLower.set(fam.toLowerCase(), fam);
+    for (const fam of productFamilies)
+      familyByLower.set(fam.toLowerCase(), fam);
 
     // Resolve the term to a family present on this product: 1. dialect/synonym,
     // 2. direct family match, 3. canonical name match (all case-insensitive).
@@ -636,12 +738,12 @@ export class ProductsService {
     const k = opts?.limit ?? this.config.get<number>('SIMILARITY_TOP_K') ?? 6;
     const minScore = this.config.get<number>('SIMILARITY_MIN_SCORE') ?? 0;
 
-    // Normalize the requested color family via color_synonyms (mirrors toPublishedFilter).
-    // resolveColorFamily returns null for unrecognized terms → no color filter applied.
-    let colorFamily: string | undefined;
+    // Normalize the requested color to canonical families (mirrors
+    // toPublishedFilter): the term fans out to every family it can mean.
+    // An unrecognized term resolves to [] → no color filter applied.
+    let colorFamilies: string[] = [];
     if (opts?.targetColor) {
-      colorFamily =
-        (await this.colors.resolveColorFamily(opts.targetColor)) ?? undefined;
+      colorFamilies = await this.colors.resolveColorFamilies(opts.targetColor);
     }
 
     // When the customer sent a caption with her photo, embed image + text into
@@ -652,7 +754,7 @@ export class ProductsService {
       ? await this.embeddingService.embedImageWithText(imageUrl, text)
       : await this.embeddingService.embedImage(imageUrl);
     const rows = await this.embeddings.searchSimilarByEmbedding(vector, k, {
-      colorFamily,
+      colorFamilies,
     });
 
     const hits = rows.filter((r) => r.similarity >= minScore);
@@ -687,7 +789,9 @@ export class ProductsService {
    * page; products with no embeddings are omitted (treat a missing id as 0).
    */
   embeddingSummary(): Promise<{ productId: string; embeddedCount: number }[]> {
-    return this.embeddings.countEmbeddedByProduct(this.embeddingService.modelId);
+    return this.embeddings.countEmbeddedByProduct(
+      this.embeddingService.modelId,
+    );
   }
 
   /** Admin single-product read; returns drafts too. */
@@ -808,9 +912,10 @@ export class ProductsService {
   }
 
   /**
-   * List all images for a product, with storage keys resolved to public URLs and
-   * each image's attached canonical colors. The first entry (index 0) is flagged
-   * as `isPrimary`. Returns an empty array when the product has no images.
+   * List all images for a product, with storage keys resolved to public URLs,
+   * each image's attached canonical colors, and its admin-authored description
+   * (null when none). The first entry (index 0) is flagged as `isPrimary`.
+   * Returns an empty array when the product has no images.
    * Admin boundary: does not enforce the publish gate.
    */
   async listImages(id: string): Promise<ImageWithColors[]> {
@@ -823,6 +928,7 @@ export class ProductsService {
 
     // One query for all image-color tags, then group by storage key.
     const colorRows = await this.imageColors.findColorsByProduct(id);
+    const descByKey = await this.imageDescriptions.getMapByProduct(id);
     const colorsByKey = new Map<string, ImageColorBrief[]>();
     for (const row of colorRows) {
       const list = colorsByKey.get(row.storageKey) ?? [];
@@ -854,6 +960,7 @@ export class ProductsService {
         isPrimary: i === 0,
         colors: colorsByKey.get(key) ?? [],
         hasEmbedding: embeddedKeys.has(key),
+        description: descByKey[key] ?? null,
       })),
     );
   }
@@ -955,7 +1062,9 @@ export class ProductsService {
     }
     const keys = product.imageUrls ?? [];
     if (!keys.includes(key)) {
-      throw new NotFoundException(`Image key '${key}' not found on product ${id}`);
+      throw new NotFoundException(
+        `Image key '${key}' not found on product ${id}`,
+      );
     }
     // Delete the R2/storage object first; then drop the image's color tags so no
     // orphan rows linger (they would also RESTRICT-block deleting those colors);
@@ -985,7 +1094,9 @@ export class ProductsService {
     }
     const keys = product.imageUrls ?? [];
     if (!keys.includes(key)) {
-      throw new NotFoundException(`Image key '${key}' not found on product ${id}`);
+      throw new NotFoundException(
+        `Image key '${key}' not found on product ${id}`,
+      );
     }
     const reordered = [key, ...keys.filter((k) => k !== key)];
     const updated = await this.repo.updateById(id, { imageUrls: reordered });
@@ -1204,15 +1315,22 @@ export class ProductsService {
   private async toPublishedFilter(
     input: ProductSearchInput,
   ): Promise<ProductFilter> {
-    let colorFamily = input.colorFamily;
-    if (!colorFamily && input.color) {
-      colorFamily =
-        (await this.colors.resolveColorFamily(input.color)) ?? undefined;
+    // A raw customer term fans out to EVERY family it can mean ("اخضر" →
+    // green + light_green; "بيج" → light_beige via Arabic-normalized fuzzy
+    // match on canonical names) — a single-family collapse here hid variant
+    // colors and made the agent deny products it actually had. An unknown
+    // term resolves to [] → no color filter (broad results beat zero results;
+    // the agent can still say it didn't recognize the color).
+    let colorFamilies: string[] | undefined;
+    if (!input.colorFamily && input.color) {
+      const families = await this.colors.resolveColorFamilies(input.color);
+      colorFamilies = families.length > 0 ? families : undefined;
     }
 
     return {
       isPublished: true,
-      colorFamily,
+      colorFamily: input.colorFamily,
+      colorFamilies,
       size: input.size,
       fabric: input.fabric,
       occasion: input.occasion,
@@ -1235,5 +1353,14 @@ export class ProductsService {
       this.repo.count(filter),
     ]);
     return { items, total, limit, offset };
+  }
+
+  /**
+   * Bare SQL count under a filter (no rows fetched) — the dashboard's
+   * total/published tiles. No publish gate is forced here: this is an
+   * admin-side aggregate and the caller states the filter explicitly.
+   */
+  countProducts(filter: ProductFilter = {}): Promise<number> {
+    return this.repo.count(filter);
   }
 }

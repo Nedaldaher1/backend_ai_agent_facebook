@@ -80,7 +80,9 @@ describe('ConversationsRepository.recordFirstTouchAttribution', () => {
         capturedWhereArg = arg;
         return chain;
       }),
-      returning: jest.fn().mockResolvedValue([{ id: 'conv-guard', attributedAt: new Date() }]),
+      returning: jest
+        .fn()
+        .mockResolvedValue([{ id: 'conv-guard', attributedAt: new Date() }]),
     };
     const db = { update: jest.fn(() => chain) } as unknown as Database;
     const repo = new ConversationsRepository(db);
@@ -126,7 +128,9 @@ describe('ConversationsRepository.recordFirstTouchAttribution', () => {
         return chain;
       }),
       where: jest.fn(() => chain),
-      returning: jest.fn().mockResolvedValue([{ id: 'conv-2', attributedAt: new Date() }]),
+      returning: jest
+        .fn()
+        .mockResolvedValue([{ id: 'conv-2', attributedAt: new Date() }]),
     };
     const db = { update: jest.fn(() => chain) } as unknown as Database;
 

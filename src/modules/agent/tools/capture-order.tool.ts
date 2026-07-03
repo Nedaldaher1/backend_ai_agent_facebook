@@ -111,7 +111,7 @@ export function buildCaptureOrderTool(orders: OrdersService) {
 
       // `source` is derived from the inbound channel (server-set), not the LLM.
       // Today the temp endpoint is messenger; whatsapp is honored when present.
-      const channel = ctx?.requestContext?.get('channel') as string | undefined;
+      const channel = ctx?.requestContext?.get('channel');
       const source = channel === 'whatsapp' ? 'whatsapp' : 'messenger';
 
       const result = await orders.captureCodOrderSafe({

@@ -188,7 +188,10 @@ describe('MessengerSignatureGuard', () => {
     const guard = new MessengerSignatureGuard(makeConfig({}));
 
     const loggerWarnSpy = jest
-      .spyOn((guard as unknown as { logger: { warn: jest.Mock } }).logger, 'warn')
+      .spyOn(
+        (guard as unknown as { logger: { warn: jest.Mock } }).logger,
+        'warn',
+      )
       .mockImplementation(() => undefined);
 
     const ctx = makeContext({});
@@ -217,7 +220,10 @@ describe('MessengerSignatureGuard', () => {
     const guard = new MessengerSignatureGuard(
       makeConfig({ MESSENGER_APP_SECRET: SECRET }),
     );
-    const ctx = makeContext({ 'x-hub-signature-256': VALID_SIG }, Buffer.alloc(0));
+    const ctx = makeContext(
+      { 'x-hub-signature-256': VALID_SIG },
+      Buffer.alloc(0),
+    );
     expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
   });
 });

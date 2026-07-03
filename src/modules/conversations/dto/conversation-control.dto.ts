@@ -14,6 +14,9 @@ import { AI_STATES } from '../entities/conversation.entity';
 // Request schemas
 // ---------------------------------------------------------------------------
 
+/** Admin-list sort keys: last-message activity or thread creation time. */
+export const CONVERSATION_SORT_KEYS = ['activity', 'created'] as const;
+
 /** Query params for GET /admin/conversations. */
 export const listConversationsQuerySchema = z
   .object({
@@ -22,10 +25,15 @@ export const listConversationsQuerySchema = z
     q: z.string().min(1).optional(),
     limit: z.coerce.number().int().positive().optional(),
     offset: z.coerce.number().int().min(0).optional(),
+    // Sort key (default: created) + direction (default: desc). Pinned threads
+    // always come first regardless of sort.
+    sort: z.enum(CONVERSATION_SORT_KEYS).optional(),
     orderBy: z.enum(['asc', 'desc']).optional(),
   })
   .strict();
-export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
+export type ListConversationsQuery = z.infer<
+  typeof listConversationsQuerySchema
+>;
 
 /** Body for POST /admin/conversations/:id/pause. */
 export const pauseConversationSchema = z
@@ -58,7 +66,9 @@ export const handoffConversationSchema = z
     reason: z.string().min(1).optional(),
   })
   .strict();
-export type HandoffConversationInput = z.infer<typeof handoffConversationSchema>;
+export type HandoffConversationInput = z.infer<
+  typeof handoffConversationSchema
+>;
 
 /** Body for POST /admin/conversations/:id/messages. */
 export const humanMessageSchema = z
@@ -67,6 +77,14 @@ export const humanMessageSchema = z
   })
   .strict();
 export type HumanMessageInput = z.infer<typeof humanMessageSchema>;
+
+/** Body for PATCH /admin/conversations/:id/pin. */
+export const pinConversationSchema = z
+  .object({
+    pinned: z.boolean(),
+  })
+  .strict();
+export type PinConversationInput = z.infer<typeof pinConversationSchema>;
 
 // ---------------------------------------------------------------------------
 // OpenAPI DTO classes (nestjs-zod createZodDto for Scalar docs integration)
@@ -87,6 +105,8 @@ export const conversationListItemSchema = z.object({
   lastMessageAt: z.string().nullable(),
   unreadCount: z.number().int(),
   escalated: z.boolean(),
+  /** Pinned in the admin inbox — pinned threads sort first server-side. */
+  pinned: z.boolean(),
 });
 export class ConversationListItemDto extends createZodDto(
   conversationListItemSchema,
@@ -111,6 +131,9 @@ export const threadMessageSchema = z.object({
   role: z.string(),
   content: z.string().nullable(),
   imageUrl: z.string().nullable(),
+  // Free-form extraction metadata (vision/eval/audio); audio carries the
+  // voice-note url + transcript details for the thread UI.
+  attributes: z.record(z.string(), z.unknown()).nullable(),
   createdAt: z.string(),
 });
 
@@ -127,6 +150,8 @@ export const conversationThreadSchema = z.object({
     humanSummary: z.string().nullable(),
     pausedUntil: z.string().nullable(),
     createdAt: z.string(),
+    /** Pinned in the admin inbox (see PATCH :id/pin). */
+    pinned: z.boolean(),
   }),
   messages: z.array(threadMessageSchema),
 });

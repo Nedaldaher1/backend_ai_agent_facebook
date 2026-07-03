@@ -51,8 +51,12 @@ export const createAdProductLinkSchema = insertAdProductLinkSchema
 export const updateAdProductLinkSchema = createAdProductLinkSchema
   .partial()
   .strict();
-export type CreateAdProductLinkInput = z.infer<typeof createAdProductLinkSchema>;
-export type UpdateAdProductLinkInput = z.infer<typeof updateAdProductLinkSchema>;
+export type CreateAdProductLinkInput = z.infer<
+  typeof createAdProductLinkSchema
+>;
+export type UpdateAdProductLinkInput = z.infer<
+  typeof updateAdProductLinkSchema
+>;
 
 // --- colors (control-plane: the canonical color entity) ---
 // is_system is reserved for the seeded system colors (e.g. "__unassigned__") and

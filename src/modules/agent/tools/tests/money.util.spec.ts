@@ -30,8 +30,8 @@ describe('sumJodLineTotals', () => {
 
   it('carries correctly across the milli boundary without float drift', () => {
     // 0.999 × 1000 = 999.000 exactly (integer arithmetic, no float rounding)
-    expect(
-      sumJodLineTotals([{ priceJod: '0.999', qty: 1000 }]),
-    ).toBe('999.000');
+    expect(sumJodLineTotals([{ priceJod: '0.999', qty: 1000 }])).toBe(
+      '999.000',
+    );
   });
 });

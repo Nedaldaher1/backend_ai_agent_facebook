@@ -23,7 +23,9 @@ describe('buildVisionAttributeSchema', () => {
   };
 
   it('accepts an object whose color/size are within the closed enums', () => {
-    expect(buildVisionAttributeSchema(enums).safeParse(valid).success).toBe(true);
+    expect(buildVisionAttributeSchema(enums).safeParse(valid).success).toBe(
+      true,
+    );
   });
 
   it('rejects a color outside the closed enum', () => {
@@ -60,9 +62,9 @@ describe('buildVisionAttributeSchema', () => {
   });
 
   it('requires isAbaya and confidence', () => {
-    expect(buildVisionAttributeSchema(enums).safeParse({ color: 'red' }).success).toBe(
-      false,
-    );
+    expect(
+      buildVisionAttributeSchema(enums).safeParse({ color: 'red' }).success,
+    ).toBe(false);
   });
 
   it('rejects a confidence outside 0..1', () => {

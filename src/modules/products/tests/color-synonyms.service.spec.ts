@@ -152,9 +152,9 @@ describe('ColorSynonymsService', () => {
   it('update throws NotFoundException for a missing synonym (no color check)', async () => {
     findById.mockResolvedValue(undefined);
 
-    await expect(
-      service.update('ghost', { colorId: BLUE }),
-    ).rejects.toThrow(NotFoundException);
+    await expect(service.update('ghost', { colorId: BLUE })).rejects.toThrow(
+      NotFoundException,
+    );
     expect(getColorById).not.toHaveBeenCalled();
     expect(updateById).not.toHaveBeenCalled();
   });
@@ -162,7 +162,10 @@ describe('ColorSynonymsService', () => {
   // --- listByColor ---
 
   it('listByColor returns every term mapped to a color', async () => {
-    const terms = [makeSynonym({ term: 'نبيتي' }), makeSynonym({ term: 'عنابي' })];
+    const terms = [
+      makeSynonym({ term: 'نبيتي' }),
+      makeSynonym({ term: 'عنابي' }),
+    ];
     findByColorId.mockResolvedValue(terms);
 
     const result = await service.listByColor('C-red');

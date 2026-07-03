@@ -152,7 +152,9 @@ export class ProductImageColorsRepository {
       if (colorIds.length > 0) {
         await tx
           .insert(productImageColors)
-          .values(colorIds.map((colorId) => ({ productId, storageKey, colorId })));
+          .values(
+            colorIds.map((colorId) => ({ productId, storageKey, colorId })),
+          );
       }
     });
   }

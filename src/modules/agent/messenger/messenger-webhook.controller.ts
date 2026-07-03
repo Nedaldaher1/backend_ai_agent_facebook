@@ -50,10 +50,17 @@ import { DebounceService } from '../debounce/debounce.service';
 import { mergeTurns } from '../debounce/merge-turns';
 import { MessengerSignatureGuard } from './messenger-signature.guard';
 import { MessengerClient, type SenderAction } from './messenger.client';
-import { formatMessengerReply, type MessengerCardProduct } from './messenger.formatter';
+import {
+  formatMessengerReply,
+  type MessengerCardProduct,
+} from './messenger.formatter';
 import { splitIntoBubbles, typingDelayMs, sleep } from './reply-pacing.util';
 import { extractReferral, normalizeEvent } from './messenger.normalizer';
-import type { InboundMessage, NormalizedReferral, RawMessagingEvent } from './messenger.types';
+import type {
+  InboundMessage,
+  NormalizedReferral,
+  RawMessagingEvent,
+} from './messenger.types';
 import {
   messengerVerifyQuerySchema,
   messengerWebhookBodySchema,
@@ -66,6 +73,13 @@ import { FALLBACK_REPLY } from '../customer-reply.constants';
 export class MessengerWebhookController {
   private readonly logger = new Logger(MessengerWebhookController.name);
   private readonly verifyToken: string | undefined;
+  /**
+   * Voice-note transcription feature flag (opt-in: exactly 'true'). Gated HERE
+   * so that flag-off reproduces the legacy behavior byte-for-byte: audio
+   * attachments are stripped before they can start an agent turn, and a
+   * voice-only event falls into the same content-less branch as today.
+   */
+  private readonly transcriptionEnabled: boolean;
   /** Human-like reply pacing config (resolved once; see env.schema). */
   private readonly pacing: {
     enabled: boolean;
@@ -85,6 +99,8 @@ export class MessengerWebhookController {
   ) {
     this.verifyToken =
       config.get<string>('MESSENGER_VERIFY_TOKEN') || undefined;
+    this.transcriptionEnabled =
+      config.get<string>('TRANSCRIPTION_ENABLED') === 'true';
     // Read a numeric env robustly: ConfigService returns numbers in prod (zod
     // coercion) but plain strings under test stubs — coerce + fall back.
     const numEnv = (key: string, def: number): number => {
@@ -95,8 +111,7 @@ export class MessengerWebhookController {
     };
     this.pacing = {
       // Default ON: only the literal 'false' disables (single-message mode).
-      enabled:
-        config.get<string>('MESSENGER_HUMAN_PACING_ENABLED') !== 'false',
+      enabled: config.get<string>('MESSENGER_HUMAN_PACING_ENABLED') !== 'false',
       msPerChar: numEnv('MESSENGER_TYPING_MS_PER_CHAR', 45),
       minMs: numEnv('MESSENGER_TYPING_MIN_MS', 700),
       maxMs: numEnv('MESSENGER_TYPING_MAX_MS', 2500),
@@ -188,7 +203,7 @@ export class MessengerWebhookController {
       const messaging = entry.messaging ?? [];
 
       for (const event of messaging as RawMessagingEvent[]) {
-        const normalized = normalizeEvent(event);
+        const normalized = this.filterAudio(normalizeEvent(event));
 
         if (!normalized) {
           // Content-less event (delivery receipt, read receipt, or a pure
@@ -215,12 +230,26 @@ export class MessengerWebhookController {
 
         const incoming = this.toIncoming(normalized);
         this.debounce.enqueue(normalized.psid, incoming, (items) =>
-          this.processBatch(normalized.psid, items as IncomingMessage[]),
+          this.processBatch(normalized.psid, items),
         );
       }
     }
 
     return { status: 'ok' };
+  }
+
+  /**
+   * Feature gate for voice notes: with TRANSCRIPTION_ENABLED off, strip the
+   * audio attachment so behavior matches the pre-feature pipeline exactly —
+   * a voice-only event becomes content-less (null) and takes the same branch
+   * as today (referral-only attribution persists, everything else is skipped).
+   */
+  private filterAudio(msg: InboundMessage | null): InboundMessage | null {
+    if (!msg || this.transcriptionEnabled || !msg.audioUrl) return msg;
+    const rest: InboundMessage = { ...msg };
+    delete rest.audioUrl;
+    if (!rest.text && !rest.imageUrl) return null;
+    return rest;
   }
 
   // ---------------------------------------------------------------------------
@@ -370,6 +399,7 @@ export class MessengerWebhookController {
       contactId: msg.psid,
       text: msg.text,
       ...(msg.imageUrl ? { lastImageUrl: msg.imageUrl } : {}),
+      ...(msg.audioUrl ? { lastAudioUrl: msg.audioUrl } : {}),
       // adRef: carry the ref slug so the search_products tool can surface
       // ad-linked products even on turns where the full referral is present.
       ...(msg.referral?.ref ? { adRef: msg.referral.ref } : {}),

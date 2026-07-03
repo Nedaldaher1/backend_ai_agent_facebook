@@ -1,5 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, desc, eq, ilike, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  ilike,
+  isNotNull,
+  isNull,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
@@ -22,6 +33,14 @@ import {
 /** Derived union from the AI_STATES tuple; avoids re-declaring the enum. */
 export type AiState = (typeof AI_STATES)[number];
 
+/** SQL-side aggregates for the admin dashboard (see dashboardStats). */
+export interface ConversationDashboardStats {
+  total: number;
+  byState: Record<AiState, number>;
+  /** Conversations ever escalated (`handoff_reason IS NOT NULL`). */
+  escalated: number;
+}
+
 /**
  * Shape returned by listConversationsWithPreview: the key conversation columns
  * plus the most-recent message content and its timestamp (null when the
@@ -35,7 +54,11 @@ export interface ConversationListRow {
   handoffReason: string | null;
   lastMessagePreview: string | null;
   lastMessageAt: Date | null;
+  pinnedAt: Date | null;
 }
+
+/** Admin-list sort key: last-message activity or thread creation time. */
+export type ConversationSortKey = 'activity' | 'created';
 
 /**
  * Sole owner of conversations + messages SQL (the two runtime tables the agent
@@ -186,6 +209,28 @@ export class ConversationsRepository {
   }
 
   /**
+   * Timestamp of the most recent customer-authored message in a conversation,
+   * or undefined when the customer never wrote. Drives the Messenger 24-hour
+   * standard-window check for human-agent replies.
+   */
+  async findLastCustomerMessageAt(
+    conversationId: string,
+  ): Promise<Date | undefined> {
+    const [row] = await this.db
+      .select({ createdAt: messages.createdAt })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.role, 'customer'),
+        ),
+      )
+      .orderBy(desc(messages.createdAt))
+      .limit(1);
+    return row?.createdAt;
+  }
+
+  /**
    * Recent agent messages that carry an `attributes` payload (the eval rows the
    * agent writes per product turn). Source for the descriptive eval report.
    */
@@ -285,9 +330,7 @@ export class ConversationsRepository {
    * Append an immutable audit event to the conversation_events table.
    * Returns the inserted row.
    */
-  async recordEvent(
-    input: NewConversationEvent,
-  ): Promise<ConversationEvent> {
+  async recordEvent(input: NewConversationEvent): Promise<ConversationEvent> {
     const [row] = await this.db
       .insert(conversationEvents)
       .values(input)
@@ -310,6 +353,7 @@ export class ConversationsRepository {
       aiState?: AiState;
       assignedTo?: string;
       q?: string;
+      sort?: ConversationSortKey;
     } & ListOptions,
   ): Promise<{ items: ConversationListRow[]; total: number }> {
     const { limit, offset, orderBy } = normalizeListOptions(filters);
@@ -356,6 +400,20 @@ export class ConversationsRepository {
       LIMIT 1
     )`;
 
+    // Pinned threads always float to the top regardless of the chosen sort:
+    // `pinned_at DESC NULLS LAST` puts non-null (pinned) rows first, most
+    // recently pinned on top, and all unpinned rows (NULL) after.
+    const pinnedFirst = sql`${conversations.pinnedAt} DESC NULLS LAST`;
+    // Within each group, sort by last-message activity or creation time.
+    // Activity is the lastCreatedAt subquery (identifier-only, no bound params,
+    // so reusing it in ORDER BY is safe); threads with no messages (NULL) sink
+    // to the bottom in both directions.
+    const dir = orderBy === 'asc' ? sql`ASC` : sql`DESC`;
+    const primarySort =
+      filters.sort === 'activity'
+        ? sql`${lastCreatedAt} ${dir} NULLS LAST`
+        : direction(conversations.createdAt);
+
     const rows = await this.db
       .select({
         id: conversations.id,
@@ -365,10 +423,11 @@ export class ConversationsRepository {
         handoffReason: conversations.handoffReason,
         lastMessagePreview: lastContent,
         lastMessageAt: lastCreatedAt,
+        pinnedAt: conversations.pinnedAt,
       })
       .from(conversations)
       .where(where)
-      .orderBy(direction(conversations.createdAt))
+      .orderBy(pinnedFirst, primarySort, desc(conversations.createdAt))
       .limit(limit)
       .offset(offset);
 
@@ -387,5 +446,70 @@ export class ConversationsRepository {
     }));
 
     return { items, total: Number(total) };
+  }
+
+  // --- inbox controls: pin + delete ---
+
+  /**
+   * Pin or unpin a conversation in the admin inbox. Pinning stamps the current
+   * time (the pin sort key); unpinning clears it. Returns the updated row, or
+   * undefined if the conversation does not exist.
+   */
+  async setPinned(
+    id: string,
+    pinned: boolean,
+  ): Promise<Conversation | undefined> {
+    const [row] = await this.db
+      .update(conversations)
+      .set({ pinnedAt: pinned ? new Date() : null })
+      .where(eq(conversations.id, id))
+      .returning();
+    return row;
+  }
+
+  /**
+   * Hard-delete a conversation row. Messages and conversation_events cascade
+   * (FK onDelete: 'cascade'); orders keep their rows with conversation_id set
+   * to NULL (onDelete: 'set null'). Returns true when a row was removed.
+   */
+  async deleteConversationById(id: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(conversations)
+      .where(eq(conversations.id, id))
+      .returning({ id: conversations.id });
+    return deleted.length > 0;
+  }
+
+  /**
+   * Dashboard aggregates in SQL: conversations per handler state (missing
+   * states filled with 0; `total` is their sum) plus the escalated count —
+   * `handoff_reason IS NOT NULL`, the same signal the inbox `EscalatedBadge`
+   * keys off, so the two surfaces can never disagree.
+   */
+  async dashboardStats(): Promise<ConversationDashboardStats> {
+    const stateRows = await this.db
+      .select({ state: conversations.aiState, value: count() })
+      .from(conversations)
+      .groupBy(conversations.aiState);
+
+    const byState = Object.fromEntries(AI_STATES.map((s) => [s, 0])) as Record<
+      AiState,
+      number
+    >;
+    let total = 0;
+    for (const row of stateRows) {
+      const n = Number(row.value);
+      total += n;
+      if ((AI_STATES as readonly string[]).includes(row.state)) {
+        byState[row.state as AiState] = n;
+      }
+    }
+
+    const [escalatedRow] = await this.db
+      .select({ value: count() })
+      .from(conversations)
+      .where(isNotNull(conversations.handoffReason));
+
+    return { total, byState, escalated: Number(escalatedRow?.value ?? 0) };
   }
 }

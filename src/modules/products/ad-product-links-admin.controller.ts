@@ -106,13 +106,11 @@ export class AdProductLinksAdminController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   list(
-    @Query(new ZodValidationPipe(adLinksListQuerySchema)) query: AdLinksListQuery,
+    @Query(new ZodValidationPipe(adLinksListQuerySchema))
+    query: AdLinksListQuery,
   ): Promise<AdProductLink[]> {
     const { ad_ref, limit, offset } = query;
-    return this.adLinks.list(
-      { adRef: ad_ref },
-      { limit, offset },
-    );
+    return this.adLinks.list({ adRef: ad_ref }, { limit, offset });
   }
 
   @Patch(':id')
@@ -120,11 +118,13 @@ export class AdProductLinksAdminController {
     summary: 'Update an ad-product link',
     description:
       'Partial (PATCH) update of an ad-product link. Covers toggling `isActive` ' +
-      '(deactivating a link removes it from the agent\'s ad-ref results without ' +
+      "(deactivating a link removes it from the agent's ad-ref results without " +
       'deleting it) and reordering via `position`.',
   })
   @ApiOkResponse({ description: 'Link updated.' })
-  @ApiNotFoundResponse({ description: 'No link or product exists with that id.' })
+  @ApiNotFoundResponse({
+    description: 'No link or product exists with that id.',
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   update(

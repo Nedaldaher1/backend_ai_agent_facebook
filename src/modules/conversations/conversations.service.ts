@@ -7,12 +7,19 @@ import {
   type CreateConversationInput,
   type CreateMessageInput,
 } from '@/common/validation';
-import type { ConversationListRow } from './conversations.repository';
+import type {
+  ConversationDashboardStats,
+  ConversationListRow,
+  ConversationSortKey,
+} from './conversations.repository';
 import { ConversationsRepository } from './conversations.repository';
 import type { AiState } from './conversations.repository';
 import type { Conversation } from './entities/conversation.entity';
 import type { Message } from './entities/message.entity';
-import type { ConversationEvent, NewConversationEvent } from './entities/conversation-event.entity';
+import type {
+  ConversationEvent,
+  NewConversationEvent,
+} from './entities/conversation-event.entity';
 
 /** Options when opening (or reusing) a thread for a psid. */
 export interface FindOrCreateConversationInput {
@@ -33,6 +40,11 @@ export class ConversationsService {
 
   list(opts?: ListOptions): Promise<Conversation[]> {
     return this.repo.listConversations(opts);
+  }
+
+  /** SQL-side dashboard aggregates (state counts + escalated total). */
+  dashboardStats(): Promise<ConversationDashboardStats> {
+    return this.repo.dashboardStats();
   }
 
   async getById(id: string): Promise<Conversation> {
@@ -112,6 +124,16 @@ export class ConversationsService {
     externalId: string,
   ): Promise<Message | undefined> {
     return this.repo.findMessageByExternalId(conversationId, externalId);
+  }
+
+  /**
+   * When the customer last wrote in this conversation (undefined if never).
+   * Used for the Messenger 24-hour standard-window check.
+   */
+  findLastCustomerMessageAt(
+    conversationId: string,
+  ): Promise<Date | undefined> {
+    return this.repo.findLastCustomerMessageAt(conversationId);
   }
 
   /** Recent agent messages carrying an eval `attributes` payload. */
@@ -197,9 +219,30 @@ export class ConversationsService {
    * so the ConversationControlService never touches the repo directly.
    */
   listWithPreview(
-    filters: { aiState?: AiState; assignedTo?: string; q?: string } & ListOptions,
+    filters: {
+      aiState?: AiState;
+      assignedTo?: string;
+      q?: string;
+      sort?: ConversationSortKey;
+    } & ListOptions,
   ): Promise<{ items: ConversationListRow[]; total: number }> {
     return this.repo.listConversationsWithPreview(filters);
+  }
+
+  /**
+   * Pin or unpin a conversation in the admin inbox. Delegates to the
+   * repository. Returns undefined when the conversation does not exist.
+   */
+  setPinned(id: string, pinned: boolean): Promise<Conversation | undefined> {
+    return this.repo.setPinned(id, pinned);
+  }
+
+  /**
+   * Hard-delete a conversation (messages + audit events cascade; orders are
+   * kept with conversation_id nulled). Returns true when a row was removed.
+   */
+  deleteConversation(id: string): Promise<boolean> {
+    return this.repo.deleteConversationById(id);
   }
 
   /**
@@ -210,7 +253,9 @@ export class ConversationsService {
    */
   recordFirstTouchAttribution(
     conversationId: string,
-    attrib: Parameters<ConversationsRepository['recordFirstTouchAttribution']>[1],
+    attrib: Parameters<
+      ConversationsRepository['recordFirstTouchAttribution']
+    >[1],
   ): Promise<Conversation | undefined> {
     return this.repo.recordFirstTouchAttribution(conversationId, attrib);
   }

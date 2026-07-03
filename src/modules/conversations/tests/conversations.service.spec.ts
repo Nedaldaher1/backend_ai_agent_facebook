@@ -87,7 +87,11 @@ describe('ConversationsService', () => {
     expect(() =>
       service.addMessage(
         // Intentionally invalid — cast to exercise runtime rejection.
-        { conversationId: 'c1', role: 'bot', content: 'hello' } as unknown as Parameters<typeof service.addMessage>[0],
+        {
+          conversationId: 'c1',
+          role: 'bot',
+          content: 'hello',
+        } as unknown as Parameters<typeof service.addMessage>[0],
       ),
     ).toThrow(BadRequestException);
     expect(insertMessage).not.toHaveBeenCalled();
@@ -97,7 +101,11 @@ describe('ConversationsService', () => {
     expect(() =>
       service.addMessage(
         // Intentionally invalid — cast to exercise runtime rejection.
-        { conversationId: 'c1', role: '', content: 'hello' } as unknown as Parameters<typeof service.addMessage>[0],
+        {
+          conversationId: 'c1',
+          role: '',
+          content: 'hello',
+        } as unknown as Parameters<typeof service.addMessage>[0],
       ),
     ).toThrow(BadRequestException);
   });
@@ -179,12 +187,19 @@ describe('ConversationsService', () => {
 
   it('escalateToHuman calls setAiState with aiState human and the reason', async () => {
     const convo = makeConversation({ id: CONVERSATION_ID, aiState: 'bot' });
-    const updated = makeConversation({ id: CONVERSATION_ID, aiState: 'human', handoffReason: 'too complex' });
+    const updated = makeConversation({
+      id: CONVERSATION_ID,
+      aiState: 'human',
+      handoffReason: 'too complex',
+    });
     findConversationById.mockResolvedValue(convo);
     setAiState.mockResolvedValue(updated);
     recordEvent.mockResolvedValue({});
 
-    const result = await service.escalateToHuman(CONVERSATION_ID, 'too complex');
+    const result = await service.escalateToHuman(
+      CONVERSATION_ID,
+      'too complex',
+    );
 
     expect(setAiState).toHaveBeenCalledWith(CONVERSATION_ID, {
       aiState: 'human',

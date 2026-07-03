@@ -76,6 +76,7 @@ import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { VisionService } from '../vision/vision.service';
+import type { TranscriptionService } from '../transcription/transcription.service';
 import type { TriageService } from '../triage/triage.service';
 
 // ---------------------------------------------------------------------------
@@ -149,6 +150,17 @@ const visionMock = {
  * dedicated triage.service.spec covers its behavior. Turn tests below always
  * exercise the full agent path.
  */
+/** Transcription pre-step disabled in unit tests (opt-in via TRANSCRIPTION_ENABLED). */
+const transcriptionMock = {
+  transcribe: jest.fn().mockResolvedValue({
+    ok: false,
+    transcript: null,
+    confidence: null,
+    reason: 'disabled',
+    meta: { model: 'test', latencyMs: 0 },
+  }),
+} as unknown as TranscriptionService;
+
 const triageMock = {
   enabled: false,
   match: () => null,
@@ -245,6 +257,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
 
@@ -266,6 +279,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
 
@@ -290,6 +304,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
 
@@ -313,6 +328,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
 
@@ -334,6 +350,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
 
@@ -359,6 +376,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -383,6 +401,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -408,6 +427,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -427,9 +447,7 @@ describe('AgentService', () => {
       expect(options.context?.[0].content).toContain('أم محمد');
       expect(options.context?.[0].content).toContain('ليست رسالة من الزبونة');
       // No system-role context message — the system prefix stays byte-stable.
-      expect(
-        options.context?.some((m) => m.role === 'system'),
-      ).toBe(false);
+      expect(options.context?.some((m) => m.role === 'system')).toBe(false);
     });
 
     it("'system' restores the legacy per-note system messages", async () => {
@@ -442,6 +460,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -475,6 +494,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -502,6 +522,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -527,6 +548,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -559,6 +581,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -592,6 +615,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -617,6 +641,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -644,6 +669,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -670,6 +696,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -724,6 +751,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -744,6 +772,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -778,6 +807,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -806,6 +836,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -847,6 +878,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -877,6 +909,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -904,6 +937,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -935,6 +969,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -962,6 +997,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -1171,6 +1207,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1218,6 +1255,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1262,6 +1300,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1290,6 +1329,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1340,6 +1380,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1389,6 +1430,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1433,6 +1475,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1454,6 +1497,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1504,6 +1548,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1534,6 +1579,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1561,6 +1607,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1586,6 +1633,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1615,6 +1663,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1648,6 +1697,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1673,6 +1723,7 @@ describe('AgentService', () => {
       knowledgeMock,
       sizingMock,
       visionMock,
+      transcriptionMock,
       triageMock,
     );
     service.onModuleInit();
@@ -1701,6 +1752,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -1796,6 +1848,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -1834,6 +1887,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -1869,6 +1923,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -1934,6 +1989,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -1970,6 +2026,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2003,6 +2060,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2042,6 +2100,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2084,6 +2143,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2118,6 +2178,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2152,6 +2213,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2176,6 +2238,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2199,6 +2262,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2222,6 +2286,7 @@ describe('AgentService', () => {
         knowledge,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2246,6 +2311,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2289,6 +2355,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2315,6 +2382,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2340,6 +2408,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();
@@ -2365,6 +2434,7 @@ describe('AgentService', () => {
         knowledgeMock,
         sizingMock,
         visionMock,
+        transcriptionMock,
         triageMock,
       );
       service.onModuleInit();

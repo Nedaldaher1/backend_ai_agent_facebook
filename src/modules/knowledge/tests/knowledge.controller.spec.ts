@@ -107,7 +107,9 @@ describe('KnowledgeController', () => {
   });
 
   it('update throws NotFoundException when service does', async () => {
-    update.mockRejectedValue(new NotFoundException('Knowledge entry ghost not found'));
+    update.mockRejectedValue(
+      new NotFoundException('Knowledge entry ghost not found'),
+    );
 
     await expect(controller.update('ghost', { title: 'X' })).rejects.toThrow(
       NotFoundException,
@@ -127,7 +129,9 @@ describe('KnowledgeController', () => {
   });
 
   it('remove throws NotFoundException when the entry does not exist', async () => {
-    deleteEntry.mockRejectedValue(new NotFoundException('Knowledge entry ghost not found'));
+    deleteEntry.mockRejectedValue(
+      new NotFoundException('Knowledge entry ghost not found'),
+    );
 
     await expect(controller.remove('ghost')).rejects.toThrow(NotFoundException);
   });
@@ -155,7 +159,9 @@ describe('KnowledgeController', () => {
   });
 
   it('setPublished throws NotFoundException when entry does not exist', async () => {
-    setPublished.mockRejectedValue(new NotFoundException('Knowledge entry ghost not found'));
+    setPublished.mockRejectedValue(
+      new NotFoundException('Knowledge entry ghost not found'),
+    );
 
     await expect(
       controller.setPublished('ghost', { is_published: true }),
@@ -196,7 +202,9 @@ describe('KnowledgeController', () => {
     });
 
     expect(list).toHaveBeenCalledWith(
-      expect.objectContaining({ productId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' }),
+      expect.objectContaining({
+        productId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+      }),
       expect.anything(),
     );
   });
@@ -266,9 +274,9 @@ describe('KnowledgeController', () => {
       offset: 20,
     });
 
-    expect(list).toHaveBeenCalledWith(
-      expect.anything(),
-      { limit: 10, offset: 20 },
-    );
+    expect(list).toHaveBeenCalledWith(expect.anything(), {
+      limit: 10,
+      offset: 20,
+    });
   });
 });

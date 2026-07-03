@@ -69,7 +69,10 @@ describe('ColorSynonymsAdminController', () => {
     const synonyms = [makeSynonym()];
     list.mockResolvedValue(synonyms);
 
-    const result = await controller.list({ limit: undefined, offset: undefined });
+    const result = await controller.list({
+      limit: undefined,
+      offset: undefined,
+    });
 
     expect(list).toHaveBeenCalledWith({ limit: undefined, offset: undefined });
     expect(result).toBe(synonyms);

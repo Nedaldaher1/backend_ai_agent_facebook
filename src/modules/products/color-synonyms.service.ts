@@ -51,11 +51,27 @@ export class ColorSynonymsService {
   }
 
   /**
+   * EVERY canonical family a customer color term can mean — canonical color
+   * names and dialect synonyms, exact and fuzzy, Arabic-normalized (hamza
+   * variants folded). Generic terms fan out: "اخضر" → [green, light_green].
+   * This is the search-path resolver; a term matching no family returns [].
+   */
+  resolveColorFamilies(term: string): Promise<string[]> {
+    return this.repo.resolveColorFamilies(term);
+  }
+
+  /**
    * Normalize a customer-supplied color term to a canonical family.
    * Resolution order:
    *   1. Exact match via color_synonyms.term (fast, indexed).
-   *   2. Fuzzy trigram match via pg_trgm similarity (catches misspellings).
-   *   3. Raw term fallback — returned as-is so the agent can still mention it.
+   *   2. Combined canonical-name + synonym resolution (Arabic-normalized,
+   *      exact + fuzzy) via resolveColorFamilies — first family wins.
+   *   3. Fuzzy trigram match via pg_trgm similarity (catches misspellings).
+   *   4. Raw term fallback — returned as-is so the agent can still mention it.
+   *
+   * Single-family callers only (display/labels). SEARCH paths should use
+   * resolveColorFamilies instead: collapsing "اخضر" to one of its two families
+   * here would hide the other family's products.
    *
    * @param term  Any dialect color word the customer typed (e.g. "نبيتي").
    * @returns     Canonical color family (e.g. "red"), or the raw term if unknown.
@@ -64,6 +80,10 @@ export class ColorSynonymsService {
     const exact = await this.repo.resolveColorFamily(term);
     if (exact) {
       return exact;
+    }
+    const [first] = await this.repo.resolveColorFamilies(term);
+    if (first) {
+      return first;
     }
     const fuzzy = await this.repo.resolveColorFamilyFuzzy(term);
     if (fuzzy) {

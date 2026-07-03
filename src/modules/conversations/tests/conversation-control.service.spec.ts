@@ -11,9 +11,10 @@
  *  - handoff: aiState='human', event 'handoff'.
  *  - sendHumanMessage: gate (ai_state=bot throws), idempotency, happy path,
  *             addMessage before sendText (persist-first ordering),
- *             sendText(psid, text, true) called with humanAgent=true,
- *             success → delivered=true, MessengerSendError → delivered=false,
- *             recordEvent always called with correct metadata.
+ *             window-aware humanAgent flag (RESPONSE within 24h of the last
+ *             customer message, HUMAN_AGENT tag outside / never wrote),
+ *             success → delivered=true, MessengerSendError → delivered=false
+ *             + deliveryError, recordEvent always called with correct metadata.
  *  - getThread: returns {conversation, messages}.
  *  - listConversations: maps rows, escalated flag, unreadCount:0, ISO dates.
  */
@@ -37,7 +38,10 @@ jest.mock('@mastra/core/di', () => ({ RequestContext: jest.fn() }));
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConversationControlService } from '../conversation-control.service';
 import type { ConversationsService } from '../conversations.service';
-import type { MessengerClient } from '@/modules/agent/messenger/messenger.client';
+import {
+  MessengerSendError,
+  type MessengerClient,
+} from '@/modules/agent/messenger/messenger.client';
 import type { AgentService } from '@/modules/agent/agent.service';
 import type { Conversation } from '../entities/conversation.entity';
 import type { Message } from '../entities/message.entity';
@@ -96,6 +100,10 @@ function makeMocks() {
   const listWithPreview = jest.fn();
   const updateState = jest.fn();
   const deleteMessages = jest.fn();
+  const setPinned = jest.fn();
+  const deleteConversation = jest.fn();
+  // Default: customer never wrote → out-of-window → HUMAN_AGENT tag path.
+  const findLastCustomerMessageAt = jest.fn().mockResolvedValue(undefined);
 
   const conversations = {
     getById,
@@ -107,6 +115,9 @@ function makeMocks() {
     listWithPreview,
     updateState,
     deleteMessages,
+    setPinned,
+    deleteConversation,
+    findLastCustomerMessageAt,
   } as unknown as ConversationsService;
 
   const sendText = jest.fn().mockResolvedValue(undefined);
@@ -121,7 +132,23 @@ function makeMocks() {
     agent,
   );
 
-  return { svc, getById, setAiState, recordEvent, addMessage, findMessageByExternalId, listMessages, listWithPreview, sendText, updateState, deleteMessages, resetConversationMemory };
+  return {
+    svc,
+    getById,
+    setAiState,
+    recordEvent,
+    addMessage,
+    findMessageByExternalId,
+    listMessages,
+    listWithPreview,
+    sendText,
+    updateState,
+    deleteMessages,
+    setPinned,
+    deleteConversation,
+    findLastCustomerMessageAt,
+    resetConversationMemory,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +252,10 @@ describe('ConversationControlService', () => {
       recordEvent.mockResolvedValue({});
 
       const before = Date.now();
-      await svc.pause(CONV_ID, ACTOR, { reason: 'Customer upset', durationMinutes: 60 });
+      await svc.pause(CONV_ID, ACTOR, {
+        reason: 'Customer upset',
+        durationMinutes: 60,
+      });
       const after = Date.now();
 
       expect(setAiState).toHaveBeenCalledWith(
@@ -302,7 +332,9 @@ describe('ConversationControlService', () => {
       setAiState.mockResolvedValue(makeConvo({ aiState: 'bot' }));
       recordEvent.mockResolvedValue({});
 
-      await svc.resume(CONV_ID, ACTOR, { summary: 'Customer agreed to size 2' });
+      await svc.resume(CONV_ID, ACTOR, {
+        summary: 'Customer agreed to size 2',
+      });
 
       expect(setAiState).toHaveBeenCalledWith(
         CONV_ID,
@@ -352,7 +384,9 @@ describe('ConversationControlService', () => {
     it('sets aiState=human and assignedTo when assignedTo is non-null', async () => {
       const { svc, getById, setAiState, recordEvent } = makeMocks();
       getById.mockResolvedValue(makeConvo({ aiState: 'bot' }));
-      setAiState.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: 'agent@masa.com' }));
+      setAiState.mockResolvedValue(
+        makeConvo({ aiState: 'human', assignedTo: 'agent@masa.com' }),
+      );
       recordEvent.mockResolvedValue({});
 
       await svc.assign(CONV_ID, ACTOR, { assignedTo: 'agent@masa.com' });
@@ -385,8 +419,12 @@ describe('ConversationControlService', () => {
 
     it('sets assignedTo=null only (aiState unchanged) when assignedTo is null', async () => {
       const { svc, getById, setAiState, recordEvent } = makeMocks();
-      getById.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: 'agent@masa.com' }));
-      setAiState.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: null }));
+      getById.mockResolvedValue(
+        makeConvo({ aiState: 'human', assignedTo: 'agent@masa.com' }),
+      );
+      setAiState.mockResolvedValue(
+        makeConvo({ aiState: 'human', assignedTo: null }),
+      );
       recordEvent.mockResolvedValue({});
 
       await svc.assign(CONV_ID, ACTOR, { assignedTo: null });
@@ -397,7 +435,9 @@ describe('ConversationControlService', () => {
     it('records an assign event with toState=fromState when assignedTo is null', async () => {
       const { svc, getById, setAiState, recordEvent } = makeMocks();
       getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
-      setAiState.mockResolvedValue(makeConvo({ aiState: 'human', assignedTo: null }));
+      setAiState.mockResolvedValue(
+        makeConvo({ aiState: 'human', assignedTo: null }),
+      );
       recordEvent.mockResolvedValue({});
 
       await svc.assign(CONV_ID, ACTOR, { assignedTo: null });
@@ -470,8 +510,15 @@ describe('ConversationControlService', () => {
       expect(sendText).not.toHaveBeenCalled();
     });
 
-    it('happy path: persists message before send, calls sendText(psid, text, true), records event, returns {message, delivered:true}', async () => {
-      const { svc, getById, addMessage, sendText, recordEvent, findMessageByExternalId } = makeMocks();
+    it('happy path (no customer message → out-of-window): persists before send, calls sendText(psid, text, true), records event', async () => {
+      const {
+        svc,
+        getById,
+        addMessage,
+        sendText,
+        recordEvent,
+        findMessageByExternalId,
+      } = makeMocks();
       const convo = makeConvo({ aiState: 'human' });
       const msg = makeMsg({ id: 'new-msg-1', content: 'سيتم التوصيل غداً' });
       getById.mockResolvedValue(convo);
@@ -492,7 +539,8 @@ describe('ConversationControlService', () => {
       const sendOrder = sendText.mock.invocationCallOrder[0];
       expect(addOrder).toBeLessThan(sendOrder);
 
-      // sendText is called with (psid, text, true) — humanAgent flag set.
+      // No customer message on record → outside the standard window → the
+      // HUMAN_AGENT tag path (humanAgent=true) is the only legal option.
       expect(sendText).toHaveBeenCalledWith(PSID, 'سيتم التوصيل غداً', true);
 
       expect(addMessage).toHaveBeenCalledWith(
@@ -506,16 +554,74 @@ describe('ConversationControlService', () => {
       expect(recordEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'human_message',
-          metadata: expect.objectContaining({ messageId: 'new-msg-1', delivered: true }),
+          metadata: expect.objectContaining({
+            messageId: 'new-msg-1',
+            delivered: true,
+          }),
         }),
       );
-      expect(result).toEqual({ message: msg, delivered: true });
+      expect(result).toEqual({
+        message: msg,
+        delivered: true,
+        deliveryError: null,
+      });
+    });
+
+    it('sends a plain RESPONSE (humanAgent=false) when the customer wrote within 24h', async () => {
+      const {
+        svc,
+        getById,
+        addMessage,
+        sendText,
+        recordEvent,
+        findMessageByExternalId,
+        findLastCustomerMessageAt,
+      } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      findMessageByExternalId.mockResolvedValue(undefined);
+      addMessage.mockResolvedValue(makeMsg());
+      recordEvent.mockResolvedValue({});
+      // Customer last wrote one hour ago — inside the standard window.
+      findLastCustomerMessageAt.mockResolvedValue(
+        new Date(Date.now() - 60 * 60_000),
+      );
+
+      await svc.sendHumanMessage(CONV_ID, ACTOR, { text: 'أهلاً' }, 'k1');
+
+      expect(sendText).toHaveBeenCalledWith(PSID, 'أهلاً', false);
+    });
+
+    it('uses the HUMAN_AGENT tag when the last customer message is older than 24h', async () => {
+      const {
+        svc,
+        getById,
+        addMessage,
+        sendText,
+        recordEvent,
+        findMessageByExternalId,
+        findLastCustomerMessageAt,
+      } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      findMessageByExternalId.mockResolvedValue(undefined);
+      addMessage.mockResolvedValue(makeMsg());
+      recordEvent.mockResolvedValue({});
+      findLastCustomerMessageAt.mockResolvedValue(
+        new Date(Date.now() - 25 * 60 * 60_000),
+      );
+
+      await svc.sendHumanMessage(CONV_ID, ACTOR, { text: 'أهلاً' }, 'k2');
+
+      expect(sendText).toHaveBeenCalledWith(PSID, 'أهلاً', true);
     });
 
     it('idempotent: returns {message:existing, delivered:false} without calling addMessage or sendText', async () => {
-      const { svc, getById, addMessage, sendText, findMessageByExternalId } = makeMocks();
+      const { svc, getById, addMessage, sendText, findMessageByExternalId } =
+        makeMocks();
       getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
-      const existing = makeMsg({ id: 'existing-msg', externalId: 'idem-key-dup' });
+      const existing = makeMsg({
+        id: 'existing-msg',
+        externalId: 'idem-key-dup',
+      });
       findMessageByExternalId.mockResolvedValue(existing);
 
       const result = await svc.sendHumanMessage(
@@ -527,12 +633,18 @@ describe('ConversationControlService', () => {
 
       expect(addMessage).not.toHaveBeenCalled();
       expect(sendText).not.toHaveBeenCalled();
-      expect(result).toEqual({ message: existing, delivered: false });
+      expect(result).toEqual({
+        message: existing,
+        delivered: false,
+        deliveryError: null,
+      });
     });
 
     it('propagates NotFoundException when getById throws', async () => {
       const { svc, getById } = makeMocks();
-      getById.mockRejectedValue(new NotFoundException(`Conversation ${CONV_ID} not found`));
+      getById.mockRejectedValue(
+        new NotFoundException(`Conversation ${CONV_ID} not found`),
+      );
 
       await expect(
         svc.sendHumanMessage(CONV_ID, ACTOR, { text: 'مرحبا' }),
@@ -540,7 +652,14 @@ describe('ConversationControlService', () => {
     });
 
     it('delivered=false when sendText throws (MessengerSendError); message still persisted', async () => {
-      const { svc, getById, addMessage, sendText, recordEvent, findMessageByExternalId } = makeMocks();
+      const {
+        svc,
+        getById,
+        addMessage,
+        sendText,
+        recordEvent,
+        findMessageByExternalId,
+      } = makeMocks();
       getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
       findMessageByExternalId.mockResolvedValue(undefined);
       const msg = makeMsg({ id: 'msg-fail-send' });
@@ -549,18 +668,62 @@ describe('ConversationControlService', () => {
       sendText.mockRejectedValue(new Error('MessengerSendError: 403'));
       recordEvent.mockResolvedValue({});
 
-      const result = await svc.sendHumanMessage(CONV_ID, ACTOR, { text: 'test' }, 'k');
+      const result = await svc.sendHumanMessage(
+        CONV_ID,
+        ACTOR,
+        { text: 'test' },
+        'k',
+      );
 
       // Message was persisted despite send failure.
       expect(addMessage).toHaveBeenCalledTimes(1);
-      // Event records delivered=false.
+      // Event records delivered=false plus the failure reason.
       expect(recordEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          metadata: expect.objectContaining({ delivered: false }),
+          metadata: expect.objectContaining({
+            delivered: false,
+            deliveryError: 'MessengerSendError: 403',
+          }),
         }),
       );
       expect(result.delivered).toBe(false);
+      expect(result.deliveryError).toBe('MessengerSendError: 403');
       expect(result.message).toBe(msg);
+    });
+
+    it('surfaces the Graph error message as deliveryError on MessengerSendError', async () => {
+      const {
+        svc,
+        getById,
+        addMessage,
+        sendText,
+        recordEvent,
+        findMessageByExternalId,
+      } = makeMocks();
+      getById.mockResolvedValue(makeConvo({ aiState: 'human' }));
+      findMessageByExternalId.mockResolvedValue(undefined);
+      addMessage.mockResolvedValue(makeMsg());
+      recordEvent.mockResolvedValue({});
+      sendText.mockRejectedValue(
+        new MessengerSendError(400, {
+          error: {
+            message:
+              '(#10) This message is sent outside of allowed window.',
+          },
+        }),
+      );
+
+      const result = await svc.sendHumanMessage(
+        CONV_ID,
+        ACTOR,
+        { text: 'test' },
+        'k3',
+      );
+
+      expect(result.delivered).toBe(false);
+      expect(result.deliveryError).toBe(
+        '(#10) This message is sent outside of allowed window.',
+      );
     });
   });
 
@@ -652,6 +815,124 @@ describe('ConversationControlService', () => {
       expect(result.total).toBe(42);
       expect(result.limit).toBe(20);
       expect(result.offset).toBe(5);
+    });
+
+    it('forwards the sort key to listWithPreview and maps pinnedAt → pinned', async () => {
+      const { svc, listWithPreview } = makeMocks();
+      listWithPreview.mockResolvedValue({
+        items: [
+          {
+            id: CONV_ID,
+            psid: PSID,
+            aiState: 'bot',
+            assignedTo: null,
+            handoffReason: null,
+            lastMessagePreview: null,
+            lastMessageAt: null,
+            pinnedAt: new Date('2025-01-02T00:00:00Z'),
+          },
+        ],
+        total: 1,
+      });
+
+      const result = await svc.listConversations({
+        sort: 'activity',
+        orderBy: 'asc',
+      });
+
+      expect(listWithPreview).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'activity', orderBy: 'asc' }),
+      );
+      expect(result.items[0].pinned).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // setPinned
+  // -------------------------------------------------------------------------
+
+  describe('setPinned', () => {
+    it('pins and returns { id, pinned: true }', async () => {
+      const { svc, setPinned } = makeMocks();
+      setPinned.mockResolvedValue(
+        makeConvo({ pinnedAt: new Date('2025-01-02T00:00:00Z') }),
+      );
+
+      const result = await svc.setPinned(CONV_ID, true);
+
+      expect(setPinned).toHaveBeenCalledWith(CONV_ID, true);
+      expect(result).toEqual({ id: CONV_ID, pinned: true });
+    });
+
+    it('unpins and returns { id, pinned: false }', async () => {
+      const { svc, setPinned } = makeMocks();
+      setPinned.mockResolvedValue(makeConvo({ pinnedAt: null }));
+
+      const result = await svc.setPinned(CONV_ID, false);
+
+      expect(setPinned).toHaveBeenCalledWith(CONV_ID, false);
+      expect(result).toEqual({ id: CONV_ID, pinned: false });
+    });
+
+    it('throws NotFoundException when the conversation does not exist', async () => {
+      const { svc, setPinned } = makeMocks();
+      setPinned.mockResolvedValue(undefined);
+
+      await expect(svc.setPinned(CONV_ID, true)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('records no audit event (pin is a UI preference, not a state change)', async () => {
+      const { svc, setPinned, recordEvent } = makeMocks();
+      setPinned.mockResolvedValue(makeConvo({ pinnedAt: new Date() }));
+
+      await svc.setPinned(CONV_ID, true);
+
+      expect(recordEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // deleteConversation
+  // -------------------------------------------------------------------------
+
+  describe('deleteConversation', () => {
+    it('wipes Mastra memory for the psid, then deletes the row', async () => {
+      const {
+        svc,
+        getById,
+        deleteConversation,
+        resetConversationMemory,
+      } = makeMocks();
+      getById.mockResolvedValue(makeConvo());
+      deleteConversation.mockResolvedValue(true);
+
+      const result = await svc.deleteConversation(CONV_ID, ACTOR);
+
+      expect(resetConversationMemory).toHaveBeenCalledWith(PSID);
+      expect(deleteConversation).toHaveBeenCalledWith(CONV_ID);
+      // Memory wipe must happen before the row delete (psid comes from the row).
+      expect(
+        resetConversationMemory.mock.invocationCallOrder[0],
+      ).toBeLessThan(deleteConversation.mock.invocationCallOrder[0]);
+      expect(result).toEqual({ id: CONV_ID });
+    });
+
+    it('propagates NotFoundException from getById and deletes nothing', async () => {
+      const {
+        svc,
+        getById,
+        deleteConversation,
+        resetConversationMemory,
+      } = makeMocks();
+      getById.mockRejectedValue(new NotFoundException('nope'));
+
+      await expect(
+        svc.deleteConversation(CONV_ID, ACTOR),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(resetConversationMemory).not.toHaveBeenCalled();
+      expect(deleteConversation).not.toHaveBeenCalled();
     });
   });
 });

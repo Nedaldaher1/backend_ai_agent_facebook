@@ -12,7 +12,9 @@
 import { extractReferral } from '../messenger.normalizer';
 import type { RawMessagingEvent } from '../messenger.types';
 
-function makeEvent(overrides: Partial<RawMessagingEvent> = {}): RawMessagingEvent {
+function makeEvent(
+  overrides: Partial<RawMessagingEvent> = {},
+): RawMessagingEvent {
   return {
     sender: { id: 'PSID-1' },
     recipient: { id: 'PAGE-1' },
@@ -26,24 +28,44 @@ describe('extractReferral (WS3 export)', () => {
     const event = makeEvent({
       message: {
         mid: 'mid-1',
-        referral: { ref: 'ad-1', ad_id: 'ad_111', source: 'ADS', type: 'OPEN_THREAD' },
+        referral: {
+          ref: 'ad-1',
+          ad_id: 'ad_111',
+          source: 'ADS',
+          type: 'OPEN_THREAD',
+        },
       },
     });
     const result = extractReferral(event);
-    expect(result).toMatchObject({ ref: 'ad-1', adId: 'ad_111', source: 'ADS' });
+    expect(result).toMatchObject({
+      ref: 'ad-1',
+      adId: 'ad_111',
+      source: 'ADS',
+    });
   });
 
   it('shape 2: extracts from top-level event.referral (returning user)', () => {
     const event = makeEvent({
-      referral: { ref: 'returning-slug', source: 'SHORTLINK', type: 'OPEN_THREAD' },
+      referral: {
+        ref: 'returning-slug',
+        source: 'SHORTLINK',
+        type: 'OPEN_THREAD',
+      },
     });
     const result = extractReferral(event);
-    expect(result).toMatchObject({ ref: 'returning-slug', source: 'SHORTLINK' });
+    expect(result).toMatchObject({
+      ref: 'returning-slug',
+      source: 'SHORTLINK',
+    });
   });
 
   it('shape 3: extracts from event.postback.referral (Get-Started case)', () => {
     const event = makeEvent({
-      postback: { title: 'Get Started', payload: 'START', referral: { ref: 'gs-ref' } },
+      postback: {
+        title: 'Get Started',
+        payload: 'START',
+        referral: { ref: 'gs-ref' },
+      },
     });
     const result = extractReferral(event);
     expect(result).toMatchObject({ ref: 'gs-ref' });
@@ -81,7 +103,10 @@ describe('extractReferral (WS3 export)', () => {
       },
     });
     const result = extractReferral(event);
-    expect(result?.adsContext).toMatchObject({ ad_title: 'الإعلان', product_id: 'sku-7' });
+    expect(result?.adsContext).toMatchObject({
+      ad_title: 'الإعلان',
+      product_id: 'sku-7',
+    });
   });
 
   it('returns an empty-keys object (not undefined) when raw referral exists but has no fields', () => {

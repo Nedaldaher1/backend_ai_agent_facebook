@@ -141,7 +141,9 @@ describe('AdProductLinksAdminController', () => {
   });
 
   it('update throws NotFoundException when service does', async () => {
-    update.mockRejectedValue(new NotFoundException('Ad product link not found'));
+    update.mockRejectedValue(
+      new NotFoundException('Ad product link not found'),
+    );
 
     await expect(controller.update('ghost', { position: 1 })).rejects.toThrow(
       NotFoundException,

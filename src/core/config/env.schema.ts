@@ -25,17 +25,42 @@ export const envSchema = z
     // --- Model routing (Mastra model-router strings) ---
     // Sales agent — the flagship conversation model. Keep on the flash tier:
     // Jordanian-dialect voice + 11-tool reliability is the product.
-    AGENT_MODEL_ID: z
-      .string()
-      .default('openrouter/google/gemini-3.5-flash'),
+    AGENT_MODEL_ID: z.string().default('openrouter/google/gemini-3.5-flash'),
     // Vision extractor — a closed-enum structured-output task; a lite-tier
     // vision model (e.g. openrouter/google/gemini-3.1-flash-lite, ~6x cheaper)
     // handles it. Schema-validated output degrades gracefully on failure.
-    VISION_MODEL_ID: z
-      .string()
-      .default('openrouter/google/gemini-3.5-flash'),
+    VISION_MODEL_ID: z.string().default('openrouter/google/gemini-3.5-flash'),
     // Vision pre-step toggle: any value except 'false' keeps it enabled.
     VISION_ENABLED: z.string().optional(),
+    // Vision extraction below this confidence is discarded (attributes: null).
+    VISION_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.4),
+    // Max customer-image download size (bytes) before the vision pre-step bails.
+    VISION_MAX_IMAGE_BYTES: z.coerce.number().int().positive().default(5000000),
+    // Timeout (ms) for downloading the customer image from the CDN URL.
+    VISION_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
+    // TTL (ms) for the cached color/size enum lists injected into the vision prompt.
+    VISION_ENUMS_TTL_MS: z.coerce.number().int().positive().default(60000),
+    // Voice-note transcription pre-step (opt-in: exactly 'true'). Gated in the
+    // Messenger webhook controller — flag off reproduces the legacy behavior
+    // (audio attachments silently dropped) byte-for-byte.
+    TRANSCRIPTION_ENABLED: z.string().optional(),
+    // Dedicated audio-understanding model (audio-input chat model via the
+    // OpenRouter router — NOT a bare ASR endpoint): one call returns transcript
+    // + dialect normalization + confidence as structured output.
+    TRANSCRIPTION_MODEL_ID: z
+      .string()
+      .default('openrouter/google/gemini-3.5-flash'),
+    // Transcripts below this confidence are treated as not understood (the
+    // deterministic retry/escalation flow takes over).
+    TRANSCRIPTION_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.45),
+    // Max voice-note download size (bytes) — the hard cost/latency guard
+    // (base64 inflates ~33% into the model call).
+    AUDIO_MAX_BYTES: z.coerce.number().int().positive().default(10000000),
+    // Timeout (ms) for downloading the voice note from the CDN URL.
+    AUDIO_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+    // Voice notes longer than this (best-effort mvhd sniff) are refused with a
+    // polite "too long" reply instead of being transcribed.
+    AUDIO_MAX_DURATION_SEC: z.coerce.number().int().positive().default(180),
     // Cheap-model triage tier for pure greetings/thanks (opt-in: exactly
     // 'true'). See TriageService — strict whitelist; all consequential turns
     // stay on the full agent path.

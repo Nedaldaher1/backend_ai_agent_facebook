@@ -100,7 +100,8 @@ export class ColorsAdminController {
   @ApiBody({ type: CreateColorDto })
   @ApiCreatedResponse({ description: 'Color created.', type: ColorDto })
   @ApiConflictResponse({
-    description: 'A color with that `family` already exists (families are unique).',
+    description:
+      'A color with that `family` already exists (families are unique).',
   })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -135,7 +136,10 @@ export class ColorsAdminController {
       'Products whose images are currently tagged with the "غير معرف" sentinel ' +
       '(i.e. their real color was deleted and needs re-tagging).',
   })
-  @ApiOkResponse({ description: 'Usage of the sentinel color.', type: ColorUsageDto })
+  @ApiOkResponse({
+    description: 'Usage of the sentinel color.',
+    type: ColorUsageDto,
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   unassignedUsage(): Promise<ColorUsage> {
@@ -150,7 +154,10 @@ export class ColorsAdminController {
       '`products` array is distinct and capped at 50; `hasMore` is true when more ' +
       'products use the color than are listed.',
   })
-  @ApiOkResponse({ description: 'Usage report for the color.', type: ColorUsageDto })
+  @ApiOkResponse({
+    description: 'Usage report for the color.',
+    type: ColorUsageDto,
+  })
   @ApiNotFoundResponse({ description: 'No color exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
@@ -197,7 +204,9 @@ export class ColorsAdminController {
   })
   @ApiBody({ type: UpdateColorDto })
   @ApiOkResponse({ description: 'Color updated.', type: ColorDto })
-  @ApiBadRequestResponse({ description: 'The color is a system color (immutable).' })
+  @ApiBadRequestResponse({
+    description: 'The color is a system color (immutable).',
+  })
   @ApiNotFoundResponse({ description: 'No color exists with that id.' })
   @ApiConflictResponse({
     description:

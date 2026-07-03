@@ -17,10 +17,7 @@ export class SizeChartRepository {
    * greatest threshold ≤ customer weight.
    */
   async findAllOrderedByMinWeightDesc(): Promise<SizeChartRow[]> {
-    return this.db
-      .select()
-      .from(sizeChart)
-      .orderBy(desc(sizeChart.minWeight));
+    return this.db.select().from(sizeChart).orderBy(desc(sizeChart.minWeight));
   }
 
   /**

@@ -5,9 +5,7 @@ describe('stripImageMarkup', () => {
     const input =
       'خليني أجيب صورته:\n![صورة 1](https://pub-caf.r2.dev/848229a9.jpeg)\nبتحبي تطلبيها؟';
     // The removed image line folds to a single paragraph break.
-    expect(stripImageMarkup(input)).toBe(
-      'خليني أجيب صورته:\n\nبتحبي تطلبيها؟',
-    );
+    expect(stripImageMarkup(input)).toBe('خليني أجيب صورته:\n\nبتحبي تطلبيها؟');
   });
 
   it('collapses the two --- separators that wrapped a removed image block', () => {

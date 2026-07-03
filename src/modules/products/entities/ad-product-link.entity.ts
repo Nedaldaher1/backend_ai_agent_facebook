@@ -55,15 +55,12 @@ export const adProductLinks = pgTable(
 /**
  * adProductLinks N—1 products: each link belongs to exactly one product.
  */
-export const adProductLinksRelations = relations(
-  adProductLinks,
-  ({ one }) => ({
-    product: one(products, {
-      fields: [adProductLinks.productId],
-      references: [products.id],
-    }),
+export const adProductLinksRelations = relations(adProductLinks, ({ one }) => ({
+  product: one(products, {
+    fields: [adProductLinks.productId],
+    references: [products.id],
   }),
-);
+}));
 
 export const insertAdProductLinkSchema = createInsertSchema(adProductLinks);
 export const selectAdProductLinkSchema = createSelectSchema(adProductLinks);

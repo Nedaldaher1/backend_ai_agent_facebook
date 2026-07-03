@@ -26,9 +26,7 @@ function ctx(vals: Record<string, string>) {
 }
 
 /** Build a mock OrdersService that returns the given views from getStatusForConversation. */
-function makeServiceMock(
-  views: OrderStatusView[],
-): OrdersService {
+function makeServiceMock(views: OrderStatusView[]): OrdersService {
   return {
     getStatusForConversation: jest.fn().mockResolvedValue({ orders: views }),
   } as unknown as OrdersService;
@@ -161,7 +159,9 @@ describe('buildGetOrderStatusTool', () => {
       expect(result.orders).toHaveLength(2);
       expect(result.orders[0].order_id).toBe('order-1');
       expect(result.orders[1].order_id).toBe('order-2');
-      expect(result.orders[1].status_label_ar).toBe('طلبك مسجّل عنا وقيد المراجعة');
+      expect(result.orders[1].status_label_ar).toBe(
+        'طلبك مسجّل عنا وقيد المراجعة',
+      );
     });
   });
 });

@@ -40,8 +40,30 @@ describe('mergeTurns', () => {
     expect(m.adRef).toBe('ad1'); // 2nd had none → keep the last present
   });
 
+  it('takes the last PRESENT audio url and carries it beside text members', () => {
+    const m = mergeTurns([
+      turn({ text: '', lastAudioUrl: 'https://cdn/v1.mp4', externalMessageId: '1' }),
+      turn({ text: 'وبدي لون أسود', externalMessageId: '2' }),
+      turn({ text: '', lastAudioUrl: 'https://cdn/v2.mp4', externalMessageId: '3' }),
+    ]);
+    expect(m.lastAudioUrl).toBe('https://cdn/v2.mp4'); // last present
+    expect(m.text).toBe('وبدي لون أسود'); // audio-only members add no text
+  });
+
+  it('carries image and audio together through one merged batch', () => {
+    const m = mergeTurns([
+      turn({ text: '', lastImageUrl: 'https://cdn/p.jpg', externalMessageId: '1' }),
+      turn({ text: '', lastAudioUrl: 'https://cdn/v.mp4', externalMessageId: '2' }),
+    ]);
+    expect(m.lastImageUrl).toBe('https://cdn/p.jpg');
+    expect(m.lastAudioUrl).toBe('https://cdn/v.mp4');
+  });
+
   it('derives a deterministic batch key from the members', () => {
-    const items = [turn({ externalMessageId: '1' }), turn({ externalMessageId: '2' })];
+    const items = [
+      turn({ externalMessageId: '1' }),
+      turn({ externalMessageId: '2' }),
+    ];
     expect(mergeTurns(items).externalMessageId).toBe(
       mergeTurns(items).externalMessageId,
     );

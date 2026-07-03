@@ -42,7 +42,9 @@ async function bootstrap() {
   // …) works without extra config. `methods` MUST be set explicitly: @fastify/cors
   // (what NestJS registers under the hood) defaults to `GET,HEAD,POST`, which would
   // block the admin PATCH/PUT/DELETE routes with a CORS error.
-  const corsOrigins: (string | RegExp)[] = (config.get<string>('CORS_ORIGINS') ?? '')
+  const corsOrigins: (string | RegExp)[] = (
+    config.get<string>('CORS_ORIGINS') ?? ''
+  )
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);

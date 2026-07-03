@@ -39,6 +39,7 @@ import type { AgentBehaviorService } from '../agent-behavior.service';
 import type { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import type { SizingService } from '@/modules/sizing/sizing.service';
 import type { VisionService } from '../vision/vision.service';
+import type { TranscriptionService } from '../transcription/transcription.service';
 import type { TriageService } from '../triage/triage.service';
 
 const mockBuildMastra = buildMastra as jest.MockedFunction<typeof buildMastra>;
@@ -67,6 +68,17 @@ const visionMock: VisionService = {
     .mockResolvedValue({ attributes: null, confidence: null }),
 } as unknown as VisionService;
 
+/** Transcription pre-step disabled in unit tests (opt-in via TRANSCRIPTION_ENABLED). */
+const transcriptionMock = {
+  transcribe: jest.fn().mockResolvedValue({
+    ok: false,
+    transcript: null,
+    confidence: null,
+    reason: 'disabled',
+    meta: { model: 'test', latencyMs: 0 },
+  }),
+} as unknown as TranscriptionService;
+
 /** Triage tier disabled in unit tests (opt-in via TRIAGE_ENABLED). */
 const triageMock = {
   enabled: false,
@@ -75,9 +87,7 @@ const triageMock = {
 
 const FAKE_REPLY = 'أهلاً';
 
-function makeProductsMock(
-  skuProduct?: object | null,
-): ProductsService {
+function makeProductsMock(skuProduct?: object | null): ProductsService {
   return {
     search: jest.fn().mockResolvedValue([]),
     findPublishedBySku: jest.fn().mockResolvedValue(skuProduct ?? undefined),
@@ -99,7 +109,10 @@ function makeConversationsMock(opts?: {
   const attributionResult =
     opts?.attributionResult === ALREADY_ATTRIBUTED
       ? undefined
-      : (opts?.attributionResult ?? { id: conversationId, attributedAt: new Date() });
+      : (opts?.attributionResult ?? {
+          id: conversationId,
+          attributedAt: new Date(),
+        });
 
   return {
     findOrCreateByPsid: jest.fn().mockResolvedValue({
@@ -113,9 +126,7 @@ function makeConversationsMock(opts?: {
     clearHumanSummary: jest.fn().mockResolvedValue(undefined),
     setAiState: jest.fn().mockResolvedValue({}),
     recordEvent: jest.fn().mockResolvedValue({}),
-    recordFirstTouchAttribution: jest
-      .fn()
-      .mockResolvedValue(attributionResult),
+    recordFirstTouchAttribution: jest.fn().mockResolvedValue(attributionResult),
     mergeState: jest.fn().mockResolvedValue({}),
   } as unknown as ConversationsService;
 }
@@ -129,7 +140,9 @@ function makeService(
   };
   mockBuildMastra.mockReturnValue({
     mastra: {} as ReturnType<typeof buildMastra>['mastra'],
-    salesAgent: fakeSalesAgent as unknown as ReturnType<typeof buildMastra>['salesAgent'],
+    salesAgent: fakeSalesAgent as unknown as ReturnType<
+      typeof buildMastra
+    >['salesAgent'],
   });
   const svc = new AgentService(
     makeConfigMock(),
@@ -140,6 +153,7 @@ function makeService(
     knowledgeMock,
     sizingMock,
     visionMock,
+    transcriptionMock,
     triageMock,
   );
   svc.onModuleInit();
@@ -168,11 +182,13 @@ describe('AgentService — WS3 first-touch attribution', () => {
     // Give the fire-and-forget void attribution a tick to settle.
     await Promise.resolve();
 
-    expect(
-      conversations.recordFirstTouchAttribution,
-    ).toHaveBeenCalledWith(
+    expect(conversations.recordFirstTouchAttribution).toHaveBeenCalledWith(
       'conv-1',
-      expect.objectContaining({ adRef: 'summer-ad', adId: 'ad_999', adSource: 'ADS' }),
+      expect.objectContaining({
+        adRef: 'summer-ad',
+        adId: 'ad_999',
+        adSource: 'ADS',
+      }),
     );
     // The reply is still returned even though attribution is async.
     expect(reply.reply).toBe(FAKE_REPLY);
@@ -272,8 +288,14 @@ describe('AgentService — WS3 first-touch attribution', () => {
 
   it('does NOT call findPublishedBySku when recordFirstTouchAttribution returns undefined (already attributed)', async () => {
     // Simulate already-attributed: recordFirstTouchAttribution returns undefined.
-    const conversations = makeConversationsMock({ attributionResult: ALREADY_ATTRIBUTED });
-    const products = makeProductsMock({ id: 'p1', name: 'x', priceJod: '10.000' });
+    const conversations = makeConversationsMock({
+      attributionResult: ALREADY_ATTRIBUTED,
+    });
+    const products = makeProductsMock({
+      id: 'p1',
+      name: 'x',
+      priceJod: '10.000',
+    });
     const svc = makeService(conversations, products);
 
     await svc.handleMessage({
@@ -289,7 +311,11 @@ describe('AgentService — WS3 first-touch attribution', () => {
 
   it('does NOT call findPublishedBySku when referral has no adProductId', async () => {
     const conversations = makeConversationsMock();
-    const products = makeProductsMock({ id: 'p2', name: 'y', priceJod: '20.000' });
+    const products = makeProductsMock({
+      id: 'p2',
+      name: 'y',
+      priceJod: '20.000',
+    });
     const svc = makeService(conversations, products);
 
     await svc.handleMessage({

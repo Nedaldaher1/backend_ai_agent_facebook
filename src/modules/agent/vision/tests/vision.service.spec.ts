@@ -92,7 +92,10 @@ describe('VisionService.extractAttributes', () => {
 
     const [messages, options] = mockGenerate.mock.calls[0];
     expect(options.structuredOutput.schema).toBeDefined();
-    const parts = messages[0].content as Array<{ type: string; image?: string }>;
+    const parts = messages[0].content as Array<{
+      type: string;
+      image?: string;
+    }>;
     const imagePart = parts.find((p) => p.type === 'image');
     expect(imagePart?.image).toContain('data:image/jpeg;base64,');
   });

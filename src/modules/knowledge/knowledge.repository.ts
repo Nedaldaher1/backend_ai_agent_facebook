@@ -187,9 +187,14 @@ export class KnowledgeRepository {
    * Ordering: query present → priority DESC + greatest(word_similarity, similarity) DESC;
    * else → priority DESC + createdAt DESC.
    */
-  async findRelevant(filter: KnowledgeRelevanceFilter): Promise<KnowledgeEntry[]> {
+  async findRelevant(
+    filter: KnowledgeRelevanceFilter,
+  ): Promise<KnowledgeEntry[]> {
     // Short-circuit: products scope with empty list can match nothing.
-    if (filter.scope.type === 'products' && filter.scope.productIds.length === 0) {
+    if (
+      filter.scope.type === 'products' &&
+      filter.scope.productIds.length === 0
+    ) {
       return [];
     }
 
@@ -204,7 +209,9 @@ export class KnowledgeRepository {
 
     // Scope condition
     if (filter.scope.type === 'products') {
-      conditions.push(inArray(knowledgeEntries.productId, filter.scope.productIds));
+      conditions.push(
+        inArray(knowledgeEntries.productId, filter.scope.productIds),
+      );
     } else {
       conditions.push(isNull(knowledgeEntries.productId));
     }

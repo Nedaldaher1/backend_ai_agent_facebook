@@ -31,7 +31,9 @@ jest.mock('@mastra/core/agent', () => ({ Agent: jest.fn() }));
 jest.mock('@mastra/loggers', () => ({ PinoLogger: jest.fn() }));
 // The factory imports `../tools/index`; from this test file that module resolves
 // via `../../tools/index`. Stub it so we don't pull real tool dependencies.
-jest.mock('../../tools/index', () => ({ buildSalesTools: jest.fn(() => ({})) }));
+jest.mock('../../tools/index', () => ({
+  buildSalesTools: jest.fn(() => ({})),
+}));
 
 import { Memory } from '@mastra/memory';
 import { Mastra } from '@mastra/core';

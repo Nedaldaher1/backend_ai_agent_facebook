@@ -72,10 +72,13 @@ export class ProductImagesAdminController {
   @ApiOperation({
     summary: 'List product images',
     description:
-      'Returns all images for the product as `{ key, url, isPrimary, colors }` ' +
-      'objects. `url` is the public access URL resolved from the storage key. ' +
-      '`isPrimary` is `true` only for the first entry (index 0). `colors` is the ' +
-      'list of canonical colors attached to that image.',
+      'Returns all images for the product as `{ key, url, isPrimary, colors, ' +
+      'hasEmbedding, description }` objects. `url` is the public access URL ' +
+      'resolved from the storage key. `isPrimary` is `true` only for the first ' +
+      'entry (index 0). `colors` is the list of canonical colors attached to ' +
+      'that image. `hasEmbedding` reports whether the image is indexed for ' +
+      'visual search with the current embedding model. `description` is the ' +
+      'admin-authored text embedded together with the image (null when unset).',
   })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Product UUID.' })
   @ApiOkResponse({
@@ -99,6 +102,12 @@ export class ProductImagesAdminController {
                 hex: { type: 'string', nullable: true, example: '#B0212F' },
               },
             },
+          },
+          hasEmbedding: { type: 'boolean' },
+          description: {
+            type: 'string',
+            nullable: true,
+            example: 'عباية سوداء بأكمام واسعة',
           },
         },
       },
@@ -152,7 +161,9 @@ export class ProductImagesAdminController {
     name: 'imageId',
     description: 'Storage key of the image to promote.',
   })
-  @ApiOkResponse({ description: 'Primary image updated; updated product returned.' })
+  @ApiOkResponse({
+    description: 'Primary image updated; updated product returned.',
+  })
   @ApiNotFoundResponse({
     description: 'No product exists with that id, or the key is not present.',
   })
@@ -185,7 +196,8 @@ export class ProductImagesAdminController {
     type: ImageWithColorsDto,
   })
   @ApiNotFoundResponse({
-    description: 'The product, the image key, or a given color id was not found.',
+    description:
+      'The product, the image key, or a given color id was not found.',
   })
   @ApiBadRequestResponse({
     description: 'The payload was invalid (e.g. empty `colorIds`).',

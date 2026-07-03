@@ -3,6 +3,8 @@ import { and, eq, notInArray, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
 import { products } from './entities/product.entity';
 import { productImageEmbeddings } from './entities/product-image-embedding.entity';
+import { productImageColors } from './entities/product-image-color.entity';
+import { colors } from './entities/color.entity';
 
 /**
  * One product-image match from the ANN search: the product fields the agent
@@ -139,20 +141,33 @@ export class ProductImageEmbeddingsRepository {
    * dedupe still yields up to `k` distinct products. The query vector must be the
    * same dtype/normalization as the stored vectors.
    *
-   * `opts.colorFamily` narrows the search to a specific color family BEFORE the
-   * LIMIT so the HNSW scan only sees products of that color. The filter is fully
-   * parameterized — never string-concatenated. An unrecognized color (undefined)
-   * disables the filter and returns results across all colors.
+   * `opts.colorFamilies` narrows the search to specific color families BEFORE
+   * the LIMIT so the HNSW scan only sees matching products. Variant-aware: a
+   * product qualifies when its PRIMARY color_family matches OR any per-image
+   * variant color does (product_image_colors → colors.family) — a light_green-
+   * primary product with a beige variant image must survive a beige filter.
+   * The filter is fully parameterized — never string-concatenated. An empty /
+   * absent list disables the filter and returns results across all colors.
    */
   async searchSimilarByEmbedding(
     embedding: number[],
     k: number,
-    opts: { overfetch?: number; colorFamily?: string } = {},
+    opts: { overfetch?: number; colorFamilies?: string[] } = {},
   ): Promise<SimilarProductRow[]> {
     const overfetch = opts.overfetch ?? k * 4;
-    const colorFilter = opts.colorFamily
-      ? sql`AND p.color_family = ${opts.colorFamily}`
-      : sql``;
+    const families = opts.colorFamilies ?? [];
+    const familyList = sql.join(
+      families.map((f) => sql`${f}`),
+      sql`, `,
+    );
+    const colorFilter =
+      families.length > 0
+        ? sql`AND (p.color_family IN (${familyList}) OR EXISTS (
+            SELECT 1 FROM ${productImageColors} AS pic
+            JOIN ${colors} AS c ON c.id = pic.color_id
+            WHERE pic.product_id = p.id AND c.family IN (${familyList})
+          ))`
+        : sql``;
     const vec = `[${embedding.join(',')}]`;
     const result = await this.db.execute(sql`
       WITH candidates AS (

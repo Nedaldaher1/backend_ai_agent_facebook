@@ -84,7 +84,11 @@ export class MessengerClient {
    *                   human-initiated message). When false (default), uses
    *                   RESPONSE with NO tag (in-window agent reply).
    */
-  async sendText(psid: string, text: string, humanAgent = false): Promise<void> {
+  async sendText(
+    psid: string,
+    text: string,
+    humanAgent = false,
+  ): Promise<void> {
     const body = humanAgent
       ? {
           recipient: { id: psid },

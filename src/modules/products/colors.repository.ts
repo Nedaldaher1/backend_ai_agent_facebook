@@ -132,25 +132,23 @@ export class ColorsRepository {
       // Step 2 — dedupe to avoid a PK collision: delete this color's tag on any
       // image that is already tagged with the sentinel.
       const existing = alias(productImageColors, 'existing_tag');
-      await tx
-        .delete(productImageColors)
-        .where(
-          and(
-            eq(productImageColors.colorId, colorId),
-            exists(
-              tx
-                .select({ one: sql`1` })
-                .from(existing)
-                .where(
-                  and(
-                    eq(existing.productId, productImageColors.productId),
-                    eq(existing.storageKey, productImageColors.storageKey),
-                    eq(existing.colorId, sentinelId),
-                  ),
+      await tx.delete(productImageColors).where(
+        and(
+          eq(productImageColors.colorId, colorId),
+          exists(
+            tx
+              .select({ one: sql`1` })
+              .from(existing)
+              .where(
+                and(
+                  eq(existing.productId, productImageColors.productId),
+                  eq(existing.storageKey, productImageColors.storageKey),
+                  eq(existing.colorId, sentinelId),
                 ),
-            ),
+              ),
           ),
-        );
+        ),
+      );
 
       // Step 3 — reassign the survivors onto the sentinel.
       const reassigned = await tx

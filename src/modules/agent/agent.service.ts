@@ -19,9 +19,22 @@ import {
   VisionService,
   type VisionExtractResult,
 } from './vision/vision.service';
+import {
+  TranscriptionService,
+  type TranscriptionResult,
+} from './transcription/transcription.service';
 import { MAX_GALLERY_CARDS } from './messenger/messenger.formatter';
 import { stripEmojis, stripImageMarkup } from './reply-sanitize.util';
 import { FALLBACK_REPLY } from './customer-reply.constants';
+import { HANDOFF_REPLY } from './handoff.constants';
+import {
+  VOICE_ESCALATE_REASON,
+  VOICE_FAIL_ESCALATE_THRESHOLD,
+  VOICE_FAILED_MARKER,
+  VOICE_NOTE_MARKER,
+  VOICE_RETRY_REPLY,
+  VOICE_TOO_LONG_REPLY,
+} from './voice.constants';
 import { formatCostMeta, type TurnUsage } from './token-cost.util';
 import { TriageService } from './triage/triage.service';
 
@@ -46,6 +59,8 @@ export interface IncomingMessage {
   text: string;
   /** Customer-sent image URL — accepted now; processing deferred to the vision phase. */
   lastImageUrl?: string;
+  /** Customer-sent voice-note URL — transcribed by the pre-generate voice step. */
+  lastAudioUrl?: string;
   /** Self-controlled ref slug from the Messenger referral payload (e.g. "spring-ad-1"). */
   adRef?: string;
   /** Facebook profile name — optional best-effort seed for working memory. */
@@ -294,6 +309,7 @@ export class AgentService implements OnModuleInit {
     private readonly knowledge: KnowledgeService,
     private readonly sizing: SizingService,
     private readonly vision: VisionService,
+    private readonly transcription: TranscriptionService,
     private readonly triage: TriageService,
   ) {}
 
@@ -466,6 +482,19 @@ export class AgentService implements OnModuleInit {
       };
     }
 
+    // Voice pre-step (deterministic, best-effort): a voice note is transcribed
+    // by the DEDICATED transcription model BEFORE the bot-pause gate, so even
+    // human-handled conversations get a readable transcript in the admin
+    // thread (~fractions of a cent per note). The service never throws; when
+    // the transcript is unusable the deterministic degrade flow below (ask to
+    // resend → escalate to human) takes over instead of generate().
+    let voice: TranscriptionResult | undefined;
+    if (input.lastAudioUrl) {
+      voice = await this.transcription.transcribe({ url: input.lastAudioUrl });
+    }
+    const voiceParts = this.composeVoiceTurn(input, voice);
+    const prevVoiceFails = this.readVoiceFailCount(convo.state);
+
     // Timed-pause expiry (auto-resume): a pause created with `durationMinutes`
     // stores `pausedUntil`, but the gate below only checks `aiState`. Nothing
     // else reads `pausedUntil`, so without this an elapsed *temporary* pause
@@ -500,9 +529,12 @@ export class AgentService implements OnModuleInit {
       await this.logTurn({
         conversationId: convo.id,
         role: 'customer',
-        content: input.text,
+        content: voiceParts.storedContent,
         externalId: dedupKey,
         ...(input.lastImageUrl ? { imageUrl: input.lastImageUrl } : {}),
+        ...(voiceParts.audioAttributes
+          ? { attributes: { audio: voiceParts.audioAttributes } }
+          : {}),
       });
       // Make the silence explainable: without this line a paused/handed-off
       // conversation looks identical to a broken agent in the logs. Now the
@@ -523,6 +555,34 @@ export class AgentService implements OnModuleInit {
     // Guards below keep every consequential turn on the full path.
     const triaged = await this.tryTriage(input, convo, dedupKey, resourceId);
     if (triaged) return triaged;
+
+    // Deterministic voice degrade flow: a voice-ONLY turn (no typed text, no
+    // photo) whose transcription is unusable never reaches generate(). Ask the
+    // customer to resend/type; after VOICE_FAIL_ESCALATE_THRESHOLD consecutive
+    // unusable voice turns, hand the conversation to a human via the existing
+    // escalation machinery. A turn that also carries text or a photo proceeds
+    // on that signal instead (the failed voice note becomes a system note).
+    if (voice && !voice.ok && !input.text.trim() && !input.lastImageUrl) {
+      return this.handleUnusableVoiceTurn(
+        convo,
+        voice,
+        voiceParts,
+        dedupKey,
+        resourceId,
+        prevVoiceFails,
+      );
+    }
+    // Any turn that proceeds past the degrade flow means communication worked
+    // — clear the consecutive-voice-failure counter (best-effort).
+    if (prevVoiceFails > 0) {
+      void this.conversations
+        .mergeState(convo.id, { voiceFailCount: 0 })
+        .catch((err) =>
+          this.logger.warn(
+            `mergeState(voiceFailCount reset) failed for ${convo.id}: ${String(err)}`,
+          ),
+        );
+    }
 
     // Build the trusted RequestContext that write tools read for identity.
     // Write tools read `conversationId` (identity) from here, never from model
@@ -555,9 +615,10 @@ export class AgentService implements OnModuleInit {
       requestContext.set('lastImageUrl', input.lastImageUrl);
       requestContext.set('imageLed', true);
       // The customer's caption (if any) this turn — find_similar_by_image embeds
-      // it together with the photo into one multimodal vector.
-      if (input.text?.trim()) {
-        requestContext.set('lastImageText', input.text.trim());
+      // it together with the photo into one multimodal vector. Voice turns use
+      // the merged typed-text + transcript so a spoken caption counts too.
+      if (voiceParts.llmText.trim()) {
+        requestContext.set('lastImageText', voiceParts.llmText.trim());
       }
 
       // Vision pre-step (deterministic, best-effort): extract structured
@@ -585,6 +646,15 @@ export class AgentService implements OnModuleInit {
     if (visionNote) {
       notes.push(visionNote);
     }
+    // Voice-turn note: the agent must know part of the text was machine-
+    // transcribed (usable case) or that a voice note existed but couldn't be
+    // transcribed (degraded case with typed text/photo present).
+    if (voice) {
+      const voiceNote = this.buildVoiceNote(voice);
+      if (voiceNote) {
+        notes.push(voiceNote);
+      }
+    }
     // Handoff context feedback (WS7): on the first turn after an admin resume, the
     // human's wrap-up summary is injected once so the agent resumes with awareness
     // of what the human did, then cleared so later turns don't repeat it.
@@ -601,7 +671,12 @@ export class AgentService implements OnModuleInit {
     // published FAQ so the agent answers from store knowledge FIRST — regardless
     // of whether the LLM decides to call the get_knowledge tool. Best-effort:
     // undefined on miss/failure and the turn proceeds (the tool stays available).
-    const knowledgeNote = await this.prefetchKnowledgeNote(input, convo);
+    // Voice turns pass the merged typed-text + transcript so a spoken FAQ
+    // question ("بتوصّلوا لعمّان؟" as a voice note) gates/resolves correctly.
+    const knowledgeNote = await this.prefetchKnowledgeNote(
+      voice ? { ...input, text: voiceParts.llmText } : input,
+      convo,
+    );
     if (knowledgeNote) {
       notes.push(knowledgeNote);
     }
@@ -652,9 +727,12 @@ export class AgentService implements OnModuleInit {
     await this.logTurn({
       conversationId: convo.id,
       role: 'customer',
-      content: input.text,
+      content: voiceParts.storedContent,
       externalId: dedupKey,
       ...(input.lastImageUrl ? { imageUrl: input.lastImageUrl } : {}),
+      ...(voiceParts.audioAttributes
+        ? { attributes: { audio: voiceParts.audioAttributes } }
+        : {}),
     });
 
     // TODO (AIA-32 webhook): if generate() throws, the inbound row above is left
@@ -675,7 +753,7 @@ export class AgentService implements OnModuleInit {
     };
 
     let result = (await this.salesAgent.generate(
-      input.text,
+      voiceParts.llmText,
       genOptions,
     )) as GenerateResult;
     // Turn-level usage: normalized here, summed with the retry below when it
@@ -712,7 +790,7 @@ export class AgentService implements OnModuleInit {
         this.logger.warn(
           `agent turn [${resourceId}] empty reply (finishReason=${reason}) — retrying once`,
         );
-        result = await this.salesAgent.generate(input.text, genOptions);
+        result = await this.salesAgent.generate(voiceParts.llmText, genOptions);
         replyText = stripEmojis(stripImageMarkup(result.text ?? ''));
         turnUsage = this.sumUsage(turnUsage, this.normalizeUsage(result));
       }
@@ -991,7 +1069,12 @@ export class AgentService implements OnModuleInit {
   ): Promise<AgentReply | undefined> {
     try {
       if (!this.triage.enabled) return undefined;
-      if (input.lastImageUrl || input.adRef || input.referral) {
+      if (
+        input.lastImageUrl ||
+        input.lastAudioUrl ||
+        input.adRef ||
+        input.referral
+      ) {
         return undefined;
       }
       if (convo.humanSummary) return undefined;
@@ -1198,7 +1281,7 @@ export class AgentService implements OnModuleInit {
     const window = Math.floor(Date.now() / DEDUP_WINDOW_MS);
     const digest = createHash('sha256')
       .update(
-        `${input.contactId}|${normalizedText}|${input.lastImageUrl ?? ''}|${window}`,
+        `${input.contactId}|${normalizedText}|${input.lastImageUrl ?? ''}|${input.lastAudioUrl ?? ''}|${window}`,
       )
       .digest('hex')
       .slice(0, 40);
@@ -1330,6 +1413,167 @@ export class AgentService implements OnModuleInit {
         ? '، وبما أن الثقة منخفضة اعرضي الأقرب وأكّدي مع الزبونة «قصدك هاي؟» قبل إتمام الطلب.'
         : '.')
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Voice-note pre-step (dedicated transcription model; see TranscriptionService)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Compose the three text variants of a (possibly) voice-bearing turn:
+   *  - `storedContent` — the business-log row (admin thread + list preview):
+   *    typed text plus the transcript behind a human-readable Arabic marker,
+   *    or the failed-marker when the voice note couldn't be used.
+   *  - `llmText` — what generate() receives and Mastra's thread history keeps:
+   *    plain typed text + transcript, marker-free, so recalled history reads
+   *    naturally on later turns.
+   *  - `audioAttributes` — transcript metadata persisted on the message row
+   *    (messages.attributes.audio) for the admin panel and evals.
+   * A no-voice turn passes `input.text` through untouched.
+   */
+  private composeVoiceTurn(
+    input: IncomingMessage,
+    voice: TranscriptionResult | undefined,
+  ): {
+    storedContent: string;
+    llmText: string;
+    audioAttributes?: Record<string, unknown>;
+  } {
+    if (!voice) {
+      return { storedContent: input.text, llmText: input.text };
+    }
+    const typed = input.text?.trim() ?? '';
+    const transcript =
+      voice.ok && voice.transcript ? voice.transcript.trim() : '';
+    const storedContent = [
+      typed,
+      transcript ? `${VOICE_NOTE_MARKER} ${transcript}` : VOICE_FAILED_MARKER,
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const llmText = [typed, transcript].filter(Boolean).join('\n');
+    const audioAttributes: Record<string, unknown> = {
+      url: input.lastAudioUrl,
+      // The low-confidence transcript is kept here even when unusable, so the
+      // admin sees what the model heard next to the audio player.
+      ...(voice.transcript ? { transcript: voice.transcript } : {}),
+      ...(voice.normalizedText ? { normalizedText: voice.normalizedText } : {}),
+      ...(voice.language ? { language: voice.language } : {}),
+      ...(voice.confidence !== null ? { confidence: voice.confidence } : {}),
+      usable: voice.ok,
+      ...(voice.reason ? { reason: voice.reason } : {}),
+      model: voice.meta.model,
+      latencyMs: voice.meta.latencyMs,
+    };
+    return { storedContent, llmText, audioAttributes };
+  }
+
+  /** Read conversations.state.voiceFailCount defensively (free-form jsonb). */
+  private readVoiceFailCount(state: unknown): number {
+    const raw = (state as Record<string, unknown> | null | undefined)?.[
+      'voiceFailCount'
+    ];
+    const n = Number(raw ?? 0);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+
+  /**
+   * Deterministic degrade flow for a voice-ONLY turn with no usable transcript
+   * (fetch/model failure, too large/long, unintelligible, low confidence).
+   * Never calls generate():
+   *  - below the threshold → in-persona ask to resend/type, counter +1
+   *    (awaited — the counter drives the NEXT turn's escalation decision);
+   *  - at the threshold → escalate through the SAME machinery as the
+   *    escalate_to_human tool (ai_state='human' + handoff event + admin badge),
+   *    reply HANDOFF_REPLY, and reset the counter so a voice note sent after
+   *    an admin resume doesn't instantly re-escalate.
+   * Like triage turns, these replies are business-logged but never enter
+   * Mastra's thread history — a failed exchange is not context worth paying
+   * for on later turns.
+   */
+  private async handleUnusableVoiceTurn(
+    convo: { id: string },
+    voice: TranscriptionResult,
+    parts: { storedContent: string; audioAttributes?: Record<string, unknown> },
+    dedupKey: string,
+    resourceId: string,
+    prevFailCount: number,
+  ): Promise<AgentReply> {
+    const failCount = prevFailCount + 1;
+    await this.logTurn({
+      conversationId: convo.id,
+      role: 'customer',
+      content: parts.storedContent,
+      externalId: dedupKey,
+      ...(parts.audioAttributes
+        ? { attributes: { audio: { ...parts.audioAttributes, failCount } } }
+        : {}),
+    });
+
+    if (failCount >= VOICE_FAIL_ESCALATE_THRESHOLD) {
+      await this.conversations.mergeState(convo.id, { voiceFailCount: 0 });
+      await this.conversations.escalateToHuman(
+        convo.id,
+        `${VOICE_ESCALATE_REASON}: ${voice.reason ?? 'unknown'} — ${failCount} رسائل صوتية متتالية غير مفهومة`,
+      );
+      await this.logTurn({
+        conversationId: convo.id,
+        role: 'agent',
+        content: HANDOFF_REPLY,
+      });
+      this.logger.log(
+        `agent turn [${resourceId}] voice degrade escalated: reason=${voice.reason ?? 'unknown'} failCount=${failCount}`,
+      );
+      return { reply: HANDOFF_REPLY, ran: true, aiState: 'human' };
+    }
+
+    await this.conversations.mergeState(convo.id, {
+      voiceFailCount: failCount,
+    });
+    const reply =
+      voice.reason === 'too_long' || voice.reason === 'too_large'
+        ? VOICE_TOO_LONG_REPLY
+        : VOICE_RETRY_REPLY;
+    await this.logTurn({
+      conversationId: convo.id,
+      role: 'agent',
+      content: reply,
+    });
+    this.logger.log(
+      `agent turn [${resourceId}] voice degrade retry ask: reason=${voice.reason ?? 'unknown'} failCount=${failCount}`,
+    );
+    return { reply, ran: true, aiState: 'bot' };
+  }
+
+  /**
+   * Per-turn system note for a voice-bearing turn. Usable transcript → the
+   * agent is told the text is machine-transcribed (ask, don't guess) plus the
+   * model's normalized rendering; failed transcript alongside typed text or a
+   * photo → the agent is told a voice note existed but couldn't be used.
+   */
+  private buildVoiceNote(voice: TranscriptionResult): string {
+    if (!voice.ok) {
+      return (
+        'الزبونة أرسلت أيضاً رسالة صوتية تعذّر تفريغها — اعتمدي على نصها المكتوب ' +
+        'أو صورتها، وإن لزم اسأليها بلطف إن كان في الرسالة الصوتية شيء إضافي.'
+      );
+    }
+    const parts = [
+      'رسالة الزبونة هذا الدور مفرّغة آلياً (كلياً أو جزئياً) من رسالة صوتية وقد ' +
+        'تحتوي أخطاء تعرّف على الكلام؛ إذا بدا النص غير منطقي أو ناقصاً اطلبي ' +
+        'توضيحاً بدل التخمين.',
+    ];
+    if (voice.normalizedText) {
+      parts.push(`صياغة مفهومة محتملة لما قصدته: ${voice.normalizedText}`);
+    }
+    // 0.7: usable but not trustworthy enough to finalize an order on — nudge
+    // an explicit confirmation of the details that drive the order.
+    if (voice.confidence !== null && voice.confidence < 0.7) {
+      parts.push(
+        'الثقة بالتفريغ متوسطة — أكّدي التفاصيل المهمة (المقاس/اللون/العنوان) قبل إتمام أي طلب.',
+      );
+    }
+    return parts.join(' ');
   }
 
   // ---------------------------------------------------------------------------

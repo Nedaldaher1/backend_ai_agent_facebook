@@ -176,19 +176,20 @@ describe('KnowledgeService', () => {
       const g2 = makeEntry({ id: 'g2', productId: null });
 
       // findRelevant returns global rows when called with global scope
-      findRelevant.mockImplementation(
-        (filter: { scope: { type: string } }) => {
-          if (filter.scope.type === 'global') return Promise.resolve([g1, g2]);
-          return Promise.resolve([]);
-        },
-      );
+      findRelevant.mockImplementation((filter: { scope: { type: string } }) => {
+        if (filter.scope.type === 'global') return Promise.resolve([g1, g2]);
+        return Promise.resolve([]);
+      });
 
       const result = await service.getRelevant({ query: 'توصيل' });
 
       // Called exactly once — for the global scope (no productIds means specific tier is skipped)
       expect(findRelevant).toHaveBeenCalledTimes(1);
       expect(findRelevant).toHaveBeenCalledWith(
-        expect.objectContaining({ scope: { type: 'global' }, isPublished: true }),
+        expect.objectContaining({
+          scope: { type: 'global' },
+          isPublished: true,
+        }),
       );
       expect(result).toEqual([g1, g2]);
     });
@@ -198,12 +199,10 @@ describe('KnowledgeService', () => {
         makeEntry({ id: `ps${i}`, productId: 'p1' }),
       );
 
-      findRelevant.mockImplementation(
-        (filter: { scope: { type: string } }) => {
-          if (filter.scope.type === 'products') return Promise.resolve(ps);
-          return Promise.resolve([]);
-        },
-      );
+      findRelevant.mockImplementation((filter: { scope: { type: string } }) => {
+        if (filter.scope.type === 'products') return Promise.resolve(ps);
+        return Promise.resolve([]);
+      });
 
       const result = await service.getRelevant({ productIds: ['p1'] });
 
@@ -223,12 +222,11 @@ describe('KnowledgeService', () => {
       const ps1 = makeEntry({ id: 'ps1', productId: 'p1' });
       const ps2 = makeEntry({ id: 'ps2', productId: 'p1' });
 
-      findRelevant.mockImplementation(
-        (filter: { scope: { type: string } }) => {
-          if (filter.scope.type === 'products') return Promise.resolve([ps1, ps2]);
-          return Promise.resolve([]);
-        },
-      );
+      findRelevant.mockImplementation((filter: { scope: { type: string } }) => {
+        if (filter.scope.type === 'products')
+          return Promise.resolve([ps1, ps2]);
+        return Promise.resolve([]);
+      });
 
       const result = await service.getRelevant({ productIds: ['p1'] });
 
@@ -246,14 +244,15 @@ describe('KnowledgeService', () => {
       const g1 = makeEntry({ id: 'g1', productId: null });
       const g2 = makeEntry({ id: 'g2', productId: null });
 
-      findRelevant.mockImplementation(
-        (filter: { scope: { type: string } }) => {
-          if (filter.scope.type === 'products') return Promise.resolve([ps1]);
-          return Promise.resolve([g1, g2]);
-        },
-      );
+      findRelevant.mockImplementation((filter: { scope: { type: string } }) => {
+        if (filter.scope.type === 'products') return Promise.resolve([ps1]);
+        return Promise.resolve([g1, g2]);
+      });
 
-      const result = await service.getRelevant({ productIds: ['p1'], query: 'q' });
+      const result = await service.getRelevant({
+        productIds: ['p1'],
+        query: 'q',
+      });
 
       // Product-specific entry is first
       expect(result[0].id).toBe('ps1');
@@ -267,20 +266,18 @@ describe('KnowledgeService', () => {
         makeEntry({ id: `ps${i}`, productId: 'p1' }),
       );
 
-      findRelevant.mockImplementation(
-        (filter: { scope: { type: string } }) => {
-          if (filter.scope.type === 'products') return Promise.resolve(ps);
-          return Promise.resolve([]);
-        },
-      );
+      findRelevant.mockImplementation((filter: { scope: { type: string } }) => {
+        if (filter.scope.type === 'products') return Promise.resolve(ps);
+        return Promise.resolve([]);
+      });
 
       const result = await service.getRelevant({ productIds: ['p1'] });
 
       expect(result).toHaveLength(5);
       // remaining === 0 → global-scope call never made
-      const globalCall = (findRelevant.mock.calls as Array<[{ scope: { type: string } }]>).find(
-        ([f]) => f.scope.type === 'global',
-      );
+      const globalCall = (
+        findRelevant.mock.calls as Array<[{ scope: { type: string } }]>
+      ).find(([f]) => f.scope.type === 'global');
       expect(globalCall).toBeUndefined();
     });
   });
@@ -370,7 +367,9 @@ describe('KnowledgeService', () => {
       const result = await service.update('k1', { productId: PRODUCT_UUID_2 });
 
       expect(getById).toHaveBeenCalledWith(PRODUCT_UUID_2);
-      expect(updateById).toHaveBeenCalledWith('k1', { productId: PRODUCT_UUID_2 });
+      expect(updateById).toHaveBeenCalledWith('k1', {
+        productId: PRODUCT_UUID_2,
+      });
       expect(result).toBe(entry);
     });
 

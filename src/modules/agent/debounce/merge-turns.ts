@@ -37,6 +37,7 @@ export function mergeTurns(items: IncomingMessage[]): IncomingMessage {
     .join('\n');
 
   const lastImageUrl = lastWins('lastImageUrl');
+  const lastAudioUrl = lastWins('lastAudioUrl');
   const adRef = lastWins('adRef');
   const name = lastWins('name');
   const channel = lastWins('channel');
@@ -49,6 +50,7 @@ export function mergeTurns(items: IncomingMessage[]): IncomingMessage {
     contactId: first.contactId,
     text,
     ...(lastImageUrl ? { lastImageUrl } : {}),
+    ...(lastAudioUrl ? { lastAudioUrl } : {}),
     ...(adRef ? { adRef } : {}),
     ...(name ? { name } : {}),
     ...(channel ? { channel } : {}),

@@ -101,7 +101,9 @@ export class VisionService {
    * Extract structured attributes from a customer image URL. NEVER throws —
    * every failure path returns { attributes: null, reason }.
    */
-  async extractAttributes(input: { url: string }): Promise<VisionExtractResult> {
+  async extractAttributes(input: {
+    url: string;
+  }): Promise<VisionExtractResult> {
     if (!this.enabled) {
       return { attributes: null, confidence: null, reason: 'disabled' };
     }

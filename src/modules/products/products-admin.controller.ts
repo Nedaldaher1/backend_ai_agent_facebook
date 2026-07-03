@@ -22,7 +22,6 @@ import {
   ApiConsumes,
   ApiCreatedResponse,
   ApiForbiddenResponse,
-  ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -47,7 +46,11 @@ import {
 } from '@/common/validation';
 import { BEARER_AUTH_NAME } from '@/core/openapi/openapi';
 import { ALLOWED_IMAGE_MIME } from '@/core/storage/storage.constants';
-import { ProductDto } from './dto/product.dto';
+import {
+  CreateProductDto,
+  ProductDto,
+  UpdateProductDto,
+} from './dto/product.dto';
 import type { Product } from './entities/product.entity';
 import { ProductsService } from './products.service';
 
@@ -102,7 +105,11 @@ export class ProductsAdminController {
       'Creates a new product in draft state (is_published = false). The product ' +
       'will not be visible to customers or the agent until published.',
   })
-  @ApiCreatedResponse({ description: 'Product draft created.', type: ProductDto })
+  @ApiBody({ type: CreateProductDto })
+  @ApiCreatedResponse({
+    description: 'Product draft created.',
+    type: ProductDto,
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
   @ApiForbiddenResponse({ description: 'Insufficient role.' })
   create(
@@ -118,6 +125,7 @@ export class ProductsAdminController {
       'Partial (PATCH) update of a product. Only the supplied fields are changed. ' +
       'Drafts and published products are both reachable.',
   })
+  @ApiBody({ type: UpdateProductDto })
   @ApiOkResponse({ description: 'Product updated.', type: ProductDto })
   @ApiNotFoundResponse({ description: 'No product exists with that id.' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
@@ -133,7 +141,8 @@ export class ProductsAdminController {
   @HttpCode(200)
   @ApiOperation({
     summary: 'Delete a product',
-    description: 'Hard-deletes the product row and returns the deleted product.',
+    description:
+      'Hard-deletes the product row and returns the deleted product.',
   })
   @ApiOkResponse({ description: 'Product deleted.', type: ProductDto })
   @ApiNotFoundResponse({ description: 'No product exists with that id.' })
@@ -191,10 +200,7 @@ export class ProductsAdminController {
     @Query(new ZodValidationPipe(adminListQuerySchema)) query: AdminListQuery,
   ): Promise<PaginatedResult<Product>> {
     const { published, limit, offset } = query;
-    return this.products.list(
-      { isPublished: published },
-      { limit, offset },
-    );
+    return this.products.list({ isPublished: published }, { limit, offset });
   }
 
   @Get('embedding-summary')
@@ -228,12 +234,13 @@ export class ProductsAdminController {
   @Post('analyze-image')
   @HttpCode(200)
   @ApiOperation({
-    summary: 'Analyze a product image with the embedding model',
+    summary: 'Validate a product image is decodable',
     description:
-      'Runs a single uploaded image through the embedding model (Marqo-FashionSigLIP) ' +
-      "as a real forward pass to validate it is processable — backs the admin form's " +
-      'per-image "analyzed" indicator. The image is NOT stored; the searchable embedding ' +
-      'is written on publish. Accepts multipart/form-data with one image file (jpeg/png/webp).',
+      'Validates that a single uploaded image is a decodable raster image (format ' +
+      'sniff only — no model call). Backs the admin form\'s per-image "analyzed" ' +
+      'indicator. The image is NOT stored; the searchable embedding is computed ' +
+      'remotely (gemini-embedding-2 via OpenRouter) on publish. Accepts ' +
+      'multipart/form-data with one image file (jpeg/png/webp).',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -243,12 +250,12 @@ export class ProductsAdminController {
     },
   })
   @ApiOkResponse({
-    description: 'The image was analyzed by the model.',
+    description: 'The image is decodable.',
     schema: {
       type: 'object',
       properties: {
         analyzed: { type: 'boolean', example: true },
-        modelId: { type: 'string', example: 'Marqo/marqo-fashionSigLIP' },
+        modelId: { type: 'string', example: 'google/gemini-embedding-2' },
       },
     },
   })

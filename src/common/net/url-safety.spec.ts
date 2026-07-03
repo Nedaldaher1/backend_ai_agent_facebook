@@ -37,12 +37,15 @@ describe('isPrivateOrReservedIp', () => {
     expect(isPrivateOrReservedIp(ip)).toBe(true);
   });
 
-  it.each(['8.8.8.8', '1.1.1.1', '172.32.0.1', '93.184.216.34', '2606:4700::1111'])(
-    'allows public %s',
-    (ip) => {
-      expect(isPrivateOrReservedIp(ip)).toBe(false);
-    },
-  );
+  it.each([
+    '8.8.8.8',
+    '1.1.1.1',
+    '172.32.0.1',
+    '93.184.216.34',
+    '2606:4700::1111',
+  ])('allows public %s', (ip) => {
+    expect(isPrivateOrReservedIp(ip)).toBe(false);
+  });
 
   it('returns false for a non-IP string', () => {
     expect(isPrivateOrReservedIp('not-an-ip')).toBe(false);
@@ -53,9 +56,9 @@ describe('assertPublicHttpUrl', () => {
   beforeEach(() => mockLookup.mockReset());
 
   it('rejects non-http(s) schemes', async () => {
-    await expect(assertPublicHttpUrl('file:///etc/passwd')).rejects.toBeInstanceOf(
-      UnsafeUrlError,
-    );
+    await expect(
+      assertPublicHttpUrl('file:///etc/passwd'),
+    ).rejects.toBeInstanceOf(UnsafeUrlError);
     await expect(assertPublicHttpUrl('ftp://host/x')).rejects.toBeInstanceOf(
       UnsafeUrlError,
     );
@@ -68,9 +71,9 @@ describe('assertPublicHttpUrl', () => {
   });
 
   it('rejects localhost without a DNS lookup', async () => {
-    await expect(assertPublicHttpUrl('http://localhost/x')).rejects.toBeInstanceOf(
-      UnsafeUrlError,
-    );
+    await expect(
+      assertPublicHttpUrl('http://localhost/x'),
+    ).rejects.toBeInstanceOf(UnsafeUrlError);
     expect(mockLookup).not.toHaveBeenCalled();
   });
 
@@ -78,12 +81,12 @@ describe('assertPublicHttpUrl', () => {
     await expect(
       assertPublicHttpUrl('http://169.254.169.254/latest/meta-data/'),
     ).rejects.toBeInstanceOf(UnsafeUrlError);
-    await expect(assertPublicHttpUrl('http://127.0.0.1:3000/')).rejects.toBeInstanceOf(
-      UnsafeUrlError,
-    );
-    await expect(assertPublicHttpUrl('http://10.1.2.3/')).rejects.toBeInstanceOf(
-      UnsafeUrlError,
-    );
+    await expect(
+      assertPublicHttpUrl('http://127.0.0.1:3000/'),
+    ).rejects.toBeInstanceOf(UnsafeUrlError);
+    await expect(
+      assertPublicHttpUrl('http://10.1.2.3/'),
+    ).rejects.toBeInstanceOf(UnsafeUrlError);
     await expect(assertPublicHttpUrl('http://[::1]/')).rejects.toBeInstanceOf(
       UnsafeUrlError,
     );

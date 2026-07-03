@@ -21,7 +21,9 @@ function makeProductsMock(getProductMediaByColors: jest.Mock): ProductsService {
 /** Fake request context mirroring what AgentService injects (a mediaSink array). */
 function ctx(sink: string[]) {
   return {
-    requestContext: { get: (k: string) => (k === 'mediaSink' ? sink : undefined) },
+    requestContext: {
+      get: (k: string) => (k === 'mediaSink' ? sink : undefined),
+    },
   };
 }
 
@@ -43,7 +45,10 @@ describe('buildGetProductMediaTool', () => {
       ctx(sink),
     );
 
-    expect(getProductMediaByColors).toHaveBeenCalledWith('p1', ['أحمر', 'أزرق']);
+    expect(getProductMediaByColors).toHaveBeenCalledWith('p1', [
+      'أحمر',
+      'أزرق',
+    ]);
     expect(result).toEqual({
       sent_colors: ['أحمر'],
       unavailable_colors: ['أزرق'],

@@ -14,6 +14,7 @@ import { DebounceService } from './debounce/debounce.service';
 import { MessengerClient } from './messenger/messenger.client';
 import { MessengerSignatureGuard } from './messenger/messenger-signature.guard';
 import { MessengerWebhookController } from './messenger/messenger-webhook.controller';
+import { TranscriptionService } from './transcription/transcription.service';
 import { TriageService } from './triage/triage.service';
 import { VisionService } from './vision/vision.service';
 
@@ -39,15 +40,13 @@ import { VisionService } from './vision/vision.service';
     KnowledgeModule,
     SizingModule,
   ],
-  controllers: [
-    MessengerWebhookController,
-    ConversationsAdminController,
-  ],
+  controllers: [MessengerWebhookController, ConversationsAdminController],
   providers: [
     AgentService,
     AgentBehaviorService,
     AgentBehaviorRepository,
     VisionService,
+    TranscriptionService,
     TriageService,
     DebounceService,
     MessengerClient,

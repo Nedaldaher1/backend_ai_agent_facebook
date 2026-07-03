@@ -24,7 +24,9 @@ jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
 jest.mock('@mastra/core/agent', () => ({ Agent: jest.fn() }));
 jest.mock('@mastra/core/di', () => ({ RequestContext: jest.fn() }));
-jest.mock('../../../agent/mastra/mastra.factory', () => ({ buildMastra: jest.fn() }));
+jest.mock('../../../agent/mastra/mastra.factory', () => ({
+  buildMastra: jest.fn(),
+}));
 
 import { MessengerWebhookController } from '../messenger-webhook.controller';
 import type { AgentService } from '../../agent.service';
@@ -40,7 +42,9 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 const VERIFY_TOKEN = 'test-verify-token';
 
-function makeConfig(env: Record<string, string | undefined> = {}): ConfigService {
+function makeConfig(
+  env: Record<string, string | undefined> = {},
+): ConfigService {
   return { get: (key: string) => env[key] } as unknown as ConfigService;
 }
 
@@ -59,10 +63,16 @@ interface MakeControllerOpts {
   agentThrows?: boolean;
   /** Set false to disable human pacing (single-message mode). Default: enabled. */
   pacingEnabled?: boolean;
+  /** Set true to enable the voice-note gate (TRANSCRIPTION_ENABLED). Default: off. */
+  transcriptionEnabled?: boolean;
 }
 
 function makeController(opts: MakeControllerOpts) {
-  const baseReply = opts.reply ?? { reply: 'أهلاً', ran: true, aiState: 'bot' as const };
+  const baseReply = opts.reply ?? {
+    reply: 'أهلاً',
+    ran: true,
+    aiState: 'bot' as const,
+  };
   const agent = {
     handleMessage: opts.agentThrows
       ? jest.fn().mockRejectedValue(new Error('Agent failed'))
@@ -76,7 +86,9 @@ function makeController(opts: MakeControllerOpts) {
   // Minimal ConversationsService stub — the existing tests don't exercise WS3
   // paths so they just need the service to exist without throwing.
   const conversations = {
-    findOrCreateByPsid: jest.fn().mockResolvedValue({ id: 'conv-stub', aiState: 'bot' }),
+    findOrCreateByPsid: jest
+      .fn()
+      .mockResolvedValue({ id: 'conv-stub', aiState: 'bot' }),
     recordFirstTouchAttribution: jest.fn().mockResolvedValue(undefined),
   } as unknown as import('@/modules/conversations/conversations.service').ConversationsService;
 
@@ -116,6 +128,9 @@ function makeController(opts: MakeControllerOpts) {
   if (opts.pacingEnabled === false) {
     configEnv.MESSENGER_HUMAN_PACING_ENABLED = 'false';
   }
+  if (opts.transcriptionEnabled) {
+    configEnv.TRANSCRIPTION_ENABLED = 'true';
+  }
 
   const config = makeConfig(configEnv);
 
@@ -132,6 +147,7 @@ function makeController(opts: MakeControllerOpts) {
     controller,
     agent,
     products,
+    conversations,
     debounce,
     messengerClient,
     flush: () => lastFlush,
@@ -271,7 +287,9 @@ describe('MessengerWebhookController — POST /webhook/messenger', () => {
 
   it('returns ok and ignores a malformed body (parse failure)', () => {
     const { controller, debounce } = makeController({});
-    const req = { body: { object: 'page', entry: 'NOT_AN_ARRAY' } } as unknown as FastifyRequest;
+    const req = {
+      body: { object: 'page', entry: 'NOT_AN_ARRAY' },
+    } as unknown as FastifyRequest;
     const result = controller.handleWebhook(req);
     expect(result).toEqual({ status: 'ok' });
     expect(debounce.enqueue).not.toHaveBeenCalled();
@@ -283,14 +301,20 @@ describe('MessengerWebhookController — POST /webhook/messenger', () => {
     controller.handleWebhook(req);
     expect(debounce.enqueue).toHaveBeenCalledWith(
       'PSID-1',
-      expect.objectContaining({ contactId: 'PSID-1', text: 'مرحبا', channel: 'messenger' }),
+      expect.objectContaining({
+        contactId: 'PSID-1',
+        text: 'مرحبا',
+        channel: 'messenger',
+      }),
       expect.any(Function),
     );
   });
 
   it('maps externalMessageId from mid', () => {
     const { controller, debounce } = makeController({});
-    const req = makeBody({ message: { mid: 'UNIQUE-MID-XYZ', text: 'hello' } }) as unknown as FastifyRequest;
+    const req = makeBody({
+      message: { mid: 'UNIQUE-MID-XYZ', text: 'hello' },
+    }) as unknown as FastifyRequest;
     controller.handleWebhook(req);
     expect(debounce.enqueue).toHaveBeenCalledWith(
       expect.any(String),
@@ -464,9 +488,9 @@ describe('MessengerWebhookController — async processBatch worker', () => {
     controller.handleWebhook(req);
     await flush();
 
-    const senderActions = (messengerClient.senderAction as jest.Mock).mock.calls.map(
-      (c: unknown[]) => c[1],
-    );
+    const senderActions = (
+      messengerClient.senderAction as jest.Mock
+    ).mock.calls.map((c: unknown[]) => c[1]);
     expect(senderActions).toContain('mark_seen');
     expect(senderActions).toContain('typing_on');
     expect(senderActions).toContain('typing_off');
@@ -570,7 +594,9 @@ describe('MessengerWebhookController — async processBatch worker', () => {
         aiState: 'bot',
       },
     });
-    (products.getMedia as jest.Mock).mockRejectedValue(new Error('storage down'));
+    (products.getMedia as jest.Mock).mockRejectedValue(
+      new Error('storage down'),
+    );
 
     const req = makeBody() as unknown as FastifyRequest;
     controller.handleWebhook(req);
@@ -584,8 +610,11 @@ describe('MessengerWebhookController — async processBatch worker', () => {
         expect.objectContaining({ title: 'عباية', subtitle: '45.000 د.أ' }),
       ]),
     );
-    const [[, elements]] = (messengerClient.sendTemplate as jest.Mock).mock.calls;
-    expect((elements as Array<{ image_url?: string }>)[0].image_url).toBeUndefined();
+    const [[, elements]] = (messengerClient.sendTemplate as jest.Mock).mock
+      .calls;
+    expect(
+      (elements as Array<{ image_url?: string }>)[0].image_url,
+    ).toBeUndefined();
   });
 
   it('sends each product photo as its own image message when reply.images is present', async () => {
@@ -667,7 +696,9 @@ describe('MessengerWebhookController — async processBatch worker', () => {
     const { controller, messengerClient, flush } = makeController({
       agentThrows: true,
     });
-    (messengerClient.sendText as jest.Mock).mockRejectedValue(new Error('Messenger down'));
+    (messengerClient.sendText as jest.Mock).mockRejectedValue(
+      new Error('Messenger down'),
+    );
 
     const req = makeBody() as unknown as FastifyRequest;
     controller.handleWebhook(req);
@@ -715,7 +746,95 @@ describe('MessengerWebhookController — async processBatch worker', () => {
     const textCalls = (messengerClient.sendText as jest.Mock).mock.calls.map(
       (c: unknown[]) => c[1] as string,
     );
-    const overflowText = textCalls.find((t) => t.includes('5') && t.includes('تصميم'));
+    const overflowText = textCalls.find(
+      (t) => t.includes('5') && t.includes('تصميم'),
+    );
     expect(overflowText).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /webhook/messenger — voice-note gate (TRANSCRIPTION_ENABLED)
+// ---------------------------------------------------------------------------
+
+describe('MessengerWebhookController — voice-note gate', () => {
+  const AUDIO_ATTACHMENT = {
+    type: 'audio',
+    payload: { url: 'https://cdn.fb.com/voice.mp4' },
+  };
+
+  it('flag OFF (default): a voice-only event is skipped exactly like today', () => {
+    const { controller, debounce } = makeController({});
+
+    const req = makeBody({
+      message: { mid: 'mid-a', attachments: [AUDIO_ATTACHMENT] },
+    }) as unknown as FastifyRequest;
+    const result = controller.handleWebhook(req);
+
+    expect(result).toEqual({ status: 'ok' });
+    expect(debounce.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('flag OFF: a voice-only event carrying a referral still persists attribution', async () => {
+    const { controller, conversations, debounce } = makeController({});
+
+    const req = makeBody({
+      message: {
+        mid: 'mid-a',
+        attachments: [AUDIO_ATTACHMENT],
+        referral: { ref: 'spring-ad-1', source: 'ADS', type: 'OPEN_THREAD' },
+      },
+    }) as unknown as FastifyRequest;
+    controller.handleWebhook(req);
+    // persistAttributionOnly is fire-and-forget — let the microtask run.
+    await new Promise((r) => setImmediate(r));
+
+    expect(debounce.enqueue).not.toHaveBeenCalled();
+    expect(conversations.recordFirstTouchAttribution).toHaveBeenCalledWith(
+      'conv-stub',
+      expect.objectContaining({ adRef: 'spring-ad-1' }),
+    );
+  });
+
+  it('flag OFF: audio is stripped from a mixed text+voice event, text still flows', () => {
+    const { controller, debounce } = makeController({});
+
+    const req = makeBody({
+      message: {
+        mid: 'mid-a',
+        text: 'مرحبا',
+        attachments: [AUDIO_ATTACHMENT],
+      },
+    }) as unknown as FastifyRequest;
+    controller.handleWebhook(req);
+
+    expect(debounce.enqueue).toHaveBeenCalledTimes(1);
+    const incoming = (debounce.enqueue as jest.Mock).mock.calls[0][1] as {
+      text: string;
+      lastAudioUrl?: string;
+    };
+    expect(incoming.text).toBe('مرحبا');
+    expect(incoming.lastAudioUrl).toBeUndefined();
+  });
+
+  it('flag ON: a voice-only event is enqueued with lastAudioUrl', () => {
+    const { controller, debounce } = makeController({
+      transcriptionEnabled: true,
+    });
+
+    const req = makeBody({
+      message: { mid: 'mid-a', attachments: [AUDIO_ATTACHMENT] },
+    }) as unknown as FastifyRequest;
+    controller.handleWebhook(req);
+
+    expect(debounce.enqueue).toHaveBeenCalledTimes(1);
+    const incoming = (debounce.enqueue as jest.Mock).mock.calls[0][1] as {
+      text: string;
+      lastAudioUrl?: string;
+      externalMessageId?: string;
+    };
+    expect(incoming.lastAudioUrl).toBe('https://cdn.fb.com/voice.mp4');
+    expect(incoming.text).toBe('');
+    expect(incoming.externalMessageId).toBe('mid-a');
   });
 });

@@ -7,6 +7,7 @@ import { AdminModule } from '@/modules/admin/admin.module';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { AgentModule } from '@/modules/agent/agent.module';
 import { ConversationsModule } from '@/modules/conversations/conversations.module';
+import { DashboardModule } from '@/modules/dashboard/dashboard.module';
 import { KnowledgeModule } from '@/modules/knowledge/knowledge.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { ProductsModule } from '@/modules/products/products.module';
@@ -29,6 +30,8 @@ import { ProductsModule } from '@/modules/products/products.module';
     ConversationsModule,
     OrdersModule,
     KnowledgeModule,
+    // cross-domain read-only aggregates (via exported services)
+    DashboardModule,
     // agent (depends on the domains above, via their services)
     AgentModule,
   ],

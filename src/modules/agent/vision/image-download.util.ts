@@ -11,7 +11,7 @@
 import { ImageDecodeError } from '@/modules/embeddings/image-decode.error';
 import { assertPublicHttpUrl } from '@/common/net/url-safety';
 
-/** Media types Claude vision accepts. */
+/** Media types the vision model accepts. */
 export type SupportedMediaType =
   | 'image/jpeg'
   | 'image/png'
@@ -54,7 +54,12 @@ const HEADER_MEDIA_TYPES: Record<string, SupportedMediaType> = {
  * images as application/octet-stream. Returns undefined when unrecognized.
  */
 function sniffMediaType(buf: Buffer): SupportedMediaType | undefined {
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+  if (
+    buf.length >= 3 &&
+    buf[0] === 0xff &&
+    buf[1] === 0xd8 &&
+    buf[2] === 0xff
+  ) {
     return 'image/jpeg';
   }
   if (
@@ -66,7 +71,12 @@ function sniffMediaType(buf: Buffer): SupportedMediaType | undefined {
   ) {
     return 'image/png';
   }
-  if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+  if (
+    buf.length >= 6 &&
+    buf[0] === 0x47 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46
+  ) {
     return 'image/gif'; // "GIF"
   }
   if (
@@ -121,7 +131,9 @@ export async function downloadImage(
   // Reject oversize early when the server advertises the length.
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new ImageFetchError(`image too large: ${declared} bytes > ${maxBytes}`);
+    throw new ImageFetchError(
+      `image too large: ${declared} bytes > ${maxBytes}`,
+    );
   }
 
   const buffer = Buffer.from(await res.arrayBuffer());

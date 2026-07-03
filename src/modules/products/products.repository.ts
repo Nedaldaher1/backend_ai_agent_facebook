@@ -9,6 +9,7 @@ import {
   eq,
   getTableColumns,
   ilike,
+  inArray,
   isNotNull,
   sql,
   type SQL,
@@ -22,6 +23,7 @@ import {
 } from './entities/product.entity';
 import { adProductLinks } from './entities/ad-product-link.entity';
 import { productImageColors } from './entities/product-image-color.entity';
+import { productImageDescriptions } from './entities/product-image-description.entity';
 import { colors } from './entities/color.entity';
 import { tokenizeSearchQuery } from './search-tokenize.util';
 
@@ -33,6 +35,12 @@ import { tokenizeSearchQuery } from './search-tokenize.util';
  */
 export interface ProductFilter {
   colorFamily?: string;
+  /**
+   * Match ANY of these families (primary OR variant image colors). Set by the
+   * search path when a customer term fans out to several canonical families
+   * ("اخضر" → green + light_green). Combined with `colorFamily` when both given.
+   */
+  colorFamilies?: string[];
   size?: string;
   fabric?: string;
   occasion?: string;
@@ -79,18 +87,28 @@ export class ProductsRepository {
     if (filter.isPublished !== undefined) {
       conditions.push(eq(products.isPublished, filter.isPublished));
     }
-    if (filter.colorFamily) {
-      // Variant-aware colour match: the product's PRIMARY color_family OR any of
-      // its per-image variant colours (product_image_colors → colors.family). So
-      // a product whose primary is green but which has a red variant image still
-      // matches a search for "red" — multi-colour products were previously
-      // matchable only on their single primary colour.
+    // Variant-aware colour match: the product's PRIMARY color_family OR any of
+    // its per-image variant colours (product_image_colors → colors.family). So
+    // a product whose primary is green but which has a red variant image still
+    // matches a search for "red" — multi-colour products were previously
+    // matchable only on their single primary colour. `colorFamilies` (a term
+    // that fanned out, e.g. "اخضر" → green + light_green) matches ANY listed
+    // family; a single `colorFamily` is folded into the same IN list.
+    const families = [
+      ...(filter.colorFamily ? [filter.colorFamily] : []),
+      ...(filter.colorFamilies ?? []),
+    ];
+    if (families.length > 0) {
+      const familyList = sql.join(
+        families.map((f) => sql`${f}`),
+        sql`, `,
+      );
       conditions.push(
-        sql`(${products.colorFamily} = ${filter.colorFamily} OR EXISTS (
+        sql`(${products.colorFamily} IN (${familyList}) OR EXISTS (
           SELECT 1 FROM ${productImageColors}
           JOIN ${colors} ON ${colors.id} = ${productImageColors.colorId}
           WHERE ${productImageColors.productId} = ${products.id}
-            AND ${colors.family} = ${filter.colorFamily}
+            AND ${colors.family} IN (${familyList})
         ))`,
       );
     }
@@ -304,6 +322,11 @@ export class ProductsRepository {
     // which whole-string `similarity()` cannot do for an Arabic sentence. ILIKE
     // adds exact-substring hits trigrams can miss. 0.5 keeps unrelated words out
     // ("فستان"/"بنطلون" score 0) — calibrated against the live catalog.
+    //
+    // Per-image descriptions count too: admins describe variants there ("عباية
+    // لون بيج بتتميز بالتطريز عند الصدر") while the product name can be a bare
+    // SKU-style label ("عباية صيفي #001") — without this EXISTS such a product
+    // is unfindable by the very words the admin wrote for it.
     const WORD_SIM = 0.5;
     const tokenConds = tokens.map(
       (t) => sql`(
@@ -312,6 +335,11 @@ export class ProductsRepository {
         OR word_similarity(${t}, ${tagsText}) >= ${WORD_SIM}
         OR ${products.name} ILIKE ${'%' + t + '%'}
         OR ${tagsText} ILIKE ${'%' + t + '%'}
+        OR EXISTS (
+          SELECT 1 FROM ${productImageDescriptions}
+          WHERE ${productImageDescriptions.productId} = ${products.id}
+            AND word_similarity(${t}, ${productImageDescriptions.description}) >= ${WORD_SIM}
+        )
       )`,
     );
 
@@ -342,5 +370,18 @@ export class ProductsRepository {
         ) DESC`,
       )
       .limit(limit);
+  }
+
+  /**
+   * Published products by id set, unordered (callers re-order — the semantic
+   * search preserves its own relevance ranking). Publish gate enforced here so
+   * an embedding row pointing at a since-unpublished product can never leak.
+   */
+  async findPublishedByIds(ids: string[]): Promise<Product[]> {
+    if (ids.length === 0) return [];
+    return this.db
+      .select()
+      .from(products)
+      .where(and(inArray(products.id, ids), eq(products.isPublished, true)));
   }
 }

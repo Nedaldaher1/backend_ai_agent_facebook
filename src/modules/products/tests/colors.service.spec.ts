@@ -177,18 +177,18 @@ describe('ColorsService', () => {
   it('update rejects editing a system color (400)', async () => {
     findById.mockResolvedValue(SENTINEL);
 
-    await expect(
-      service.update('C-unassigned', { name: 'x' }),
-    ).rejects.toThrow(BadRequestException);
+    await expect(service.update('C-unassigned', { name: 'x' })).rejects.toThrow(
+      BadRequestException,
+    );
     expect(updateById).not.toHaveBeenCalled();
   });
 
   it('update rejects a family change without confirmation (409)', async () => {
     findById.mockResolvedValue(makeColor({ family: 'red' }));
 
-    await expect(
-      service.update('C-red', { family: 'maroon' }),
-    ).rejects.toThrow(ConflictException);
+    await expect(service.update('C-red', { family: 'maroon' })).rejects.toThrow(
+      ConflictException,
+    );
     expect(updateById).not.toHaveBeenCalled();
   });
 
@@ -235,7 +235,10 @@ describe('ColorsService', () => {
     const result = await service.delete('C-red');
 
     expect(findByFamily).toHaveBeenCalledWith('__unassigned__');
-    expect(deleteWithReassignment).toHaveBeenCalledWith('C-red', 'C-unassigned');
+    expect(deleteWithReassignment).toHaveBeenCalledWith(
+      'C-red',
+      'C-unassigned',
+    );
     expect(result).toEqual({
       deleted: true,
       reassignedImages: 3,

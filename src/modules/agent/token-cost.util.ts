@@ -10,6 +10,10 @@
  * This is an ESTIMATE for logs and eval comparisons only — OpenRouter's
  * invoice is authoritative. Unknown model ids yield `undefined` so a stale
  * constant can never silently misreport a cost of 0.
+ *
+ * Audio caveat: rates here are TEXT-token rates. Gemini bills audio input
+ * tokens at a higher rate (~2x text), so estimates for transcription turns
+ * (audio file parts) are understated — the invoice remains authoritative.
  */
 
 /** USD per million tokens for one model. */

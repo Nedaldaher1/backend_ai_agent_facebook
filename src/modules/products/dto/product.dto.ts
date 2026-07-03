@@ -1,5 +1,6 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
+import { createProductSchema, updateProductSchema } from '@/common/validation';
 import { selectProductSchema } from '../entities/product.entity';
 
 /**
@@ -19,3 +20,12 @@ export const productResponseSchema = selectProductSchema.extend({
 });
 
 export class ProductDto extends createZodDto(productResponseSchema) {}
+
+/**
+ * OpenAPI request-body DTOs for create/update. Validation stays with the shared
+ * schemas in `@/common/validation` (applied via ZodValidationPipe); these
+ * classes only document the bodies in the Scalar docs and feed the frontend's
+ * generated `api.d.ts` types.
+ */
+export class CreateProductDto extends createZodDto(createProductSchema) {}
+export class UpdateProductDto extends createZodDto(updateProductSchema) {}
