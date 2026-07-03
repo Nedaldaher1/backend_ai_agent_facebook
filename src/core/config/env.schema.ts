@@ -230,6 +230,15 @@ export const envSchema = z
     // Optional ads token to resolve ad_id → name/adset/campaign for attribution.
     META_ADS_ACCESS_TOKEN: z.string().optional(),
 
+    // --- Telegram staff notifications (escalations) ---
+    // Bot token from @BotFather. When BOTH values are set, every agent-driven
+    // escalation to a human pushes a Telegram alert (customer name via Graph
+    // profile lookup + PSID + conversation id + reason). Either unset = feature
+    // off: escalations still work, the notification is skipped with a log.
+    TELEGRAM_BOT_TOKEN: z.string().optional(),
+    // Chat/group id the alerts are sent to (group ids are negative numbers).
+    TELEGRAM_CHAT_ID: z.string().optional(),
+
     // --- Human-like reply pacing (Messenger bubbles) ---
     // Deliver the agent's reply as several short bubbles (split on blank lines)
     // with a typing pause between them, so it reads human. Set to 'false' to send
