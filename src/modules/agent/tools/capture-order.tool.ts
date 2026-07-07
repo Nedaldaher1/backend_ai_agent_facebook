@@ -100,6 +100,7 @@ export function buildCaptureOrderTool(orders: OrdersService) {
 
     execute: async (input, ctx) => {
       // Identity MUST come from requestContext — never from tool input.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- requestContext.get returns {}; tsc needs the assertion (see 0d9b2cf)
       const conversationId = ctx?.requestContext?.get('conversationId') as
         | string
         | undefined;

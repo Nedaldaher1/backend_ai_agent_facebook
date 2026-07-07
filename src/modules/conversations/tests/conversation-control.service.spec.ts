@@ -707,8 +707,7 @@ describe('ConversationControlService', () => {
       sendText.mockRejectedValue(
         new MessengerSendError(400, {
           error: {
-            message:
-              '(#10) This message is sent outside of allowed window.',
+            message: '(#10) This message is sent outside of allowed window.',
           },
         }),
       );
@@ -899,12 +898,8 @@ describe('ConversationControlService', () => {
 
   describe('deleteConversation', () => {
     it('wipes Mastra memory for the psid, then deletes the row', async () => {
-      const {
-        svc,
-        getById,
-        deleteConversation,
-        resetConversationMemory,
-      } = makeMocks();
+      const { svc, getById, deleteConversation, resetConversationMemory } =
+        makeMocks();
       getById.mockResolvedValue(makeConvo());
       deleteConversation.mockResolvedValue(true);
 
@@ -913,19 +908,15 @@ describe('ConversationControlService', () => {
       expect(resetConversationMemory).toHaveBeenCalledWith(PSID);
       expect(deleteConversation).toHaveBeenCalledWith(CONV_ID);
       // Memory wipe must happen before the row delete (psid comes from the row).
-      expect(
-        resetConversationMemory.mock.invocationCallOrder[0],
-      ).toBeLessThan(deleteConversation.mock.invocationCallOrder[0]);
+      expect(resetConversationMemory.mock.invocationCallOrder[0]).toBeLessThan(
+        deleteConversation.mock.invocationCallOrder[0],
+      );
       expect(result).toEqual({ id: CONV_ID });
     });
 
     it('propagates NotFoundException from getById and deletes nothing', async () => {
-      const {
-        svc,
-        getById,
-        deleteConversation,
-        resetConversationMemory,
-      } = makeMocks();
+      const { svc, getById, deleteConversation, resetConversationMemory } =
+        makeMocks();
       getById.mockRejectedValue(new NotFoundException('nope'));
 
       await expect(

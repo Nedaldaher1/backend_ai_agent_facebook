@@ -167,10 +167,7 @@ export class ColorSynonymsRepository {
 
   async insert(input: NewColorSynonym): Promise<ColorSynonym> {
     return this.tenantDb.tx(async (db) => {
-      const [row] = await db
-        .insert(colorSynonyms)
-        .values(input)
-        .returning();
+      const [row] = await db.insert(colorSynonyms).values(input).returning();
       return row;
     });
   }

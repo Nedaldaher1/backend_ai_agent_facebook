@@ -59,9 +59,11 @@ export function buildFindSimilarByImageTool(products: ProductsService) {
     execute: async (input, ctx) => {
       // Read the image URL from the request context (set by AgentService from
       // input.lastImageUrl before the generate() call — never from model input).
+      /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion -- requestContext.get returns {} under nest build's tsc; the assertion is required (see 0d9b2cf) */
       const url = (
         ctx?.requestContext?.get('lastImageUrl') as string | undefined
       )?.trim();
+      /* eslint-enable @typescript-eslint/no-unnecessary-type-assertion */
       if (!url) {
         // No image in context this turn — empty result; the agent asks for a photo.
         return { products: [] };

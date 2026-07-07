@@ -136,9 +136,7 @@ export class ConversationsService {
    * When the customer last wrote in this conversation (undefined if never).
    * Used for the Messenger 24-hour standard-window check.
    */
-  findLastCustomerMessageAt(
-    conversationId: string,
-  ): Promise<Date | undefined> {
+  findLastCustomerMessageAt(conversationId: string): Promise<Date | undefined> {
     return this.repo.findLastCustomerMessageAt(conversationId);
   }
 

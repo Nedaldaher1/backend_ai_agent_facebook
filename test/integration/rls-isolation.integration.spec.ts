@@ -98,10 +98,7 @@ describe('RLS tenant isolation (app_runtime, real DB)', () => {
 
     appPool = new Pool({ connectionString: appUrlForDb(dbName), max: 10 });
     tenantContext = buildTenantContext();
-    tenantDb = new TenantDb(
-      drizzle(appPool) as unknown as Database,
-      tenantContext,
-    );
+    tenantDb = new TenantDb(drizzle(appPool), tenantContext);
   });
 
   afterAll(async () => {
@@ -206,10 +203,7 @@ describe('RLS tenant isolation (app_runtime, real DB)', () => {
         max: 1,
       });
       try {
-        const singleDb = new TenantDb(
-          drizzle(singleConnPool) as unknown as Database,
-          tenantContext,
-        );
+        const singleDb = new TenantDb(drizzle(singleConnPool), tenantContext);
         const aRows = await tenantContext.runWith(TENANT_A, () =>
           singleDb.tx((db) => db.select().from(products)),
         );
@@ -299,10 +293,7 @@ describe('RLS tenant isolation (app_runtime, real DB)', () => {
       // And tenant B cannot see it.
       const bView = await tenantContext.runWith(TENANT_B, () =>
         tenantDb.tx((db) =>
-          db
-            .select()
-            .from(products)
-            .where(eq(products.id, inserted[0].id)),
+          db.select().from(products).where(eq(products.id, inserted[0].id)),
         ),
       );
       expect(bView).toHaveLength(0);

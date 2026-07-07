@@ -242,7 +242,9 @@ describe('migration 0020: Masa backfill integrity (real DB)', () => {
     const policies = await owner.query<{
       qual: string | null;
       with_check: string | null;
-    }>(`SELECT qual, with_check FROM pg_policies WHERE policyname = 'tenant_isolation'`);
+    }>(
+      `SELECT qual, with_check FROM pg_policies WHERE policyname = 'tenant_isolation'`,
+    );
     expect(policies.rows).toHaveLength(DOMAIN_TABLES.length);
     for (const p of policies.rows) {
       expect(p.qual).toContain('app.tenant_id');

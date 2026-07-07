@@ -76,9 +76,7 @@ export const usageDaily = pgTable(
       .default(0),
     messageCount: integer('message_count').notNull().default(0),
   },
-  (t) => [
-    primaryKey({ columns: [t.tenantId, t.day, t.operation, t.model] }),
-  ],
+  (t) => [primaryKey({ columns: [t.tenantId, t.day, t.operation, t.model] })],
 );
 
 export const insertUsageEventSchema = createInsertSchema(usageEvents, {

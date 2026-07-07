@@ -75,10 +75,7 @@ describe('sentinel color cache is tenant-keyed (real DB, app_runtime)', () => {
     tenantContext = new TenantContext({
       getOrThrow: () => TENANT_A,
     } as unknown as ConfigService);
-    const tenantDb = new TenantDb(
-      drizzle(appPool) as unknown as Database,
-      tenantContext,
-    );
+    const tenantDb = new TenantDb(drizzle(appPool), tenantContext);
     service = new ColorsService(
       new ColorsRepository(tenantDb),
       new ProductImageColorsRepository(tenantDb),

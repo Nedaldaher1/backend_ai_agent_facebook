@@ -544,9 +544,9 @@ describe('ConversationsAdminController', () => {
       });
 
       it('rejects non-boolean pinned values', () => {
-        expect(
-          pinConversationSchema.safeParse({ pinned: 'yes' }).success,
-        ).toBe(false);
+        expect(pinConversationSchema.safeParse({ pinned: 'yes' }).success).toBe(
+          false,
+        );
       });
 
       it('rejects unknown keys (strict)', () => {

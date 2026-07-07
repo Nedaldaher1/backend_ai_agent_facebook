@@ -69,10 +69,7 @@ export class AdProductLinksRepository {
 
   async insert(input: NewAdProductLink): Promise<AdProductLink> {
     return this.tenantDb.tx(async (db) => {
-      const [row] = await db
-        .insert(adProductLinks)
-        .values(input)
-        .returning();
+      const [row] = await db.insert(adProductLinks).values(input).returning();
       return row;
     });
   }

@@ -69,10 +69,7 @@ export function decryptToken(encrypted: string, keyHex: string): string {
   // keeps the comparison branch-free and length-guarded.
   const expected = Buffer.from(VERSION);
   const actual = Buffer.from(version);
-  if (
-    actual.length !== expected.length ||
-    !timingSafeEqual(actual, expected)
-  ) {
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     throw new TokenCryptoError(`unsupported token-crypto version "${version}"`);
   }
   const iv = Buffer.from(ivB64, 'base64');
