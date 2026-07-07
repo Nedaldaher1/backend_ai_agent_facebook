@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/core/database/drizzle';
@@ -7,92 +6,42 @@ import { TenantContext } from './tenant-context';
 /**
  * The ONE way domain repositories touch the database.
  *
- * Two granularities, one GUC contract (`app.tenant_id`, always bound with
- * `set_config(..., true)` = transaction-scoped, so it dies with COMMIT/ROLLBACK
- * and can never leak to the next request reusing the pooled connection):
+ * tx() opens a short transaction and binds the ambient tenant to it with
+ * `set_config('app.tenant_id', $1, true)` — the parameterizable equivalent of
+ * `SET LOCAL`: transaction-scoped, so the GUC dies with the COMMIT/ROLLBACK
+ * and can never leak to the next request that reuses the pooled connection
+ * (a session-level SET would). Every RLS policy reads exactly this GUC.
  *
- *  - turn(fn): ONE transaction for a whole agent turn. The full Mastra
- *    generate loop — every tool call, every repository unit — shares a single
- *    transaction, GUC binding, and snapshot. The open transaction rides on
- *    AsyncLocalStorage; every tx() call inside the turn JOINS it as a
- *    SAVEPOINT instead of opening its own transaction.
- *  - tx(fn): outside a turn (admin HTTP, scripts), each unit of work is its
- *    own short transaction, exactly as before.
+ * Granularity is deliberately per-unit-of-work, NOT per-request: an agent turn
+ * spans 10–40s of LLM calls, and holding one DB transaction (and its pooled
+ * connection) across that would starve the pool. Repositories therefore wrap
+ * each method (or multi-statement unit) in one tx() call; statements that must
+ * be atomic together share a single tx() body.
  *
- * Trade-offs of the turn transaction (accepted by design decision, 2026-07-07):
- * the turn holds one pooled connection for its full duration (LLM latency
- * included — tune Pool max accordingly), and writes become visible to other
- * connections only when the turn commits. Repository units keep their local
- * atomicity via savepoints: a failed unit rolls back to its savepoint and the
- * surrounding turn continues (escalation flows rely on this).
- *
- * detached(fn): escape hatch for fire-and-forget work spawned INSIDE a turn
- * (attribution, best-effort state merges). Unawaited work must NOT join the
- * turn transaction — its savepoint could race the turn's COMMIT — so it exits
- * the ambient scope and runs in its own short transaction(s).
- *
- * Fail-closed: if a query somehow runs OUTSIDE tx()/turn() on the app_runtime
- * role, no GUC is set, current_setting(..., true) is NULL, and RLS matches
- * zero rows.
+ * Fail-closed: if a query somehow runs OUTSIDE tx() on the app_runtime role,
+ * no GUC is set, current_setting(..., true) is NULL, and RLS matches zero rows.
  */
 @Injectable()
 export class TenantDb {
-  /** The open turn transaction, ambient on ALS (undefined outside a turn). */
-  private readonly turnStore = new AsyncLocalStorage<{ tx: Database }>();
-
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly tenantContext: TenantContext,
   ) {}
 
   /**
-   * Run fn inside a tenant-bound transaction. Inside an open turn() this
-   * becomes a SAVEPOINT on the turn transaction (same connection, same GUC,
-   * unit-local rollback); otherwise it opens its own short transaction and
-   * binds the ambient tenant. Drizzle nests inner db.transaction() calls as
-   * savepoints, so multi-statement repository units keep their atomicity
-   * unchanged in both modes.
+   * Run fn inside a transaction with the ambient tenant bound. Drizzle nests
+   * inner db.transaction() calls as savepoints, so existing multi-statement
+   * repository units keep their atomicity unchanged.
    */
   tx<T>(fn: (db: Database) => Promise<T>): Promise<T> {
-    const ambient = this.turnStore.getStore();
-    if (ambient) {
-      return ambient.tx.transaction((sp) => fn(sp as unknown as Database));
-    }
     const tenantId = this.tenantContext.tenantId;
     return this.db.transaction(async (txClient) => {
       await txClient.execute(
         sql`select set_config('app.tenant_id', ${tenantId}, true)`,
       );
-      return fn(txClient);
+      // A drizzle transaction exposes the same query API as the root client;
+      // repositories are typed against Database, so narrow it back.
+      return fn(txClient as unknown as Database);
     });
-  }
-
-  /**
-   * Run fn — an entire agent turn — inside ONE transaction with the ambient
-   * tenant bound once. Every tx() call in fn's async scope joins it as a
-   * savepoint. Nested turn() calls join the existing turn. The transaction
-   * commits when fn resolves and rolls back (all of the turn's writes) when
-   * fn throws.
-   */
-  turn<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.turnStore.getStore()) {
-      return fn();
-    }
-    const tenantId = this.tenantContext.tenantId;
-    return this.db.transaction(async (txClient) => {
-      await txClient.execute(
-        sql`select set_config('app.tenant_id', ${tenantId}, true)`,
-      );
-      return this.turnStore.run({ tx: txClient }, fn);
-    });
-  }
-
-  /**
-   * Run fn OUTSIDE any ambient turn transaction. Required for fire-and-forget
-   * work spawned inside a turn: it commits independently in its own short
-   * transaction(s) and cannot race the turn's COMMIT.
-   */
-  detached<T>(fn: () => Promise<T>): Promise<T> {
-    return this.turnStore.exit(fn);
   }
 }
