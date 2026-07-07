@@ -63,6 +63,7 @@ jest.mock('@mastra/core/di', () => {
   return { RequestContext: MockRequestContext };
 });
 
+import { stubTenantDb } from './tenant-db.stub';
 import { Logger } from '@nestjs/common';
 import { AgentService } from '../agent.service';
 import { FALLBACK_REPLY } from '../customer-reply.constants';
@@ -266,6 +267,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
 
     service.onModuleInit();
@@ -288,6 +290,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
 
     service.onModuleInit();
@@ -313,6 +316,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
 
     service.onModuleInit();
@@ -337,6 +341,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
 
     service.onModuleInit();
@@ -359,6 +364,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
 
     service.onModuleInit();
@@ -385,6 +391,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -410,6 +417,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -436,6 +444,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -469,6 +478,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -503,6 +513,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -531,6 +542,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -557,6 +569,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -590,6 +603,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -624,6 +638,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -650,6 +665,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -678,6 +694,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -705,6 +722,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -760,6 +778,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -781,6 +800,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -816,6 +836,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -845,6 +866,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -887,6 +909,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -918,6 +941,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -946,6 +970,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -978,6 +1003,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1006,6 +1032,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
       return service;
@@ -1305,6 +1332,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1353,6 +1381,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1398,6 +1427,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1427,6 +1457,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1478,6 +1509,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1528,6 +1560,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1573,6 +1606,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1595,6 +1629,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1646,6 +1681,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1677,6 +1713,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1705,6 +1742,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1731,6 +1769,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1761,6 +1800,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1795,6 +1835,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1821,6 +1862,7 @@ describe('AgentService', () => {
       visionMock,
       transcriptionMock,
       triageMock,
+      stubTenantDb(),
     );
     service.onModuleInit();
 
@@ -1850,6 +1892,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
       return service;
@@ -1946,6 +1989,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -1985,6 +2029,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2021,6 +2066,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2090,6 +2136,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2127,6 +2174,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2161,6 +2209,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2201,6 +2250,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2244,6 +2294,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2279,6 +2330,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2314,6 +2366,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2339,6 +2392,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2363,6 +2417,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2387,6 +2442,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2412,6 +2468,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2456,6 +2513,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2483,6 +2541,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
 
@@ -2509,6 +2568,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
       fakeMemory.deleteThread.mockRejectedValueOnce(new Error('thread gone'));
@@ -2535,6 +2595,7 @@ describe('AgentService', () => {
         visionMock,
         transcriptionMock,
         triageMock,
+        stubTenantDb(),
       );
       service.onModuleInit();
       fakeMemory.updateWorkingMemory.mockRejectedValueOnce(

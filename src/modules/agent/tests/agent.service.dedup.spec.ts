@@ -28,6 +28,7 @@ jest.mock('@mastra/core/di', () => {
   return { RequestContext: MockRequestContext };
 });
 
+import { stubTenantDb } from './tenant-db.stub';
 import { AgentService } from '../agent.service';
 import { buildMastra } from '../mastra/mastra.factory';
 import type { ConfigService } from '@nestjs/config';
@@ -114,6 +115,7 @@ function buildService(conversations: ConversationsService): AgentService {
     visionMock,
     transcriptionMock,
     triageMock,
+    stubTenantDb(),
   );
   svc.onModuleInit();
   return svc;

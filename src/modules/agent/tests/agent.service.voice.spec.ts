@@ -31,6 +31,7 @@ jest.mock('@mastra/core/di', () => {
   return { RequestContext: MockRequestContext };
 });
 
+import { stubTenantDb } from './tenant-db.stub';
 import { AgentService } from '../agent.service';
 import { buildMastra } from '../mastra/mastra.factory';
 import { HANDOFF_REPLY } from '../handoff.constants';
@@ -150,6 +151,7 @@ function buildService(
     visionMock,
     transcription,
     triage,
+    stubTenantDb(),
   );
   svc.onModuleInit();
   return svc;

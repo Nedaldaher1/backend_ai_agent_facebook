@@ -9,6 +9,7 @@ import {
   type ProductSearchInput,
 } from '@/modules/products/products.service';
 import { ConversationsService } from '@/modules/conversations/conversations.service';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { OrdersService } from '@/modules/orders/orders.service';
 import { KnowledgeService } from '@/modules/knowledge/knowledge.service';
 import { AgentBehaviorService } from './agent-behavior.service';
@@ -311,6 +312,7 @@ export class AgentService implements OnModuleInit {
     private readonly vision: VisionService,
     private readonly transcription: TranscriptionService,
     private readonly triage: TriageService,
+    private readonly tenantDb: TenantDb,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -441,7 +443,15 @@ export class AgentService implements OnModuleInit {
    *  7. Extracts search_products + find_similar_by_image results for the reply
    *     card (best-effort).
    */
-  async handleMessage(input: IncomingMessage): Promise<AgentReply> {
+  handleMessage(input: IncomingMessage): Promise<AgentReply> {
+    // ONE transaction per turn: the whole generate loop — every tool call and
+    // repository unit — shares a single DB transaction and tenant GUC
+    // (TenantDb.turn). Fire-and-forget writes inside the turn must go through
+    // this.tenantDb.detached() so they cannot race the turn's COMMIT.
+    return this.tenantDb.turn(() => this.runTurn(input));
+  }
+
+  private async runTurn(input: IncomingMessage): Promise<AgentReply> {
     const resourceId = input.contactId;
     const threadId = `thread:${input.contactId}`;
 
@@ -457,11 +467,14 @@ export class AgentService implements OnModuleInit {
     // by SKU (publish gate enforced) and merge the result into conversation
     // state so the agent knows which advertised product the customer came from.
     if (input.referral) {
-      void this.persistAttribution(convo.id, input.referral).catch((err) =>
-        this.logger.warn(
-          `First-touch attribution failed for conversation ${convo.id}: ${String(err)}`,
-        ),
-      );
+      const referral = input.referral;
+      void this.tenantDb
+        .detached(() => this.persistAttribution(convo.id, referral))
+        .catch((err) =>
+          this.logger.warn(
+            `First-touch attribution failed for conversation ${convo.id}: ${String(err)}`,
+          ),
+        );
     }
 
     // Idempotency: ignore a re-delivered inbound turn (webhook retry / double
@@ -575,8 +588,10 @@ export class AgentService implements OnModuleInit {
     // Any turn that proceeds past the degrade flow means communication worked
     // — clear the consecutive-voice-failure counter (best-effort).
     if (prevVoiceFails > 0) {
-      void this.conversations
-        .mergeState(convo.id, { voiceFailCount: 0 })
+      void this.tenantDb
+        .detached(() =>
+          this.conversations.mergeState(convo.id, { voiceFailCount: 0 }),
+        )
         .catch((err) =>
           this.logger.warn(
             `mergeState(voiceFailCount reset) failed for ${convo.id}: ${String(err)}`,
@@ -849,8 +864,8 @@ export class AgentService implements OnModuleInit {
     // so a failed turn (Claude 429/5xx) leaves it intact for the retry instead of
     // losing the human's wrap-up context. Best-effort + fire-and-forget.
     if (injectedHumanSummary) {
-      void this.conversations
-        .clearHumanSummary(convo.id)
+      void this.tenantDb
+        .detached(() => this.conversations.clearHumanSummary(convo.id))
         .catch((err) =>
           this.logger.warn(`clearHumanSummary failed for ${convo.id}: ${err}`),
         );
@@ -878,8 +893,12 @@ export class AgentService implements OnModuleInit {
     // prior value with an empty list.
     const shownProductIds = this.collectShownProductIds(result);
     if (shownProductIds.length > 0) {
-      void this.conversations
-        .mergeState(convo.id, { lastProductIds: shownProductIds })
+      void this.tenantDb
+        .detached(() =>
+          this.conversations.mergeState(convo.id, {
+            lastProductIds: shownProductIds,
+          }),
+        )
         .catch((err) =>
           this.logger.warn(
             `mergeState(lastProductIds) failed for ${convo.id}: ${String(err)}`,
