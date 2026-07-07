@@ -173,10 +173,30 @@ export async function ensureAppRole(
     `GRANT USAGE ON SCHEMA public TO ${APP_ROLE}`,
     `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${APP_ROLE}`,
     `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${APP_ROLE}`,
+    `CREATE SCHEMA IF NOT EXISTS mastra`,
+    `GRANT USAGE, CREATE ON SCHEMA mastra TO ${APP_ROLE}`,
+    `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA mastra TO ${APP_ROLE}`,
+    `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA mastra TO ${APP_ROLE}`,
   ];
   for (const grant of grants) {
     await ownerClient.query(grant);
   }
+  // Pre-role-split databases have mastra.* tables owned by the owner; Mastra's
+  // PostgresStore init ALTERs its own tables and needs ownership.
+  await ownerClient.query(`
+    DO $$
+    DECLARE r record;
+    BEGIN
+      FOR r IN SELECT tablename FROM pg_tables
+               WHERE schemaname = 'mastra' AND tableowner <> '${APP_ROLE}' LOOP
+        EXECUTE format('ALTER TABLE mastra.%I OWNER TO ${APP_ROLE}', r.tablename);
+      END LOOP;
+      FOR r IN SELECT sequencename FROM pg_sequences
+               WHERE schemaname = 'mastra' AND sequenceowner <> '${APP_ROLE}' LOOP
+        EXECUTE format('ALTER SEQUENCE mastra.%I OWNER TO ${APP_ROLE}', r.sequencename);
+      END LOOP;
+    END
+    $$;`);
 }
 
 /** A 1536-dim zero vector literal for product_image_embeddings fixtures. */
