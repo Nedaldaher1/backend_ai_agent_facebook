@@ -15,6 +15,7 @@
     "start:prod": "node dist/main",
     "db:init": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env src/scripts/db-init.ts",
     "db:reset": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env src/scripts/db-init.ts --reset",
+    "tenant:bootstrap-masa": "nest build && node --env-file-if-exists=.env dist/scripts/bootstrap-masa-channel.js",
     "embeddings:backfill": "nest build && node dist/scripts/backfill-embeddings.js",
     "embeddings:probe": "nest build && node dist/scripts/embeddings-probe.js",
     "eval:run": "nest build && node dist/scripts/eval-run.js",

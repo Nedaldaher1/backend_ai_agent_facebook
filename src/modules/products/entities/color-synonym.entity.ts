@@ -8,6 +8,10 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { colors } from './color.entity';
 
 /**
@@ -20,6 +24,7 @@ export const colorSynonyms = pgTable(
   'color_synonyms',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     term: text('term').notNull(),
     colorId: uuid('color_id')
       .notNull()
@@ -29,9 +34,12 @@ export const colorSynonyms = pgTable(
       .defaultNow(),
   },
   (t) => [
-    uniqueIndex('color_synonyms_term_idx').on(t.term),
+    // One resolution per term WITHIN a tenant — different merchants may map the
+    // same dialect word to different colors.
+    uniqueIndex('color_synonyms_tenant_term_idx').on(t.tenantId, t.term),
     // FK index: speeds up "all terms of this color" lookups and cascading deletes.
     index('color_synonyms_color_id_idx').on(t.colorId),
+    tenantIsolationPolicy(),
   ],
 );
 

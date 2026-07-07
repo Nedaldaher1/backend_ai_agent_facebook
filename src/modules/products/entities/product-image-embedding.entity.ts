@@ -8,6 +8,10 @@ import {
   vector,
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { products } from './product.entity';
 
 /**
@@ -33,6 +37,7 @@ export const productImageEmbeddings = pgTable(
   'product_image_embeddings',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'cascade' }),
@@ -59,6 +64,9 @@ export const productImageEmbeddings = pgTable(
     ),
     // Supports per-product lookups (delete-missing keys, backfill checks).
     index('product_image_embeddings_product_id_idx').on(t.productId),
+    // NOTE: the HNSW ANN index stays tenant-blind (raw SQL, cosine over all
+    // rows); the tenant filter lives in the search CTE's WHERE, not the index.
+    tenantIsolationPolicy(),
   ],
 );
 

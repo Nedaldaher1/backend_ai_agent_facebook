@@ -10,18 +10,25 @@ import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
 import { products } from '@/modules/products/entities/product.entity';
 import { knowledgeEntries } from '@/modules/knowledge/entities/knowledge-entry.entity';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 
 /** Allowed admin roles. Enforced in zod; the column itself stays free-form text. */
 export const ADMIN_ROLES = ['admin', 'editor'] as const;
 
 /**
- * Control-plane table: the admin accounts that write the catalog and knowledge
- * base. The agent never writes here. Email is unique.
+ * Control-plane table: the merchant-staff accounts that write the catalog and
+ * knowledge base. The agent never writes here. Email stays GLOBALLY unique in
+ * the MVP (staff are provisioned per tenant; login resolves by email alone) —
+ * per-tenant email uniqueness is a documented post-MVP relaxation.
  */
 export const adminUsers = pgTable(
   'admin_users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     email: text('email').notNull(),
     name: text('name'),
     passwordHash: text('password_hash').notNull(),
@@ -30,7 +37,10 @@ export const adminUsers = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [uniqueIndex('admin_users_email_idx').on(t.email)],
+  (t) => [
+    uniqueIndex('admin_users_email_idx').on(t.email),
+    tenantIsolationPolicy(),
+  ],
 );
 
 /**

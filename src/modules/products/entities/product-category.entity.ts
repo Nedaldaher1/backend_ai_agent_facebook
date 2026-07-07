@@ -10,6 +10,10 @@ import {
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 
 /**
  * Control-plane table: the clothing category (e.g. "abaya", "pajama", "dress"),
@@ -92,6 +96,7 @@ export const productCategories = pgTable(
   'product_categories',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
     // Ordered attribute definitions this category exposes on its products.
@@ -108,8 +113,12 @@ export const productCategories = pgTable(
       .notNull()
       .defaultNow(),
   },
-  // slug is the canonical key (one category per slug), so it must be unique.
-  (t) => [uniqueIndex('product_categories_slug_idx').on(t.slug)],
+  // slug is the canonical key, unique WITHIN a tenant — every tenant seeds its
+  // own default categories (e.g. "abaya") at tenant creation.
+  (t) => [
+    uniqueIndex('product_categories_tenant_slug_idx').on(t.tenantId, t.slug),
+    tenantIsolationPolicy(),
+  ],
 );
 
 export const insertProductCategorySchema = createInsertSchema(

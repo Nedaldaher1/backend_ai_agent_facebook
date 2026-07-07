@@ -13,6 +13,11 @@ import { z } from 'zod';
 import { messages } from './message.entity';
 import { conversationEvents } from './conversation-event.entity';
 import { orders } from '@/modules/orders/entities/order.entity';
+import { channels } from '@/modules/tenants/entities/channel.entity';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 
 /** Possible values for the ai_state column. */
 export const AI_STATES = ['bot', 'human', 'paused'] as const;
@@ -28,6 +33,15 @@ export const conversations = pgTable(
   'conversations',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
+    // The connected page this conversation lives on. PSIDs are PAGE-scoped, so
+    // the (channel, psid) pair — not psid alone — identifies a customer thread,
+    // and every reply must be sent with THIS channel's page token. Nullable at
+    // the DB for legacy rows (backfilled by the bootstrap script); required in
+    // code for new conversations from Phase 3 routing onward.
+    channelId: uuid('channel_id').references(() => channels.id, {
+      onDelete: 'set null',
+    }),
     psid: text('psid').notNull(),
     threadId: text('thread_id'),
     adRef: text('ad_ref'),
@@ -61,12 +75,16 @@ export const conversations = pgTable(
     pinnedAt: timestamp('pinned_at', { withTimezone: true }),
   },
   (t) => [
-    index('conversations_psid_idx').on(t.psid),
+    // Lookup is by (tenant, psid) — a PSID is only unique per page, so the bare
+    // psid index is superseded. UNIQUE (channel_id, psid) lands with Phase 3
+    // routing, after the channel backfill has run.
+    index('conversations_tenant_psid_idx').on(t.tenantId, t.psid),
     index('conversations_ai_state_idx').on(t.aiState),
     check(
       'conversations_ai_state_check',
       sql`${t.aiState} in ('bot', 'human', 'paused')`,
     ),
+    tenantIsolationPolicy(),
   ],
 );
 

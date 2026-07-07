@@ -14,6 +14,10 @@ import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
 import { adminUsers } from '@/modules/admin/entities/admin-user.entity';
 import { orderItems } from '@/modules/orders/entities/order-item.entity';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { productCategories } from './product-category.entity';
 
 /** Allowed stock states. Enforced in zod; the column stays free-form text. */
@@ -83,6 +87,7 @@ export const products = pgTable(
   'products',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     createdBy: uuid('created_by').references(() => adminUsers.id),
     // The clothing category (abaya, pajama, …). It owns the attribute schema
     // whose values this product fills in under `attributes.values`.
@@ -114,9 +119,12 @@ export const products = pgTable(
   (t) => [
     index('products_category_id_idx').on(t.categoryId),
     index('products_color_family_idx').on(t.colorFamily),
-    index('products_is_published_idx').on(t.isPublished),
+    // The agent's hot read path filters (tenant, published) together.
+    index('products_tenant_published_idx').on(t.tenantId, t.isPublished),
     index('products_stock_status_idx').on(t.stockStatus),
-    uniqueIndex('products_sku_idx').on(t.sku),
+    // SKU is unique per tenant — two merchants may both use "AB-001".
+    uniqueIndex('products_tenant_sku_idx').on(t.tenantId, t.sku),
+    tenantIsolationPolicy(),
   ],
 );
 

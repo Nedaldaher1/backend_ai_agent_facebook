@@ -9,6 +9,10 @@ import {
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { conversations } from './conversation.entity';
 
 /** All event kinds recorded in the audit trail. */
@@ -34,6 +38,7 @@ export const conversationEvents = pgTable(
   'conversation_events',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     conversationId: uuid('conversation_id')
       .notNull()
       .references(() => conversations.id, { onDelete: 'cascade' }),
@@ -51,6 +56,7 @@ export const conversationEvents = pgTable(
   },
   (t) => [
     index('conversation_events_conversation_id_idx').on(t.conversationId),
+    tenantIsolationPolicy(),
   ],
 );
 

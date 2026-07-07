@@ -10,6 +10,10 @@ import {
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { conversations } from './conversation.entity';
 
 /** Who authored a message. Enforced in zod; the column stays text. */
@@ -24,6 +28,7 @@ export const messages = pgTable(
   'messages',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     conversationId: uuid('conversation_id')
       .notNull()
       .references(() => conversations.id, { onDelete: 'cascade' }),
@@ -42,10 +47,15 @@ export const messages = pgTable(
   (t) => [
     index('messages_conversation_id_idx').on(t.conversationId),
     // Idempotency: at most one row per (conversation, external_id). Partial
-    // (external_id IS NOT NULL) so rows without a key never collide.
+    // (external_id IS NOT NULL) so rows without a key never collide. Already
+    // tenant-safe: a conversation belongs to exactly one tenant, so this key
+    // deliberately does NOT gain a tenant_id column.
     uniqueIndex('messages_conversation_external_id_uq')
       .on(t.conversationId, t.externalId)
       .where(sql`${t.externalId} IS NOT NULL`),
+    // Tenant-wide recency scans (dashboards, usage rollups).
+    index('messages_tenant_created_idx').on(t.tenantId, t.createdAt),
+    tenantIsolationPolicy(),
   ],
 );
 

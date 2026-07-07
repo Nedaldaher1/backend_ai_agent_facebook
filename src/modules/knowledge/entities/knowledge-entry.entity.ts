@@ -12,6 +12,10 @@ import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
 import { adminUsers } from '@/modules/admin/entities/admin-user.entity';
 import { products } from '@/modules/products/entities/product.entity';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 
 /** Allowed knowledge categories. Enforced in zod; the column stays text. */
 export const KNOWLEDGE_CATEGORIES = [
@@ -35,6 +39,7 @@ export const knowledgeEntries = pgTable(
   'knowledge_entries',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     createdBy: uuid('created_by').references(() => adminUsers.id),
     category: text('category').notNull(),
     title: text('title').notNull(),
@@ -57,7 +62,11 @@ export const knowledgeEntries = pgTable(
   },
   (t) => [
     index('knowledge_entries_category_idx').on(t.category),
-    index('knowledge_entries_is_published_idx').on(t.isPublished),
+    // The agent's RAG read path filters (tenant, published) together.
+    index('knowledge_entries_tenant_published_idx').on(
+      t.tenantId,
+      t.isPublished,
+    ),
     index('knowledge_entries_product_id_idx')
       .on(t.productId)
       .where(sql`${t.isPublished}`),
@@ -65,6 +74,7 @@ export const knowledgeEntries = pgTable(
       'gin',
       sql`(coalesce(${t.title}, '') || ' ' || coalesce(${t.situation}, '') || ' ' || coalesce(${t.content}, '')) gin_trgm_ops`,
     ),
+    tenantIsolationPolicy(),
   ],
 );
 

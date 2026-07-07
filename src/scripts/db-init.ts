@@ -17,6 +17,14 @@
  * app can start and needs only DATABASE_URL (loaded from .env by the npm script
  * via node --env-file-if-exists). If DATABASE_URL is unset it falls back to the
  * documented local-dev default so a fresh clone works out of the box.
+ *
+ * Multi-tenant roles: migrations run as the OWNER role (DATABASE_URL_MIGRATIONS,
+ * falling back to DATABASE_URL). After migrating, ensureAppRole() provisions the
+ * non-owner `app_runtime` role the APP must connect as — Row-Level Security is
+ * silently bypassed for owners/superusers, so pointing the app's DATABASE_URL at
+ * app_runtime is what makes tenant isolation real. Grants cover current AND
+ * future tables (ALTER DEFAULT PRIVILEGES) in `public`, plus the `mastra` schema
+ * (created here so Mastra's PostgresStore can boot under app_runtime).
  */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -130,6 +138,71 @@ async function ensureDatabase(
   }
 }
 
+/** Non-owner runtime role the app connects as (RLS binds to non-owners only). */
+const APP_DB_ROLE = 'app_runtime';
+
+/** Quote a SQL string literal (single-quote doubling). */
+function quoteLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Idempotently create/refresh the `app_runtime` role and grant it DML (never
+ * DDL, never ownership) on the target database. Runs as the owner AFTER the
+ * migrations so the grants cover every table; ALTER DEFAULT PRIVILEGES covers
+ * tables future migrations create. Password comes from APP_DB_PASSWORD (dev
+ * default: 'app_runtime' — matching the documented local DATABASE_URL).
+ */
+async function ensureAppRole(url: string, dbName: string): Promise<void> {
+  const password = process.env.APP_DB_PASSWORD ?? APP_DB_ROLE;
+  const client = new Client({ connectionString: url });
+  await client.connect();
+  try {
+    log.log(`Ensuring role "${APP_DB_ROLE}" + grants on "${dbName}"`);
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${APP_DB_ROLE}') THEN
+          CREATE ROLE ${APP_DB_ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        END IF;
+      END
+      $$;`);
+    // Refresh the password every run so a changed APP_DB_PASSWORD takes effect.
+    await client.query(
+      `ALTER ROLE ${APP_DB_ROLE} WITH LOGIN PASSWORD ${quoteLiteral(password)}`,
+    );
+    const grants = [
+      `GRANT CONNECT ON DATABASE ${quoteIdent(dbName)} TO ${APP_DB_ROLE}`,
+      `GRANT USAGE ON SCHEMA public TO ${APP_DB_ROLE}`,
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${APP_DB_ROLE}`,
+      `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${APP_DB_ROLE}`,
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${APP_DB_ROLE}`,
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${APP_DB_ROLE}`,
+      // Mastra's PostgresStore boots under app_runtime and creates its own
+      // tables inside `mastra` — pre-create the schema and let the role build
+      // there (its tables are then owned by app_runtime; no RLS in `mastra`).
+      `CREATE SCHEMA IF NOT EXISTS mastra`,
+      `GRANT USAGE, CREATE ON SCHEMA mastra TO ${APP_DB_ROLE}`,
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA mastra TO ${APP_DB_ROLE}`,
+      `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA mastra TO ${APP_DB_ROLE}`,
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA mastra GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${APP_DB_ROLE}`,
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA mastra GRANT USAGE, SELECT ON SEQUENCES TO ${APP_DB_ROLE}`,
+    ];
+    for (const grant of grants) {
+      await client.query(grant);
+    }
+    const u = new URL(url);
+    u.username = APP_DB_ROLE;
+    u.password = '***';
+    log.log(
+      `Role ready. Point the app's DATABASE_URL at ${u.toString()} ` +
+        '(password from APP_DB_PASSWORD; keep the owner URL on DATABASE_URL_MIGRATIONS).',
+    );
+  } finally {
+    await client.end();
+  }
+}
+
 /** Apply every migration in ./drizzle to the target database. */
 async function runMigrations(url: string): Promise<void> {
   const migrationsFolder = resolve(process.cwd(), 'drizzle');
@@ -162,11 +235,13 @@ async function main(): Promise<void> {
 
   const { reset } = parseArgs(process.argv.slice(2));
 
-  let url = process.env.DATABASE_URL;
+  // Migrations must run as the OWNER role (RLS-exempt): prefer the dedicated
+  // owner URL, fall back to DATABASE_URL for dev setups that keep one URL.
+  let url = process.env.DATABASE_URL_MIGRATIONS ?? process.env.DATABASE_URL;
   if (!url) {
     url = DEV_DEFAULT_DATABASE_URL;
     log.warn(
-      `DATABASE_URL not set — using dev default ${maskUrl(url)}. ` +
+      `DATABASE_URL(_MIGRATIONS) not set — using dev default ${maskUrl(url)}. ` +
         'Set it in .env to point elsewhere.',
     );
   }
@@ -178,6 +253,7 @@ async function main(): Promise<void> {
 
   await ensureDatabase(url, dbName, reset);
   await runMigrations(url);
+  await ensureAppRole(url, dbName);
 
   log.log(`Done — database "${dbName}" is ready.`);
 }

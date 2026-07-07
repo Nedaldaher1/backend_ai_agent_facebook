@@ -14,7 +14,26 @@ export const envSchema = z
     // local dev (any localhost port is auto-allowed); set it in production to the
     // admin panel origin(s), e.g. 'https://admin.masafashion.com'.
     CORS_ORIGINS: z.string().optional(),
+    // Runtime connection. Point this at the NON-OWNER app_runtime role (created
+    // by db-init/ensureAppRole) so Row-Level Security actually binds — the
+    // owner/superuser role silently bypasses every policy.
     DATABASE_URL: z.string().url(),
+    // Owner connection for migrations/db-init only (RLS-exempt by ownership).
+    // Falls back to DATABASE_URL in dev when unset.
+    DATABASE_URL_MIGRATIONS: z.string().url().optional(),
+    // Single-tenant dev-mode fallback: which tenant unbound work belongs to.
+    // Phase 2 (JWT claim) and Phase 3 (page routing) replace this per path;
+    // defaults to the Masa tenant seeded by migration 0020.
+    DEFAULT_TENANT_ID: z
+      .string()
+      .uuid()
+      .default('aa5a0000-0000-4000-8000-000000000001'),
+    // 32-byte hex key (openssl rand -hex 32) for AES-256-GCM encryption of
+    // channel page tokens at rest. Required once channels are bootstrapped.
+    CHANNEL_TOKEN_ENC_KEY: z
+      .string()
+      .regex(/^[0-9a-fA-F]{64}$/, 'must be 64 hex chars (32 bytes)')
+      .optional(),
     // LLM provider key. Every model call (sales agent + vision) routes through
     // OpenRouter via Mastra's model router, which reads OPENROUTER_API_KEY.
     OPENROUTER_API_KEY: z.string().min(1),

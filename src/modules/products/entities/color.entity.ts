@@ -7,6 +7,10 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 
 /**
  * Control-plane table: the canonical color as a first-class entity, written by
@@ -30,6 +34,7 @@ export const colors = pgTable(
   'colors',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     name: text('name').notNull(),
     family: text('family').notNull(),
     hex: text('hex'),
@@ -46,8 +51,12 @@ export const colors = pgTable(
       .notNull()
       .defaultNow(),
   },
-  // family is the canonical search key, so it must be unique across colors.
-  (t) => [uniqueIndex('colors_family_idx').on(t.family)],
+  // family is the canonical search key, unique WITHIN a tenant — every tenant
+  // has its own palette (and its own '__unassigned__' sentinel row).
+  (t) => [
+    uniqueIndex('colors_tenant_family_idx').on(t.tenantId, t.family),
+    tenantIsolationPolicy(),
+  ],
 );
 
 /**

@@ -9,6 +9,10 @@ import {
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { products } from '@/modules/products/entities/product.entity';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { orders } from './order.entity';
 
 /**
@@ -30,6 +34,7 @@ export const orderItems = pgTable(
   'order_items',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     orderId: uuid('order_id')
       .notNull()
       .references(() => orders.id, { onDelete: 'cascade' }),
@@ -55,6 +60,7 @@ export const orderItems = pgTable(
   (t) => [
     index('order_items_order_id_idx').on(t.orderId),
     index('order_items_product_id_idx').on(t.productId),
+    tenantIsolationPolicy(),
   ],
 );
 

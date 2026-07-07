@@ -1,15 +1,20 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   index,
   numeric,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 import { z } from 'zod';
 import { conversations } from '@/modules/conversations/entities/conversation.entity';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { orderItems } from './order-item.entity';
 
 /** COD order lifecycle. Enforced in zod; the column stays text. */
@@ -45,6 +50,10 @@ export const orders = pgTable(
   'orders',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    // Always set AT CAPTURE TIME, never derived from the conversation — the
+    // conversation FK is nullable (SET NULL on delete), so it cannot carry the
+    // tenant for orphaned orders.
+    tenantId: tenantIdColumn(),
     conversationId: uuid('conversation_id').references(() => conversations.id, {
       onDelete: 'set null',
     }),
@@ -71,7 +80,17 @@ export const orders = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [index('orders_conversation_id_idx').on(t.conversationId)],
+  (t) => [
+    index('orders_conversation_id_idx').on(t.conversationId),
+    index('orders_tenant_status_idx').on(t.tenantId, t.status),
+    // The one-editable-cart invariant, enforced at the DB: at most one draft
+    // per conversation (NULL conversation_ids don't collide). Concurrent
+    // capture_order calls race find-then-create; this makes the race lose.
+    uniqueIndex('orders_conversation_draft_uq')
+      .on(t.conversationId)
+      .where(sql`${t.status} = 'draft'`),
+    tenantIsolationPolicy(),
+  ],
 );
 
 /** orders N—1 conversations and 1—N order_items. */

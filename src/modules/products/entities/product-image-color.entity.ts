@@ -1,6 +1,10 @@
 import { relations } from 'drizzle-orm';
 import { index, pgTable, primaryKey, text, uuid } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { colors } from './color.entity';
 import { products } from './product.entity';
 
@@ -20,6 +24,7 @@ import { products } from './product.entity';
 export const productImageColors = pgTable(
   'product_image_colors',
   {
+    tenantId: tenantIdColumn(),
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'cascade' }),
@@ -32,6 +37,7 @@ export const productImageColors = pgTable(
     primaryKey({ columns: [t.productId, t.storageKey, t.colorId] }),
     // FK index: speeds up "is this color in use?" checks before a color delete.
     index('product_image_colors_color_id_idx').on(t.colorId),
+    tenantIsolationPolicy(),
   ],
 );
 

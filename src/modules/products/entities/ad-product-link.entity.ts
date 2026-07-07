@@ -10,6 +10,10 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
+import {
+  tenantIdColumn,
+  tenantIsolationPolicy,
+} from '@/modules/tenants/entities/tenant.entity';
 import { products } from './product.entity';
 
 /**
@@ -22,6 +26,7 @@ export const adProductLinks = pgTable(
   'ad_product_links',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: tenantIdColumn(),
     adRef: text('ad_ref').notNull(),
     productId: uuid('product_id')
       .notNull()
@@ -42,13 +47,14 @@ export const adProductLinks = pgTable(
       t.adRef,
       t.productId,
     ),
-    // Partial index: agent lookup of active links by ad_ref — filters to
-    // is_active = true rows only, keeping the index small and selective.
-    index('ad_product_links_ad_ref_active_idx')
-      .on(t.adRef)
+    // Partial index: agent lookup of active links by (tenant, ad_ref) — filters
+    // to is_active = true rows only, keeping the index small and selective.
+    index('ad_product_links_tenant_ad_ref_active_idx')
+      .on(t.tenantId, t.adRef)
       .where(sql`${t.isActive}`),
     // FK index: speeds up cascading deletes and joins from the products side.
     index('ad_product_links_product_id_idx').on(t.productId),
+    tenantIsolationPolicy(),
   ],
 );
 
