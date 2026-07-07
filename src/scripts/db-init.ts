@@ -56,7 +56,9 @@ function parseArgs(argv: string[]): Options {
 function databaseNameFromUrl(url: string): string {
   const name = decodeURIComponent(new URL(url).pathname.replace(/^\//, ''));
   if (!name) {
-    throw new Error('DATABASE_URL has no database name (expected .../<dbname>).');
+    throw new Error(
+      'DATABASE_URL has no database name (expected .../<dbname>).',
+    );
   }
   return name;
 }
@@ -191,6 +193,23 @@ async function ensureAppRole(url: string, dbName: string): Promise<void> {
     for (const grant of grants) {
       await client.query(grant);
     }
+    // Databases that predate the role split have mastra.* tables created by the
+    // OWNER (the app used to connect as it). Mastra's PostgresStore init ALTERs
+    // its own tables, which requires ownership — re-own them to app_runtime.
+    await client.query(`
+      DO $$
+      DECLARE r record;
+      BEGIN
+        FOR r IN SELECT tablename FROM pg_tables
+                 WHERE schemaname = 'mastra' AND tableowner <> '${APP_DB_ROLE}' LOOP
+          EXECUTE format('ALTER TABLE mastra.%I OWNER TO ${APP_DB_ROLE}', r.tablename);
+        END LOOP;
+        FOR r IN SELECT sequencename FROM pg_sequences
+                 WHERE schemaname = 'mastra' AND sequenceowner <> '${APP_DB_ROLE}' LOOP
+          EXECUTE format('ALTER SEQUENCE mastra.%I OWNER TO ${APP_DB_ROLE}', r.sequencename);
+        END LOOP;
+      END
+      $$;`);
     const u = new URL(url);
     u.username = APP_DB_ROLE;
     u.password = '***';
