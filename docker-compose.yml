@@ -1,0 +1,35 @@
+# Local development database for the Masa backend.
+#
+# The app needs Postgres WITH the pgvector extension (visual-search embeddings —
+# migration 0009 onward do `CREATE EXTENSION vector`). The stock postgres image
+# does not ship pgvector, so we use the pgvector image. It is published on host
+# port 5433 to avoid clashing with any other local Postgres already on 5432.
+#
+#   docker compose up -d          # start the database
+#   pnpm db:init                  # create the schema (runs all Drizzle migrations)
+#   docker compose down           # stop it (keeps data)
+#   docker compose down -v        # stop it AND wipe the data volume
+#
+# Credentials are dev-only and must match DATABASE_URL in .env:
+#   DATABASE_URL=postgres://masa:masa@localhost:5433/masa
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: masa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: masa
+      POSTGRES_PASSWORD: masa
+      POSTGRES_DB: masa
+    ports:
+      - '5433:5432'
+    volumes:
+      - masa-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U masa -d masa']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  masa-pgdata:

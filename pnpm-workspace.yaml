@@ -4,6 +4,7 @@ allowBuilds:
   onnxruntime-node: true
   protobufjs: true
   sharp: true
+  unrs-resolver: false
 minimumReleaseAgeExclude:
   - '@aws-sdk/checksums@3.1000.7'
   - '@aws-sdk/client-s3@3.1071.0'
