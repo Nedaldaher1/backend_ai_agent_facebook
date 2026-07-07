@@ -55,10 +55,7 @@ export class AgentBehaviorRepository {
 
   async insert(input: NewAgentBehavior): Promise<AgentBehavior> {
     return this.tenantDb.tx(async (db) => {
-      const [row] = await db
-        .insert(agentBehavior)
-        .values(input)
-        .returning();
+      const [row] = await db.insert(agentBehavior).values(input).returning();
       return row;
     });
   }

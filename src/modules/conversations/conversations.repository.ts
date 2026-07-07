@@ -307,7 +307,8 @@ export class ConversationsRepository {
       if (attrib.adId !== undefined) set.adId = attrib.adId;
       if (attrib.adRef !== undefined) set.adRef = attrib.adRef;
       if (attrib.adSource !== undefined) set.adSource = attrib.adSource;
-      if (attrib.adProductId !== undefined) set.adProductId = attrib.adProductId;
+      if (attrib.adProductId !== undefined)
+        set.adProductId = attrib.adProductId;
       if (attrib.adContext !== undefined) set.adContext = attrib.adContext;
 
       const [row] = await db

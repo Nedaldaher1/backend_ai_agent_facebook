@@ -1,17 +1,11 @@
 // Same ESM stubs as products.service.spec.ts — so the products → storage →
-// flydrive (and embeddings → transformers) import chain loads under Jest (CJS).
-// All deps are mocked below, so the real modules never run.
+// flydrive import chain loads under Jest (CJS). All deps are mocked below, so
+// the real modules never run. (The old @huggingface/transformers stub is gone:
+// embeddings moved to gemini-embedding-2 over OpenRouter, the package left the
+// dependency tree, and jest.mock of a nonexistent module fails resolution.)
 jest.mock('flydrive', () => ({ Disk: jest.fn() }));
 jest.mock('flydrive/drivers/fs', () => ({ FSDriver: jest.fn() }));
 jest.mock('flydrive/drivers/s3', () => ({ S3Driver: jest.fn() }));
-jest.mock('@huggingface/transformers', () => ({
-  env: {},
-  AutoProcessor: { from_pretrained: jest.fn() },
-  AutoTokenizer: { from_pretrained: jest.fn() },
-  RawImage: { read: jest.fn(), fromBlob: jest.fn() },
-  SiglipTextModel: { from_pretrained: jest.fn() },
-  SiglipVisionModel: { from_pretrained: jest.fn() },
-}));
 
 import { ProductsService } from '../products.service';
 import type { ColorSynonymsService } from '../color-synonyms.service';

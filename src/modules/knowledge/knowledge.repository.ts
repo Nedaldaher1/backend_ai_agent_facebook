@@ -134,10 +134,7 @@ export class KnowledgeRepository {
 
   async insert(input: NewKnowledgeEntry): Promise<KnowledgeEntry> {
     return this.tenantDb.tx(async (db) => {
-      const [row] = await db
-        .insert(knowledgeEntries)
-        .values(input)
-        .returning();
+      const [row] = await db.insert(knowledgeEntries).values(input).returning();
       return row;
     });
   }

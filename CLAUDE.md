@@ -20,57 +20,62 @@ This repository is the **backend only**. The admin panel (Next.js) and the Faceb
 
 ## 2. Tech stack
 
-- **Runtime / package manager:** Bun
-- **Framework:** NestJS with the **Fastify** adapter (not Express)
-- **ORM:** Drizzle ORM
-- **Database:** PostgreSQL (local during development, via WSL)
-- **AI orchestration:** Mastra, using Google Gemini (3.5 Flash) via OpenRouter
+- **Runtime / package manager:** Node.js (≥ 24) + **pnpm** (the repo migrated off Bun; `bun.lock` is legacy)
+- **Framework:** NestJS 11 with the **Fastify** adapter (not Express)
+- **ORM:** Drizzle ORM (drizzle-kit migrations under `drizzle/`)
+- **Database:** PostgreSQL 16 + pgvector (local dev via `docker compose up -d`, port 5433)
+- **AI orchestration:** Mastra, using Google Gemini via OpenRouter
 - **Validation:** zod and class-validator
 - **Module system:** ESM (`module: nodenext`). Path aliases are rewritten at build time with `tsc-alias` — never assume `tsconfig-paths` works here.
 
-When you need current product or library facts (NestJS, Mastra, Drizzle, Bun, OpenRouter), verify against official docs rather than relying on memory.
+When you need current product or library facts (NestJS, Mastra, Drizzle, OpenRouter), verify against official docs rather than relying on memory.
 
 ---
 
 ## 2b. Commands
 
-Package manager is **Bun**, but `package.json` scripts shell out to the Nest CLI / Jest. Run them via Bun:
+Package manager is **pnpm**; `package.json` scripts shell out to the Nest CLI / Jest:
 
 ```bash
-bun install                 # install deps
-bun run start:dev           # watch-mode dev server (http://0.0.0.0:3000)
-bun run start:prod          # run compiled dist/main
-bun run build               # nest build → tsc + tsc-alias into dist/
-bun run lint                # eslint --fix over {src,apps,libs,test}/**/*.ts
-bun run format              # prettier --write
+pnpm install                 # install deps
+docker compose up -d         # local pgvector Postgres on :5433
+pnpm db:init                 # create DB + run migrations + provision app_runtime role
+pnpm db:reset                # DROP + recreate + migrate (dev only)
+pnpm tenant:bootstrap-masa   # encrypt env page token → channels row (dev mode)
+pnpm start:dev               # watch-mode dev server (http://0.0.0.0:3000)
+pnpm start:prod              # run compiled dist/main
+pnpm build                   # nest build → tsc + tsc-alias into dist/
+pnpm lint                    # eslint --fix over {src,apps,libs,test}/**/*.ts
+pnpm format                  # prettier --write
 
-bun run test                # all unit tests (Jest, *.spec.ts under src/)
-bun run test:watch          # Jest watch mode
-bun run test:cov            # coverage → /coverage
-bun run test:e2e            # e2e tests (test/jest-e2e.json, *.e2e-spec.ts)
-bun run test path/to/file.spec.ts    # run one Jest spec file
-bun run test -- -t "name of test"    # run a single test by name
+pnpm test                    # all unit tests (Jest, *.spec.ts under src/)
+pnpm test:integration        # real-DB tenancy/RLS gates (needs docker Postgres)
+pnpm test:e2e                # e2e tests (test/jest-e2e.json, *.e2e-spec.ts)
+pnpm test path/to/file.spec.ts       # run one Jest spec file
+pnpm test -- -t "name of test"       # run a single test by name
 ```
 
-> Testing uses **Jest** (`ts-jest`), not Vitest: specs are `*.spec.ts` under `src/`, e2e specs are `*.e2e-spec.ts` under `test/`.
+> Testing uses **Jest** (`ts-jest`): unit specs are `*.spec.ts` under `src/`, real-DB integration specs are `*.integration.spec.ts` under `test/integration/`, e2e specs are `*.e2e-spec.ts` under `test/`.
 
 ## 2c. Current repository state
 
-This is a **greenfield NestJS scaffold**, not yet the system section 1 describes. Today `src/` contains only `main.ts`, `app.module.ts`, `app.controller.ts`, `app.service.ts`. None of Drizzle, Mastra, PostgreSQL, the data-access layer, the agent, or any domain tables/modules exist yet — they are to be built. Treat sections 1–3 as the target design, not the present code.
+This is a **complete, working system**, not a scaffold: the full agent runtime (Mastra agent "لمى" with 11 tools, vision, transcription, triage, debounce, handoff state machine), the admin REST API (products/categories/colors/orders/inbox/knowledge/persona/dashboard), and Drizzle migrations `0000`–`0020`. It is mid-transformation from single-tenant (Masa only) to a **multi-tenant SaaS platform** — the plan, phase status, and acceptance gates live in `docs/plans/multi-tenant-phase0-audit-and-plan.md`. Phase 1 (tenancy data model + RLS) is in place; tenant resolution still uses the dev-mode `DEFAULT_TENANT_ID` fallback until Phase 2 (JWT claims) and Phase 3 (webhook page-id routing).
 
-Wiring that *is* in place:
-- **Fastify adapter**: `main.ts` bootstraps via `FastifyAdapter` and listens on `0.0.0.0:3000` (the `0.0.0.0` bind matters under WSL).
-- **Path alias**: import app code with `@/...` (maps to `src/*`, see `tsconfig.json`). Build-time rewrite is done by `tsc-alias`; `tsconfig-paths` is not relied on at runtime.
-- **ESM**: `module`/`moduleResolution` are `nodenext`. (Note: eslint is configured `sourceType: 'commonjs'` — a mismatch to be aware of when reasoning about module behavior.)
+Wiring notes:
+- **Fastify adapter**: `main.ts` bootstraps via `FastifyAdapter` and listens on `0.0.0.0:3000` (the `0.0.0.0` bind matters under WSL), with `rawBody: true` for webhook HMAC.
+- **Path alias**: import app code with `@/...` (maps to `src/*`). Build-time rewrite via `tsc-alias`.
+- **ESM**: `module`/`moduleResolution` are `nodenext`.
 
 ## 3. Architecture rules
 
 - The database schema is the contract. Control-plane tables (products, color_synonyms, agent_behavior, knowledge_entries, admin_users) are written by the admin side; the agent reads them. Runtime tables (conversations, messages, orders, order_items) are written by the agent.
+- **Tenancy is absolute.** Every domain table carries `tenant_id`; every domain query runs inside `TenantDb.tx()` (`src/core/tenancy/`), which binds the ambient tenant to the transaction via `set_config('app.tenant_id', $1, true)`. Postgres RLS (`tenant_isolation` policies, USING + WITH CHECK) is the fail-closed second layer: unbound queries return zero rows, unbound writes are rejected.
+- **Two DB roles.** The app connects as the non-owner `app_runtime` role (`DATABASE_URL`); the owner role is for migrations only (`DATABASE_URL_MIGRATIONS`). Owners/superusers silently bypass RLS — never point the app at the owner.
 - `is_published` is the publish gate: customer-facing and agent read paths must filter `is_published = true`. Admin paths may see drafts.
 - Tools read the database through the data-access layer, never via raw SQL strings.
-- Money uses `numeric(10,3)` for JOD; never use floating-point math on prices.
-- Secrets (DATABASE_URL, OPENROUTER_API_KEY) live in environment variables, never in code.
-- Color search normalizes dialect terms through `color_synonyms` (e.g. "نبيتي" → red family).
+- Money uses `numeric(10,3)` for JOD (and integer micro-dollars for platform usage costs); never use floating-point math on money.
+- Secrets (DATABASE_URL, OPENROUTER_API_KEY, CHANNEL_TOKEN_ENC_KEY) live in environment variables, never in code. Channel page tokens are stored AES-256-GCM-encrypted; decrypted tokens never reach logs or queue payloads.
+- Color search normalizes dialect terms through `color_synonyms` (e.g. "نبيتي" → red family), per tenant.
 
 ---
 
