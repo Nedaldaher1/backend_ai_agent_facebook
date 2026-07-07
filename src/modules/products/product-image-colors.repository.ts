@@ -1,6 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { DRIZZLE, type Database } from '@/core/database/drizzle';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { colors } from './entities/color.entity';
 import { productImageColors } from './entities/product-image-color.entity';
 import { products } from './entities/product.entity';
@@ -28,22 +28,24 @@ export interface ImageColorRow {
  */
 @Injectable()
 export class ProductImageColorsRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDb) {}
 
   /** Every (storage key -> color) tag for a product, joined to color details. */
   async findColorsByProduct(productId: string): Promise<ImageColorRow[]> {
-    return this.db
-      .select({
-        storageKey: productImageColors.storageKey,
-        id: colors.id,
-        name: colors.name,
-        family: colors.family,
-        hex: colors.hex,
-      })
-      .from(productImageColors)
-      .innerJoin(colors, eq(colors.id, productImageColors.colorId))
-      .where(eq(productImageColors.productId, productId))
-      .orderBy(asc(colors.name));
+    return this.tenantDb.tx(async (db) => {
+      return db
+        .select({
+          storageKey: productImageColors.storageKey,
+          id: colors.id,
+          name: colors.name,
+          family: colors.family,
+          hex: colors.hex,
+        })
+        .from(productImageColors)
+        .innerJoin(colors, eq(colors.id, productImageColors.colorId))
+        .where(eq(productImageColors.productId, productId))
+        .orderBy(asc(colors.name));
+    });
   }
 
   /**
@@ -54,17 +56,19 @@ export class ProductImageColorsRepository {
   async findColorsByProducts(
     productIds: string[],
   ): Promise<Array<{ productId: string; name: string; family: string }>> {
-    if (productIds.length === 0) return [];
-    return this.db
-      .select({
-        productId: productImageColors.productId,
-        name: colors.name,
-        family: colors.family,
-      })
-      .from(productImageColors)
-      .innerJoin(colors, eq(colors.id, productImageColors.colorId))
-      .where(inArray(productImageColors.productId, productIds))
-      .orderBy(asc(colors.name));
+    return this.tenantDb.tx(async (db) => {
+      if (productIds.length === 0) return [];
+      return db
+        .select({
+          productId: productImageColors.productId,
+          name: colors.name,
+          family: colors.family,
+        })
+        .from(productImageColors)
+        .innerJoin(colors, eq(colors.id, productImageColors.colorId))
+        .where(inArray(productImageColors.productId, productIds))
+        .orderBy(asc(colors.name));
+    });
   }
 
   /**
@@ -76,23 +80,25 @@ export class ProductImageColorsRepository {
     productId: string,
     storageKey: string,
   ): Promise<ImageColorRow[]> {
-    return this.db
-      .select({
-        storageKey: productImageColors.storageKey,
-        id: colors.id,
-        name: colors.name,
-        family: colors.family,
-        hex: colors.hex,
-      })
-      .from(productImageColors)
-      .innerJoin(colors, eq(colors.id, productImageColors.colorId))
-      .where(
-        and(
-          eq(productImageColors.productId, productId),
-          eq(productImageColors.storageKey, storageKey),
-        ),
-      )
-      .orderBy(asc(colors.name));
+    return this.tenantDb.tx(async (db) => {
+      return db
+        .select({
+          storageKey: productImageColors.storageKey,
+          id: colors.id,
+          name: colors.name,
+          family: colors.family,
+          hex: colors.hex,
+        })
+        .from(productImageColors)
+        .innerJoin(colors, eq(colors.id, productImageColors.colorId))
+        .where(
+          and(
+            eq(productImageColors.productId, productId),
+            eq(productImageColors.storageKey, storageKey),
+          ),
+        )
+        .orderBy(asc(colors.name));
+    });
   }
 
   /**
@@ -107,27 +113,29 @@ export class ProductImageColorsRepository {
     colorId: string,
     productLimit: number,
   ): Promise<ColorUsageRow> {
-    const [counts] = await this.db
-      .select({
-        imageCount: sql<number>`count(*)::int`,
-        productCount: sql<number>`count(distinct ${productImageColors.productId})::int`,
-      })
-      .from(productImageColors)
-      .where(eq(productImageColors.colorId, colorId));
+    return this.tenantDb.tx(async (db) => {
+      const [counts] = await db
+        .select({
+          imageCount: sql<number>`count(*)::int`,
+          productCount: sql<number>`count(distinct ${productImageColors.productId})::int`,
+        })
+        .from(productImageColors)
+        .where(eq(productImageColors.colorId, colorId));
 
-    const productRows = await this.db
-      .selectDistinct({ id: products.id, name: products.name })
-      .from(productImageColors)
-      .innerJoin(products, eq(products.id, productImageColors.productId))
-      .where(eq(productImageColors.colorId, colorId))
-      .orderBy(asc(products.name))
-      .limit(productLimit);
+      const productRows = await db
+        .selectDistinct({ id: products.id, name: products.name })
+        .from(productImageColors)
+        .innerJoin(products, eq(products.id, productImageColors.productId))
+        .where(eq(productImageColors.colorId, colorId))
+        .orderBy(asc(products.name))
+        .limit(productLimit);
 
-    return {
-      productCount: counts?.productCount ?? 0,
-      imageCount: counts?.imageCount ?? 0,
-      products: productRows,
-    };
+      return {
+        productCount: counts?.productCount ?? 0,
+        imageCount: counts?.imageCount ?? 0,
+        products: productRows,
+      };
+    });
   }
 
   /**
@@ -140,7 +148,7 @@ export class ProductImageColorsRepository {
     storageKey: string,
     colorIds: string[],
   ): Promise<void> {
-    await this.db.transaction(async (tx) => {
+    await this.tenantDb.tx(async (tx) => {
       await tx
         .delete(productImageColors)
         .where(
@@ -161,13 +169,15 @@ export class ProductImageColorsRepository {
 
   /** Drop every color tag for one image (called when the image itself is removed). */
   async deleteForImage(productId: string, storageKey: string): Promise<void> {
-    await this.db
-      .delete(productImageColors)
-      .where(
-        and(
-          eq(productImageColors.productId, productId),
-          eq(productImageColors.storageKey, storageKey),
-        ),
-      );
+    await this.tenantDb.tx(async (db) => {
+      await db
+        .delete(productImageColors)
+        .where(
+          and(
+            eq(productImageColors.productId, productId),
+            eq(productImageColors.storageKey, storageKey),
+          ),
+        );
+    });
   }
 }

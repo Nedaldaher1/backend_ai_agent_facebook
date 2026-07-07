@@ -1,5 +1,5 @@
 {
-  "id": "b1f77e04-b920-43e9-b7ba-0f10d6f012ee",
+  "id": "623eb609-0c6e-406c-b73c-b23d8cd80b44",
   "prevId": "df31f7f8-81ce-477b-94e9-05d31f83764a",
   "version": "7",
   "dialect": "postgresql",
@@ -20,7 +20,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "email": {
           "name": "email",
@@ -97,8 +97,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -120,7 +120,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "persona": {
           "name": "persona",
@@ -223,8 +223,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -246,7 +246,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "conversation_id": {
           "name": "conversation_id",
@@ -360,8 +360,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -383,7 +383,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "channel_id": {
           "name": "channel_id",
@@ -573,8 +573,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {
@@ -601,7 +601,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "conversation_id": {
           "name": "conversation_id",
@@ -745,8 +745,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -768,7 +768,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "created_by": {
           "name": "created_by",
@@ -961,8 +961,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -984,7 +984,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "order_id": {
           "name": "order_id",
@@ -1127,8 +1127,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -1150,7 +1150,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "conversation_id": {
           "name": "conversation_id",
@@ -1318,8 +1318,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -1341,7 +1341,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "ad_ref": {
           "name": "ad_ref",
@@ -1488,8 +1488,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -1511,7 +1511,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "term": {
           "name": "term",
@@ -1609,8 +1609,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -1632,7 +1632,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "name": {
           "name": "name",
@@ -1729,8 +1729,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -1752,7 +1752,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "name": {
           "name": "name",
@@ -1850,8 +1850,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -1866,7 +1866,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "product_id": {
           "name": "product_id",
@@ -1964,8 +1964,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -1980,7 +1980,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "product_id": {
           "name": "product_id",
@@ -2048,8 +2048,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -2071,7 +2071,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "product_id": {
           "name": "product_id",
@@ -2188,8 +2188,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},
@@ -2211,7 +2211,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "current_setting('app.tenant_id', true)::uuid"
+          "default": "NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         },
         "created_by": {
           "name": "created_by",
@@ -2454,8 +2454,8 @@
           "to": [
             "public"
           ],
-          "using": "tenant_id = current_setting('app.tenant_id', true)::uuid",
-          "withCheck": "tenant_id = current_setting('app.tenant_id', true)::uuid"
+          "using": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
         }
       },
       "checkConstraints": {},

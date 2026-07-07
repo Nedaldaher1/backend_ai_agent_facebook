@@ -13,6 +13,7 @@ import {
   type CreateColorInput,
   type UpdateColorInput,
 } from '@/common/validation';
+import { TenantContext } from '@/core/tenancy/tenant-context';
 import { ColorsRepository } from './colors.repository';
 import { ProductImageColorsRepository } from './product-image-colors.repository';
 import type { ColorUsage, DeleteColorResult } from './dto/color.dto';
@@ -62,15 +63,19 @@ function duplicateFamilyMessage(family: string | undefined): string {
 @Injectable()
 export class ColorsService {
   /**
-   * Cached id of the seeded "__unassigned__" sentinel. The row is immutable
-   * (system colors can't be edited or deleted), so its id is stable for the
-   * process lifetime — resolve once by family, then reuse.
+   * Cached id of each tenant's seeded "__unassigned__" sentinel, keyed by
+   * tenant id. The row is immutable (system colors can't be edited or
+   * deleted), so once resolved it is stable for the process lifetime —
+   * resolve once by family per tenant, then reuse. Every tenant has its own
+   * sentinel row, so a single shared cache would leak a foreign-tenant FK
+   * reference across tenants.
    */
-  private sentinelId: string | null = null;
+  private readonly sentinelIdByTenant = new Map<string, string>();
 
   constructor(
     private readonly repo: ColorsRepository,
     private readonly imageColors: ProductImageColorsRepository,
+    private readonly tenantContext: TenantContext,
   ) {}
 
   list(opts?: ListOptions): Promise<Color[]> {
@@ -236,8 +241,10 @@ export class ColorsService {
   }
 
   private async resolveSentinelId(): Promise<string> {
-    if (this.sentinelId) {
-      return this.sentinelId;
+    const tenantId = this.tenantContext.tenantId;
+    const cached = this.sentinelIdByTenant.get(tenantId);
+    if (cached) {
+      return cached;
     }
     const sentinel = await this.repo.findByFamily(UNASSIGNED_COLOR_FAMILY);
     if (!sentinel) {
@@ -245,7 +252,7 @@ export class ColorsService {
         `System color "${UNASSIGNED_COLOR_FAMILY}" is not seeded; run migration 0006.`,
       );
     }
-    this.sentinelId = sentinel.id;
+    this.sentinelIdByTenant.set(tenantId, sentinel.id);
     return sentinel.id;
   }
 }

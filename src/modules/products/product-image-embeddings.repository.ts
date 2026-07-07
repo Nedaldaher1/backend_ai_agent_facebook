@@ -1,6 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { and, eq, notInArray, sql } from 'drizzle-orm';
-import { DRIZZLE, type Database } from '@/core/database/drizzle';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { products } from './entities/product.entity';
 import { productImageEmbeddings } from './entities/product-image-embedding.entity';
 import { productImageColors } from './entities/product-image-color.entity';
@@ -33,7 +33,7 @@ export interface SimilarProductRow {
  */
 @Injectable()
 export class ProductImageEmbeddingsRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDb) {}
 
   /**
    * Insert or refresh the embedding for one (product, image). Idempotent on the
@@ -46,16 +46,18 @@ export class ProductImageEmbeddingsRepository {
     embedding: number[],
     modelId: string,
   ): Promise<void> {
-    await this.db
-      .insert(productImageEmbeddings)
-      .values({ productId, imageKey, embedding, modelId })
-      .onConflictDoUpdate({
-        target: [
-          productImageEmbeddings.productId,
-          productImageEmbeddings.imageKey,
-        ],
-        set: { embedding, modelId, updatedAt: new Date() },
-      });
+    await this.tenantDb.tx(async (db) => {
+      await db
+        .insert(productImageEmbeddings)
+        .values({ productId, imageKey, embedding, modelId })
+        .onConflictDoUpdate({
+          target: [
+            productImageEmbeddings.productId,
+            productImageEmbeddings.imageKey,
+          ],
+          set: { embedding, modelId, updatedAt: new Date() },
+        });
+    });
   }
 
   /**
@@ -67,18 +69,20 @@ export class ProductImageEmbeddingsRepository {
     productId: string,
     keepImageKeys: string[],
   ): Promise<number> {
-    const where =
-      keepImageKeys.length === 0
-        ? eq(productImageEmbeddings.productId, productId)
-        : and(
-            eq(productImageEmbeddings.productId, productId),
-            notInArray(productImageEmbeddings.imageKey, keepImageKeys),
-          );
-    const deleted = await this.db
-      .delete(productImageEmbeddings)
-      .where(where)
-      .returning({ id: productImageEmbeddings.id });
-    return deleted.length;
+    return this.tenantDb.tx(async (db) => {
+      const where =
+        keepImageKeys.length === 0
+          ? eq(productImageEmbeddings.productId, productId)
+          : and(
+              eq(productImageEmbeddings.productId, productId),
+              notInArray(productImageEmbeddings.imageKey, keepImageKeys),
+            );
+      const deleted = await db
+        .delete(productImageEmbeddings)
+        .where(where)
+        .returning({ id: productImageEmbeddings.id });
+      return deleted.length;
+    });
   }
 
   /** Image keys already embedded for this product with the given model (backfill idempotency). */
@@ -86,24 +90,28 @@ export class ProductImageEmbeddingsRepository {
     productId: string,
     modelId: string,
   ): Promise<string[]> {
-    const rows = await this.db
-      .select({ imageKey: productImageEmbeddings.imageKey })
-      .from(productImageEmbeddings)
-      .where(
-        and(
-          eq(productImageEmbeddings.productId, productId),
-          eq(productImageEmbeddings.modelId, modelId),
-        ),
-      );
-    return rows.map((r) => r.imageKey);
+    return this.tenantDb.tx(async (db) => {
+      const rows = await db
+        .select({ imageKey: productImageEmbeddings.imageKey })
+        .from(productImageEmbeddings)
+        .where(
+          and(
+            eq(productImageEmbeddings.productId, productId),
+            eq(productImageEmbeddings.modelId, modelId),
+          ),
+        );
+      return rows.map((r) => r.imageKey);
+    });
   }
 
   /** Total embedding rows (used by the backfill DoD check). */
   async count(): Promise<number> {
-    const [row] = await this.db
-      .select({ value: sql<number>`count(*)::int` })
-      .from(productImageEmbeddings);
-    return row?.value ?? 0;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select({ value: sql<number>`count(*)::int` })
+        .from(productImageEmbeddings);
+      return row?.value ?? 0;
+    });
   }
 
   /**
@@ -115,14 +123,16 @@ export class ProductImageEmbeddingsRepository {
   async countEmbeddedByProduct(
     modelId: string,
   ): Promise<{ productId: string; embeddedCount: number }[]> {
-    return this.db
-      .select({
-        productId: productImageEmbeddings.productId,
-        embeddedCount: sql<number>`count(*)::int`,
-      })
-      .from(productImageEmbeddings)
-      .where(eq(productImageEmbeddings.modelId, modelId))
-      .groupBy(productImageEmbeddings.productId);
+    return this.tenantDb.tx(async (db) => {
+      return db
+        .select({
+          productId: productImageEmbeddings.productId,
+          embeddedCount: sql<number>`count(*)::int`,
+        })
+        .from(productImageEmbeddings)
+        .where(eq(productImageEmbeddings.modelId, modelId))
+        .groupBy(productImageEmbeddings.productId);
+    });
   }
 
   /**
@@ -153,72 +163,74 @@ export class ProductImageEmbeddingsRepository {
     k: number,
     opts: { overfetch?: number; colorFamilies?: string[] } = {},
   ): Promise<SimilarProductRow[]> {
-    const overfetch = opts.overfetch ?? k * 4;
-    const families = opts.colorFamilies ?? [];
-    const familyList = sql.join(
-      families.map((f) => sql`${f}`),
-      sql`, `,
-    );
-    const colorFilter =
-      families.length > 0
-        ? sql`AND (p.color_family IN (${familyList}) OR EXISTS (
-            SELECT 1 FROM ${productImageColors} AS pic
-            JOIN ${colors} AS c ON c.id = pic.color_id
-            WHERE pic.product_id = p.id AND c.family IN (${familyList})
-          ))`
-        : sql``;
-    const vec = `[${embedding.join(',')}]`;
-    const result = await this.db.execute(sql`
-      WITH candidates AS (
-        SELECT
-          e.product_id,
-          e.image_key,
-          (e.embedding <=> ${vec}::vector) AS distance,
-          p.name,
-          p.price_jod,
-          p.color_family,
-          p.stock_status,
-          p.image_urls
-        FROM ${productImageEmbeddings} AS e
-        JOIN ${products} AS p ON p.id = e.product_id
-        WHERE p.is_published = true ${colorFilter}
-        ORDER BY e.embedding <=> ${vec}::vector
-        LIMIT ${overfetch}
-      ),
-      best AS (
-        SELECT DISTINCT ON (product_id)
-          product_id, image_key, distance, name, price_jod,
-          color_family, stock_status, image_urls
-        FROM candidates
-        ORDER BY product_id, distance
-      )
-      SELECT * FROM best ORDER BY distance ASC LIMIT ${k}
-    `);
+    return this.tenantDb.tx(async (db) => {
+      const overfetch = opts.overfetch ?? k * 4;
+      const families = opts.colorFamilies ?? [];
+      const familyList = sql.join(
+        families.map((f) => sql`${f}`),
+        sql`, `,
+      );
+      const colorFilter =
+        families.length > 0
+          ? sql`AND (p.color_family IN (${familyList}) OR EXISTS (
+              SELECT 1 FROM ${productImageColors} AS pic
+              JOIN ${colors} AS c ON c.id = pic.color_id
+              WHERE pic.product_id = p.id AND c.family IN (${familyList})
+            ))`
+          : sql``;
+      const vec = `[${embedding.join(',')}]`;
+      const result = await db.execute(sql`
+        WITH candidates AS (
+          SELECT
+            e.product_id,
+            e.image_key,
+            (e.embedding <=> ${vec}::vector) AS distance,
+            p.name,
+            p.price_jod,
+            p.color_family,
+            p.stock_status,
+            p.image_urls
+          FROM ${productImageEmbeddings} AS e
+          JOIN ${products} AS p ON p.id = e.product_id
+          WHERE p.is_published = true ${colorFilter}
+          ORDER BY e.embedding <=> ${vec}::vector
+          LIMIT ${overfetch}
+        ),
+        best AS (
+          SELECT DISTINCT ON (product_id)
+            product_id, image_key, distance, name, price_jod,
+            color_family, stock_status, image_urls
+          FROM candidates
+          ORDER BY product_id, distance
+        )
+        SELECT * FROM best ORDER BY distance ASC LIMIT ${k}
+      `);
 
-    const rows = (result.rows ?? []) as Array<{
-      product_id: string;
-      image_key: string;
-      distance: number | string;
-      name: string;
-      price_jod: string;
-      color_family: string | null;
-      stock_status: string;
-      image_urls: string[] | null;
-    }>;
+      const rows = (result.rows ?? []) as Array<{
+        product_id: string;
+        image_key: string;
+        distance: number | string;
+        name: string;
+        price_jod: string;
+        color_family: string | null;
+        stock_status: string;
+        image_urls: string[] | null;
+      }>;
 
-    return rows.map((r) => {
-      const distance = Number(r.distance);
-      return {
-        productId: r.product_id,
-        name: r.name,
-        priceJod: r.price_jod,
-        colorFamily: r.color_family,
-        stockStatus: r.stock_status,
-        imageKey: r.image_key,
-        imageUrls: r.image_urls,
-        distance,
-        similarity: 1 - distance,
-      };
+      return rows.map((r) => {
+        const distance = Number(r.distance);
+        return {
+          productId: r.product_id,
+          name: r.name,
+          priceJod: r.price_jod,
+          colorFamily: r.color_family,
+          stockStatus: r.stock_status,
+          imageKey: r.image_key,
+          imageUrls: r.image_urls,
+          distance,
+          similarity: 1 - distance,
+        };
+      });
     });
   }
 }

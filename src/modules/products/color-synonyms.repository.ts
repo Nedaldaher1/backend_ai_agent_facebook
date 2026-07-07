@@ -1,6 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { asc, desc, eq, sql } from 'drizzle-orm';
-import { DRIZZLE, type Database } from '@/core/database/drizzle';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import { colors } from './entities/color.entity';
 import {
@@ -31,44 +31,52 @@ function arNorm(expr: unknown): ReturnType<typeof sql> {
  */
 @Injectable()
 export class ColorSynonymsRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDb) {}
 
   async list(opts: ListOptions = {}): Promise<ColorSynonym[]> {
-    const { limit, offset, orderBy } = normalizeListOptions(opts);
-    const direction = orderBy === 'asc' ? asc : desc;
-    return this.db
-      .select()
-      .from(colorSynonyms)
-      .orderBy(direction(colorSynonyms.createdAt))
-      .limit(limit)
-      .offset(offset);
+    return this.tenantDb.tx(async (db) => {
+      const { limit, offset, orderBy } = normalizeListOptions(opts);
+      const direction = orderBy === 'asc' ? asc : desc;
+      return db
+        .select()
+        .from(colorSynonyms)
+        .orderBy(direction(colorSynonyms.createdAt))
+        .limit(limit)
+        .offset(offset);
+    });
   }
 
   async findById(id: string): Promise<ColorSynonym | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(colorSynonyms)
-      .where(eq(colorSynonyms.id, id))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(colorSynonyms)
+        .where(eq(colorSynonyms.id, id))
+        .limit(1);
+      return row;
+    });
   }
 
   async findByTerm(term: string): Promise<ColorSynonym | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(colorSynonyms)
-      .where(eq(colorSynonyms.term, term))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(colorSynonyms)
+        .where(eq(colorSynonyms.term, term))
+        .limit(1);
+      return row;
+    });
   }
 
   /** All dialect terms that resolve to a given color, alphabetically by term. */
   async findByColorId(colorId: string): Promise<ColorSynonym[]> {
-    return this.db
-      .select()
-      .from(colorSynonyms)
-      .where(eq(colorSynonyms.colorId, colorId))
-      .orderBy(asc(colorSynonyms.term));
+    return this.tenantDb.tx(async (db) => {
+      return db
+        .select()
+        .from(colorSynonyms)
+        .where(eq(colorSynonyms.colorId, colorId))
+        .orderBy(asc(colorSynonyms.term));
+    });
   }
 
   /**
@@ -77,13 +85,15 @@ export class ColorSynonymsRepository {
    * holds the FK).
    */
   async resolveColorFamily(term: string): Promise<string | null> {
-    const [row] = await this.db
-      .select({ family: colors.family })
-      .from(colorSynonyms)
-      .innerJoin(colors, eq(colors.id, colorSynonyms.colorId))
-      .where(eq(colorSynonyms.term, term))
-      .limit(1);
-    return row?.family ?? null;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select({ family: colors.family })
+        .from(colorSynonyms)
+        .innerJoin(colors, eq(colors.id, colorSynonyms.colorId))
+        .where(eq(colorSynonyms.term, term))
+        .limit(1);
+      return row?.family ?? null;
+    });
   }
 
   /**
@@ -98,14 +108,16 @@ export class ColorSynonymsRepository {
     term: string,
     threshold = 0.3,
   ): Promise<string | null> {
-    const [row] = await this.db
-      .select({ family: colors.family })
-      .from(colorSynonyms)
-      .innerJoin(colors, eq(colors.id, colorSynonyms.colorId))
-      .where(sql`similarity(${colorSynonyms.term}, ${term}) >= ${threshold}`)
-      .orderBy(sql`similarity(${colorSynonyms.term}, ${term}) DESC`)
-      .limit(1);
-    return row?.family ?? null;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select({ family: colors.family })
+        .from(colorSynonyms)
+        .innerJoin(colors, eq(colors.id, colorSynonyms.colorId))
+        .where(sql`similarity(${colorSynonyms.term}, ${term}) >= ${threshold}`)
+        .orderBy(sql`similarity(${colorSynonyms.term}, ${term}) DESC`)
+        .limit(1);
+      return row?.family ?? null;
+    });
   }
 
   /**
@@ -132,47 +144,58 @@ export class ColorSynonymsRepository {
     term: string,
     { nameThreshold = 0.55, synonymThreshold = 0.3 } = {},
   ): Promise<string[]> {
-    const result = await this.db.execute(sql`
-      SELECT DISTINCT family FROM (
-        SELECT c.family
-        FROM ${colors} AS c
-        WHERE ${arNorm(sql`c.name`)} = ${arNorm(sql`${term}`)}
-           OR word_similarity(${arNorm(sql`${term}`)}, ${arNorm(sql`c.name`)}) >= ${nameThreshold}
-        UNION ALL
-        SELECT c.family
-        FROM ${colorSynonyms} AS s
-        JOIN ${colors} AS c ON c.id = s.color_id
-        WHERE ${arNorm(sql`s.term`)} = ${arNorm(sql`${term}`)}
-           OR similarity(${arNorm(sql`s.term`)}, ${arNorm(sql`${term}`)}) >= ${synonymThreshold}
-      ) AS matches
-      WHERE family <> ${UNASSIGNED_FAMILY}
-    `);
-    const rows = (result.rows ?? []) as Array<{ family: string }>;
-    return rows.map((r) => r.family);
+    return this.tenantDb.tx(async (db) => {
+      const result = await db.execute(sql`
+        SELECT DISTINCT family FROM (
+          SELECT c.family
+          FROM ${colors} AS c
+          WHERE ${arNorm(sql`c.name`)} = ${arNorm(sql`${term}`)}
+             OR word_similarity(${arNorm(sql`${term}`)}, ${arNorm(sql`c.name`)}) >= ${nameThreshold}
+          UNION ALL
+          SELECT c.family
+          FROM ${colorSynonyms} AS s
+          JOIN ${colors} AS c ON c.id = s.color_id
+          WHERE ${arNorm(sql`s.term`)} = ${arNorm(sql`${term}`)}
+             OR similarity(${arNorm(sql`s.term`)}, ${arNorm(sql`${term}`)}) >= ${synonymThreshold}
+        ) AS matches
+        WHERE family <> ${UNASSIGNED_FAMILY}
+      `);
+      const rows = (result.rows ?? []) as Array<{ family: string }>;
+      return rows.map((r) => r.family);
+    });
   }
 
   async insert(input: NewColorSynonym): Promise<ColorSynonym> {
-    const [row] = await this.db.insert(colorSynonyms).values(input).returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .insert(colorSynonyms)
+        .values(input)
+        .returning();
+      return row;
+    });
   }
 
   async updateById(
     id: string,
     patch: Partial<NewColorSynonym>,
   ): Promise<ColorSynonym | undefined> {
-    const [row] = await this.db
-      .update(colorSynonyms)
-      .set(patch)
-      .where(eq(colorSynonyms.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .update(colorSynonyms)
+        .set(patch)
+        .where(eq(colorSynonyms.id, id))
+        .returning();
+      return row;
+    });
   }
 
   async deleteById(id: string): Promise<ColorSynonym | undefined> {
-    const [row] = await this.db
-      .delete(colorSynonyms)
-      .where(eq(colorSynonyms.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .delete(colorSynonyms)
+        .where(eq(colorSynonyms.id, id))
+        .returning();
+      return row;
+    });
   }
 }

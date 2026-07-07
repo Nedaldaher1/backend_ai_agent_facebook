@@ -5,7 +5,7 @@
  */
 
 import { ConversationsRepository } from '../conversations.repository';
-import type { Database } from '@/core/database/drizzle';
+import type { TenantDb } from '@/core/tenancy/tenant-db';
 
 function makeChain(result: unknown) {
   const chain = {
@@ -27,7 +27,10 @@ function makeRepo(
       .mockReturnValueOnce(makeChain(stateRows))
       .mockReturnValueOnce(makeChain([{ value: escalated }])),
   };
-  return new ConversationsRepository(db as unknown as Database);
+  const tenantDb = {
+    tx: (fn: (db: unknown) => unknown) => fn(db),
+  } as unknown as TenantDb;
+  return new ConversationsRepository(tenantDb);
 }
 
 describe('ConversationsRepository.dashboardStats', () => {

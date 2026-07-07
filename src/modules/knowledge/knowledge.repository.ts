@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   and,
   arrayOverlaps,
@@ -13,7 +13,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
-import { DRIZZLE, type Database } from '@/core/database/drizzle';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
   knowledgeEntries,
@@ -57,7 +57,7 @@ export interface KnowledgeRelevanceFilter {
  */
 @Injectable()
 export class KnowledgeRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDb) {}
 
   private buildConditions(filter: KnowledgeFilter): SQL[] {
     const conditions: SQL[] = [];
@@ -96,74 +96,88 @@ export class KnowledgeRepository {
     const recency = orderBy === 'asc' ? asc : desc;
     const conditions = this.buildConditions(filter);
 
-    return this.db
-      .select()
-      .from(knowledgeEntries)
-      .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(
-        desc(knowledgeEntries.priority),
-        recency(knowledgeEntries.createdAt),
-      )
-      .limit(limit)
-      .offset(offset);
+    return this.tenantDb.tx((db) =>
+      db
+        .select()
+        .from(knowledgeEntries)
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(
+          desc(knowledgeEntries.priority),
+          recency(knowledgeEntries.createdAt),
+        )
+        .limit(limit)
+        .offset(offset),
+    );
   }
 
   async count(filter: KnowledgeFilter = {}): Promise<number> {
     const conditions = this.buildConditions(filter);
-    const [row] = await this.db
-      .select({ value: count() })
-      .from(knowledgeEntries)
-      .where(conditions.length ? and(...conditions) : undefined);
-    return row?.value ?? 0;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select({ value: count() })
+        .from(knowledgeEntries)
+        .where(conditions.length ? and(...conditions) : undefined);
+      return row?.value ?? 0;
+    });
   }
 
   async findById(id: string): Promise<KnowledgeEntry | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(knowledgeEntries)
-      .where(eq(knowledgeEntries.id, id))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(knowledgeEntries)
+        .where(eq(knowledgeEntries.id, id))
+        .limit(1);
+      return row;
+    });
   }
 
   async insert(input: NewKnowledgeEntry): Promise<KnowledgeEntry> {
-    const [row] = await this.db
-      .insert(knowledgeEntries)
-      .values(input)
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .insert(knowledgeEntries)
+        .values(input)
+        .returning();
+      return row;
+    });
   }
 
   async updateById(
     id: string,
     patch: Partial<NewKnowledgeEntry>,
   ): Promise<KnowledgeEntry | undefined> {
-    const [row] = await this.db
-      .update(knowledgeEntries)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(eq(knowledgeEntries.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .update(knowledgeEntries)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(knowledgeEntries.id, id))
+        .returning();
+      return row;
+    });
   }
 
   async deleteById(id: string): Promise<KnowledgeEntry | undefined> {
-    const [row] = await this.db
-      .delete(knowledgeEntries)
-      .where(eq(knowledgeEntries.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .delete(knowledgeEntries)
+        .where(eq(knowledgeEntries.id, id))
+        .returning();
+      return row;
+    });
   }
 
   async setPublished(
     id: string,
     isPublished: boolean,
   ): Promise<KnowledgeEntry | undefined> {
-    const [row] = await this.db
-      .update(knowledgeEntries)
-      .set({ isPublished, updatedAt: new Date() })
-      .where(eq(knowledgeEntries.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .update(knowledgeEntries)
+        .set({ isPublished, updatedAt: new Date() })
+        .where(eq(knowledgeEntries.id, id))
+        .returning();
+      return row;
+    });
   }
 
   /**
@@ -224,56 +238,58 @@ export class KnowledgeRepository {
 
     const limit = filter.limit ?? 5;
 
-    // No free-text query: pure structured filter, ordered by priority then recency.
-    if (!filter.query) {
-      return this.db
+    return this.tenantDb.tx(async (db) => {
+      // No free-text query: pure structured filter, ordered by priority then recency.
+      if (!filter.query) {
+        return db
+          .select()
+          .from(knowledgeEntries)
+          .where(and(...conditions))
+          .orderBy(
+            sql`${knowledgeEntries.priority} DESC`,
+            sql`${knowledgeEntries.createdAt} DESC`,
+          )
+          .limit(limit);
+      }
+
+      // Fuzzy path — per-token, WORD-level match (Arabic-aware), mirroring
+      // products.repository.searchFuzzy. `word_similarity(token, searchable)` finds
+      // a token INSIDE the concatenated text ("عباية" scores ~1.0 against a long
+      // entry) where whole-string `similarity()` cannot. ILIKE adds exact-substring
+      // hits trigrams miss. WORD_SIM 0.5 keeps unrelated words out. The function
+      // form of word_similarity needs no GUC, so — unlike the old `%` operator —
+      // no transaction / SET LOCAL is required for the similarity search itself
+      // (this method now always runs inside TenantDb's tx for tenant scoping).
+      // All values are bound parameters.
+      const q = filter.query;
+      const tokens = tokenizeSearchQuery(q);
+
+      const WORD_SIM = 0.5;
+      const tokenConds = tokens.map(
+        (t) => sql`(
+          word_similarity(${t}, ${searchable}) >= ${WORD_SIM}
+          OR ${searchable} ILIKE ${'%' + t + '%'}
+        )`,
+      );
+
+      // Coarse whole-query trigram clause kept as an extra OR (helps short queries);
+      // with no usable tokens (all-stopword query) it is the only text condition.
+      const wholeQuery = sql`(similarity(${searchable}, ${q}) >= 0.2)`;
+
+      const textCondition =
+        tokenConds.length > 0
+          ? sql`(${sql.join([...tokenConds, wholeQuery], sql` OR `)})`
+          : wholeQuery;
+
+      return db
         .select()
         .from(knowledgeEntries)
-        .where(and(...conditions))
+        .where(and(...conditions, textCondition))
         .orderBy(
           sql`${knowledgeEntries.priority} DESC`,
-          sql`${knowledgeEntries.createdAt} DESC`,
+          sql`greatest(word_similarity(${q}, ${searchable}), similarity(${searchable}, ${q})) DESC`,
         )
         .limit(limit);
-    }
-
-    // Fuzzy path — per-token, WORD-level match (Arabic-aware), mirroring
-    // products.repository.searchFuzzy. `word_similarity(token, searchable)` finds
-    // a token INSIDE the concatenated text ("عباية" scores ~1.0 against a long
-    // entry) where whole-string `similarity()` cannot. ILIKE adds exact-substring
-    // hits trigrams miss. WORD_SIM 0.5 keeps unrelated words out. The function
-    // form of word_similarity needs no GUC, so — unlike the old `%` operator —
-    // no transaction / SET LOCAL is required. (Trade-off: the function form does
-    // not use the GIN trgm index; acceptable at this table's scale, same as
-    // products.searchFuzzy.) All values are bound parameters.
-    const q = filter.query;
-    const tokens = tokenizeSearchQuery(q);
-
-    const WORD_SIM = 0.5;
-    const tokenConds = tokens.map(
-      (t) => sql`(
-        word_similarity(${t}, ${searchable}) >= ${WORD_SIM}
-        OR ${searchable} ILIKE ${'%' + t + '%'}
-      )`,
-    );
-
-    // Coarse whole-query trigram clause kept as an extra OR (helps short queries);
-    // with no usable tokens (all-stopword query) it is the only text condition.
-    const wholeQuery = sql`(similarity(${searchable}, ${q}) >= 0.2)`;
-
-    const textCondition =
-      tokenConds.length > 0
-        ? sql`(${sql.join([...tokenConds, wholeQuery], sql` OR `)})`
-        : wholeQuery;
-
-    return this.db
-      .select()
-      .from(knowledgeEntries)
-      .where(and(...conditions, textCondition))
-      .orderBy(
-        sql`${knowledgeEntries.priority} DESC`,
-        sql`greatest(word_similarity(${q}, ${searchable}), similarity(${searchable}, ${q})) DESC`,
-      )
-      .limit(limit);
+    });
   }
 }

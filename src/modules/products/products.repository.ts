@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   and,
   arrayOverlaps,
@@ -13,7 +13,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
-import { DRIZZLE, type Database } from '@/core/database/drizzle';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
   products,
@@ -63,7 +63,7 @@ export interface ProductFilter {
  */
 @Injectable()
 export class ProductsRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDb) {}
 
   /**
    * Distinct non-null values of a free-text attribute over PUBLISHED products.
@@ -71,19 +71,21 @@ export class ProductsRepository {
    * extraction. Restricted to known columns — never interpolates arbitrary SQL.
    */
   async distinctPublishedAttribute(attributeKey: string): Promise<string[]> {
-    // attributes.values[key] over published products. The key is a bound
-    // parameter (never interpolated), and jsonb ->> yields text.
-    const value = sql<
-      string | null
-    >`${products.attributes}->'values'->>${attributeKey}`;
-    const rows = await this.db
-      .selectDistinct({ value })
-      .from(products)
-      .where(and(eq(products.isPublished, true), isNotNull(value)))
-      .orderBy(asc(value));
-    return rows
-      .map((r) => r.value)
-      .filter((v): v is string => v != null && v.length > 0);
+    return this.tenantDb.tx(async (db) => {
+      // attributes.values[key] over published products. The key is a bound
+      // parameter (never interpolated), and jsonb ->> yields text.
+      const value = sql<
+        string | null
+      >`${products.attributes}->'values'->>${attributeKey}`;
+      const rows = await db
+        .selectDistinct({ value })
+        .from(products)
+        .where(and(eq(products.isPublished, true), isNotNull(value)))
+        .orderBy(asc(value));
+      return rows
+        .map((r) => r.value)
+        .filter((v): v is string => v != null && v.length > 0);
+    });
   }
 
   /** Translate a filter into a list of SQL conditions (parameterized). */
@@ -156,54 +158,64 @@ export class ProductsRepository {
     filter: ProductFilter = {},
     opts: ListOptions = {},
   ): Promise<Product[]> {
-    const { limit, offset, orderBy } = normalizeListOptions(opts);
-    const direction = orderBy === 'asc' ? asc : desc;
-    const conditions = this.buildConditions(filter);
+    return this.tenantDb.tx(async (db) => {
+      const { limit, offset, orderBy } = normalizeListOptions(opts);
+      const direction = orderBy === 'asc' ? asc : desc;
+      const conditions = this.buildConditions(filter);
 
-    return this.db
-      .select()
-      .from(products)
-      .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(direction(products.createdAt))
-      .limit(limit)
-      .offset(offset);
+      return db
+        .select()
+        .from(products)
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(direction(products.createdAt))
+        .limit(limit)
+        .offset(offset);
+    });
   }
 
   /** Total rows matching `filter` (for pagination), ignoring limit/offset. */
   async count(filter: ProductFilter = {}): Promise<number> {
-    const conditions = this.buildConditions(filter);
-    const [row] = await this.db
-      .select({ value: count() })
-      .from(products)
-      .where(conditions.length ? and(...conditions) : undefined);
-    return row?.value ?? 0;
+    return this.tenantDb.tx(async (db) => {
+      const conditions = this.buildConditions(filter);
+      const [row] = await db
+        .select({ value: count() })
+        .from(products)
+        .where(conditions.length ? and(...conditions) : undefined);
+      return row?.value ?? 0;
+    });
   }
 
   /** Internal lookup (no publish gate); callers decide whether to expose it. */
   async findById(id: string): Promise<Product | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(products)
-      .where(eq(products.id, id))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(products)
+        .where(eq(products.id, id))
+        .limit(1);
+      return row;
+    });
   }
 
   async insert(input: NewProduct): Promise<Product> {
-    const [row] = await this.db.insert(products).values(input).returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db.insert(products).values(input).returning();
+      return row;
+    });
   }
 
   async updateById(
     id: string,
     patch: Partial<NewProduct>,
   ): Promise<Product | undefined> {
-    const [row] = await this.db
-      .update(products)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(eq(products.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .update(products)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(products.id, id))
+        .returning();
+      return row;
+    });
   }
 
   /**
@@ -216,47 +228,62 @@ export class ProductsRepository {
    * drizzle bind each element as a separate scalar param, so a single key
    * renders as `'key'::text[]` and Postgres rejects it with "malformed array
    * literal"; building the ARRAY[] explicitly keeps every element parameterized.
+   *
+   * The empty-`urls` branch re-runs findById's exact query against the
+   * tx-scoped `db` (instead of calling `this.findById`) so the whole method
+   * stays inside the ONE transaction opened here.
    */
   async appendImageUrls(
     id: string,
     urls: string[],
   ): Promise<Product | undefined> {
-    if (urls.length === 0) {
-      return this.findById(id);
-    }
-    const newKeys = sql`array[${sql.join(
-      urls.map((u) => sql`${u}`),
-      sql`, `,
-    )}]::text[]`;
-    const [row] = await this.db
-      .update(products)
-      .set({
-        imageUrls: sql`coalesce(${products.imageUrls}, '{}'::text[]) || ${newKeys}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(products.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      if (urls.length === 0) {
+        const [row] = await db
+          .select()
+          .from(products)
+          .where(eq(products.id, id))
+          .limit(1);
+        return row;
+      }
+      const newKeys = sql`array[${sql.join(
+        urls.map((u) => sql`${u}`),
+        sql`, `,
+      )}]::text[]`;
+      const [row] = await db
+        .update(products)
+        .set({
+          imageUrls: sql`coalesce(${products.imageUrls}, '{}'::text[]) || ${newKeys}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(products.id, id))
+        .returning();
+      return row;
+    });
   }
 
   async deleteById(id: string): Promise<Product | undefined> {
-    const [row] = await this.db
-      .delete(products)
-      .where(eq(products.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .delete(products)
+        .where(eq(products.id, id))
+        .returning();
+      return row;
+    });
   }
 
   async setPublished(
     id: string,
     isPublished: boolean,
   ): Promise<Product | undefined> {
-    const [row] = await this.db
-      .update(products)
-      .set({ isPublished, updatedAt: new Date() })
-      .where(eq(products.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .update(products)
+        .set({ isPublished, updatedAt: new Date() })
+        .where(eq(products.id, id))
+        .returning();
+      return row;
+    });
   }
 
   /**
@@ -272,12 +299,14 @@ export class ProductsRepository {
    * is expected to match this SKU exactly (case-sensitive, as stored).
    */
   async findPublishedBySku(sku: string): Promise<Product | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(products)
-      .where(and(eq(products.sku, sku), eq(products.isPublished, true)))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(products)
+        .where(and(eq(products.sku, sku), eq(products.isPublished, true)))
+        .limit(1);
+      return row;
+    });
   }
 
   /**
@@ -286,20 +315,22 @@ export class ProductsRepository {
    * Only active ad links (is_active = true) are followed.
    */
   async findByAdRef(adRef: string): Promise<Product[]> {
-    const productCols = getTableColumns(products);
-    const rows = await this.db
-      .select(productCols)
-      .from(adProductLinks)
-      .innerJoin(products, eq(adProductLinks.productId, products.id))
-      .where(
-        and(
-          eq(adProductLinks.adRef, adRef),
-          eq(adProductLinks.isActive, true),
-          eq(products.isPublished, true),
-        ),
-      )
-      .orderBy(asc(adProductLinks.position));
-    return rows;
+    return this.tenantDb.tx(async (db) => {
+      const productCols = getTableColumns(products);
+      const rows = await db
+        .select(productCols)
+        .from(adProductLinks)
+        .innerJoin(products, eq(adProductLinks.productId, products.id))
+        .where(
+          and(
+            eq(adProductLinks.adRef, adRef),
+            eq(adProductLinks.isActive, true),
+            eq(products.isPublished, true),
+          ),
+        )
+        .orderBy(asc(adProductLinks.position));
+      return rows;
+    });
   }
 
   /**
@@ -319,66 +350,68 @@ export class ProductsRepository {
     filter: ProductFilter,
     limit = 8,
   ): Promise<Product[]> {
-    const conditions = this.buildConditions(filter);
-    const tokens = tokenizeSearchQuery(query);
+    return this.tenantDb.tx(async (db) => {
+      const conditions = this.buildConditions(filter);
+      const tokens = tokenizeSearchQuery(query);
 
-    // Text the tokens are matched against: name, description, and the joined
-    // tags array (so a tag like "قطن" is searchable). NULL-safe.
-    const tagsText = sql`coalesce(array_to_string(${products.tags}, ' '), '')`;
+      // Text the tokens are matched against: name, description, and the joined
+      // tags array (so a tag like "قطن" is searchable). NULL-safe.
+      const tagsText = sql`coalesce(array_to_string(${products.tags}, ' '), '')`;
 
-    // Per-token, WORD-level match. `word_similarity(token, text)` finds the token
-    // INSIDE a longer text — "عباية" scores 1.0 against "عباية صيفي تطريز زهور" —
-    // which whole-string `similarity()` cannot do for an Arabic sentence. ILIKE
-    // adds exact-substring hits trigrams can miss. 0.5 keeps unrelated words out
-    // ("فستان"/"بنطلون" score 0) — calibrated against the live catalog.
-    //
-    // Per-image descriptions count too: admins describe variants there ("عباية
-    // لون بيج بتتميز بالتطريز عند الصدر") while the product name can be a bare
-    // SKU-style label ("عباية صيفي #001") — without this EXISTS such a product
-    // is unfindable by the very words the admin wrote for it.
-    const WORD_SIM = 0.5;
-    const tokenConds = tokens.map(
-      (t) => sql`(
-        word_similarity(${t}, ${products.name}) >= ${WORD_SIM}
-        OR word_similarity(${t}, coalesce(${products.description}, '')) >= ${WORD_SIM}
-        OR word_similarity(${t}, ${tagsText}) >= ${WORD_SIM}
-        OR ${products.name} ILIKE ${'%' + t + '%'}
-        OR ${tagsText} ILIKE ${'%' + t + '%'}
-        OR EXISTS (
-          SELECT 1 FROM ${productImageDescriptions}
-          WHERE ${productImageDescriptions.productId} = ${products.id}
-            AND word_similarity(${t}, ${productImageDescriptions.description}) >= ${WORD_SIM}
+      // Per-token, WORD-level match. `word_similarity(token, text)` finds the token
+      // INSIDE a longer text — "عباية" scores 1.0 against "عباية صيفي تطريز زهور" —
+      // which whole-string `similarity()` cannot do for an Arabic sentence. ILIKE
+      // adds exact-substring hits trigrams can miss. 0.5 keeps unrelated words out
+      // ("فستان"/"بنطلون" score 0) — calibrated against the live catalog.
+      //
+      // Per-image descriptions count too: admins describe variants there ("عباية
+      // لون بيج بتتميز بالتطريز عند الصدر") while the product name can be a bare
+      // SKU-style label ("عباية صيفي #001") — without this EXISTS such a product
+      // is unfindable by the very words the admin wrote for it.
+      const WORD_SIM = 0.5;
+      const tokenConds = tokens.map(
+        (t) => sql`(
+          word_similarity(${t}, ${products.name}) >= ${WORD_SIM}
+          OR word_similarity(${t}, coalesce(${products.description}, '')) >= ${WORD_SIM}
+          OR word_similarity(${t}, ${tagsText}) >= ${WORD_SIM}
+          OR ${products.name} ILIKE ${'%' + t + '%'}
+          OR ${tagsText} ILIKE ${'%' + t + '%'}
+          OR EXISTS (
+            SELECT 1 FROM ${productImageDescriptions}
+            WHERE ${productImageDescriptions.productId} = ${products.id}
+              AND word_similarity(${t}, ${productImageDescriptions.description}) >= ${WORD_SIM}
+          )
+        )`,
+      );
+
+      // Whole-query trigram match kept as a coarse OR (helps multi-word name
+      // queries like "عباية صيفي"); threshold lowered from the old 0.3 since the
+      // per-token predicate is the primary signal now. With no usable tokens
+      // (e.g. an all-stopword query) this whole-query clause is the only text
+      // condition; the service layer falls back to a structured list if it misses.
+      const wholeQuery = sql`(
+        similarity(${products.name}, ${query}) >= 0.2
+        OR similarity(coalesce(${products.description}, ''), ${query}) >= 0.2
+      )`;
+
+      const textCondition =
+        tokenConds.length > 0
+          ? sql`(${sql.join([...tokenConds, wholeQuery], sql` OR `)})`
+          : wholeQuery;
+
+      return db
+        .select()
+        .from(products)
+        .where(and(...conditions, textCondition))
+        .orderBy(
+          sql`greatest(
+            word_similarity(${query}, ${products.name}),
+            similarity(${products.name}, ${query}),
+            similarity(coalesce(${products.description}, ''), ${query})
+          ) DESC`,
         )
-      )`,
-    );
-
-    // Whole-query trigram match kept as a coarse OR (helps multi-word name
-    // queries like "عباية صيفي"); threshold lowered from the old 0.3 since the
-    // per-token predicate is the primary signal now. With no usable tokens
-    // (e.g. an all-stopword query) this whole-query clause is the only text
-    // condition; the service layer falls back to a structured list if it misses.
-    const wholeQuery = sql`(
-      similarity(${products.name}, ${query}) >= 0.2
-      OR similarity(coalesce(${products.description}, ''), ${query}) >= 0.2
-    )`;
-
-    const textCondition =
-      tokenConds.length > 0
-        ? sql`(${sql.join([...tokenConds, wholeQuery], sql` OR `)})`
-        : wholeQuery;
-
-    return this.db
-      .select()
-      .from(products)
-      .where(and(...conditions, textCondition))
-      .orderBy(
-        sql`greatest(
-          word_similarity(${query}, ${products.name}),
-          similarity(${products.name}, ${query}),
-          similarity(coalesce(${products.description}, ''), ${query})
-        ) DESC`,
-      )
-      .limit(limit);
+        .limit(limit);
+    });
   }
 
   /**
@@ -387,10 +420,12 @@ export class ProductsRepository {
    * an embedding row pointing at a since-unpublished product can never leak.
    */
   async findPublishedByIds(ids: string[]): Promise<Product[]> {
-    if (ids.length === 0) return [];
-    return this.db
-      .select()
-      .from(products)
-      .where(and(inArray(products.id, ids), eq(products.isPublished, true)));
+    return this.tenantDb.tx(async (db) => {
+      if (ids.length === 0) return [];
+      return db
+        .select()
+        .from(products)
+        .where(and(inArray(products.id, ids), eq(products.isPublished, true)));
+    });
   }
 }

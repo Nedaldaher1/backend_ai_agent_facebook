@@ -10,7 +10,7 @@
  */
 
 import { OrdersRepository } from '../orders.repository';
-import type { Database } from '@/core/database/drizzle';
+import type { TenantDb } from '@/core/tenancy/tenant-db';
 
 function makeChain(result: unknown) {
   const chain = {
@@ -30,7 +30,10 @@ function makeRepo(statusRows: unknown[], dayRows: unknown[]): OrdersRepository {
       .mockReturnValueOnce(makeChain(statusRows))
       .mockReturnValueOnce(makeChain(dayRows)),
   };
-  return new OrdersRepository(db as unknown as Database);
+  const tenantDb = {
+    tx: (fn: (db: unknown) => unknown) => fn(db),
+  } as unknown as TenantDb;
+  return new OrdersRepository(tenantDb);
 }
 
 describe('OrdersRepository.dashboardStats', () => {

@@ -1,6 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
-import { DRIZZLE, type Database } from '@/core/database/drizzle';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import {
   orders,
@@ -35,28 +35,32 @@ export interface OrderDashboardStats {
  */
 @Injectable()
 export class OrdersRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDb) {}
 
   // --- orders ---
 
   async list(opts: ListOptions = {}): Promise<Order[]> {
-    const { limit, offset, orderBy } = normalizeListOptions(opts);
-    const direction = orderBy === 'asc' ? asc : desc;
-    return this.db
-      .select()
-      .from(orders)
-      .orderBy(direction(orders.createdAt))
-      .limit(limit)
-      .offset(offset);
+    return this.tenantDb.tx(async (db) => {
+      const { limit, offset, orderBy } = normalizeListOptions(opts);
+      const direction = orderBy === 'asc' ? asc : desc;
+      return db
+        .select()
+        .from(orders)
+        .orderBy(direction(orders.createdAt))
+        .limit(limit)
+        .offset(offset);
+    });
   }
 
   async findById(id: string): Promise<Order | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(orders)
-      .where(eq(orders.id, id))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(orders)
+        .where(eq(orders.id, id))
+        .limit(1);
+      return row;
+    });
   }
 
   /**
@@ -73,60 +77,64 @@ export class OrdersRepository {
     days: number,
     timeZone: string,
   ): Promise<OrderDashboardStats> {
-    const statusRows = await this.db
-      .select({ status: orders.status, value: count() })
-      .from(orders)
-      .groupBy(orders.status);
+    return this.tenantDb.tx(async (db) => {
+      const statusRows = await db
+        .select({ status: orders.status, value: count() })
+        .from(orders)
+        .groupBy(orders.status);
 
-    const byStatus = Object.fromEntries(
-      ORDER_STATUSES.map((s) => [s, 0]),
-    ) as Record<OrderStatusKey, number>;
-    let total = 0;
-    for (const row of statusRows) {
-      const n = Number(row.value);
-      total += n;
-      if ((ORDER_STATUSES as readonly string[]).includes(row.status)) {
-        byStatus[row.status as OrderStatusKey] = n;
+      const byStatus = Object.fromEntries(
+        ORDER_STATUSES.map((s) => [s, 0]),
+      ) as Record<OrderStatusKey, number>;
+      let total = 0;
+      for (const row of statusRows) {
+        const n = Number(row.value);
+        total += n;
+        if ((ORDER_STATUSES as readonly string[]).includes(row.status)) {
+          byStatus[row.status as OrderStatusKey] = n;
+        }
       }
-    }
 
-    // GROUP/ORDER BY ordinal position (1 = the day expression): repeating the
-    // expression would re-bind `timeZone` as a NEW parameter each time, and
-    // Postgres cannot prove `$1 = $5` at parse time — it rejects the query
-    // with "created_at must appear in the GROUP BY clause" (caught live).
-    const dayExpr = sql<string>`(${orders.createdAt} at time zone ${timeZone})::date`;
-    const dayRows = await this.db
-      .select({ day: dayExpr, value: count() })
-      .from(orders)
-      .where(
-        sql`(${orders.createdAt} at time zone ${timeZone}) >= date_trunc('day', now() at time zone ${timeZone}) - (${days - 1} * interval '1 day')`,
-      )
-      .groupBy(sql`1`)
-      .orderBy(sql`1`);
+      // GROUP/ORDER BY ordinal position (1 = the day expression): repeating the
+      // expression would re-bind `timeZone` as a NEW parameter each time, and
+      // Postgres cannot prove `$1 = $5` at parse time — it rejects the query
+      // with "created_at must appear in the GROUP BY clause" (caught live).
+      const dayExpr = sql<string>`(${orders.createdAt} at time zone ${timeZone})::date`;
+      const dayRows = await db
+        .select({ day: dayExpr, value: count() })
+        .from(orders)
+        .where(
+          sql`(${orders.createdAt} at time zone ${timeZone}) >= date_trunc('day', now() at time zone ${timeZone}) - (${days - 1} * interval '1 day')`,
+        )
+        .groupBy(sql`1`)
+        .orderBy(sql`1`);
 
-    // Raw sql`` columns carry no Drizzle mapper: node-postgres returns ::date
-    // as a 'YYYY-MM-DD' string, but normalize defensively in case a driver
-    // hands back a Date (same lesson as listConversationsWithPreview).
-    const byDay = dayRows.map((r) => {
-      const raw: unknown = r.day;
-      return {
-        day:
-          raw instanceof Date
-            ? raw.toISOString().slice(0, 10)
-            : String(raw).slice(0, 10),
-        count: Number(r.value),
-      };
+      // Raw sql`` columns carry no Drizzle mapper: node-postgres returns ::date
+      // as a 'YYYY-MM-DD' string, but normalize defensively in case a driver
+      // hands back a Date (same lesson as listConversationsWithPreview).
+      const byDay = dayRows.map((r) => {
+        const raw: unknown = r.day;
+        return {
+          day:
+            raw instanceof Date
+              ? raw.toISOString().slice(0, 10)
+              : String(raw).slice(0, 10),
+          count: Number(r.value),
+        };
+      });
+
+      return { total, byStatus, byDay };
     });
-
-    return { total, byStatus, byDay };
   }
 
   async listByConversation(conversationId: string): Promise<Order[]> {
-    return this.db
-      .select()
-      .from(orders)
-      .where(eq(orders.conversationId, conversationId))
-      .orderBy(desc(orders.createdAt));
+    return this.tenantDb.tx((db) =>
+      db
+        .select()
+        .from(orders)
+        .where(eq(orders.conversationId, conversationId))
+        .orderBy(desc(orders.createdAt)),
+    );
   }
 
   /**
@@ -139,32 +147,38 @@ export class OrdersRepository {
   async findOpenDraftByConversation(
     conversationId: string,
   ): Promise<Order | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(orders)
-      .where(
-        and(
-          eq(orders.conversationId, conversationId),
-          eq(orders.status, 'draft'),
-        ),
-      )
-      .orderBy(desc(orders.createdAt))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(orders)
+        .where(
+          and(
+            eq(orders.conversationId, conversationId),
+            eq(orders.status, 'draft'),
+          ),
+        )
+        .orderBy(desc(orders.createdAt))
+        .limit(1);
+      return row;
+    });
   }
 
   async insert(input: NewOrder): Promise<Order> {
-    const [row] = await this.db.insert(orders).values(input).returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db.insert(orders).values(input).returning();
+      return row;
+    });
   }
 
   async updateStatus(id: string, status: string): Promise<Order | undefined> {
-    const [row] = await this.db
-      .update(orders)
-      .set({ status })
-      .where(eq(orders.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .update(orders)
+        .set({ status })
+        .where(eq(orders.id, id))
+        .returning();
+      return row;
+    });
   }
 
   // --- order_items ---
@@ -174,21 +188,25 @@ export class OrdersRepository {
     orderId: string,
     items: NewOrderItemInput[],
   ): Promise<OrderItem[]> {
-    if (items.length === 0) {
-      return [];
-    }
-    return this.db
-      .insert(orderItems)
-      .values(items.map((item) => ({ ...item, orderId })))
-      .returning();
+    return this.tenantDb.tx(async (db) => {
+      if (items.length === 0) {
+        return [];
+      }
+      return db
+        .insert(orderItems)
+        .values(items.map((item) => ({ ...item, orderId })))
+        .returning();
+    });
   }
 
   async listItemsByOrder(orderId: string): Promise<OrderItem[]> {
-    return this.db
-      .select()
-      .from(orderItems)
-      .where(eq(orderItems.orderId, orderId))
-      .orderBy(asc(orderItems.id));
+    return this.tenantDb.tx((db) =>
+      db
+        .select()
+        .from(orderItems)
+        .where(eq(orderItems.orderId, orderId))
+        .orderBy(asc(orderItems.id)),
+    );
   }
 
   /**
@@ -199,7 +217,7 @@ export class OrdersRepository {
     order: NewOrder,
     items: NewOrderItemInput[],
   ): Promise<{ order: Order; items: OrderItem[] }> {
-    return this.db.transaction(async (tx) => {
+    return this.tenantDb.tx(async (tx) => {
       const [createdOrder] = await tx.insert(orders).values(order).returning();
       const createdItems =
         items.length > 0
@@ -235,7 +253,7 @@ export class OrdersRepository {
     >,
     items: NewOrderItemInput[],
   ): Promise<{ order: Order; items: OrderItem[] } | null> {
-    return this.db.transaction(async (tx) => {
+    return this.tenantDb.tx(async (tx) => {
       // Lock the row and re-assert it is still an open draft; a concurrent admin
       // confirm/cancel must not be clobbered by the delete/overwrite below.
       const [locked] = await tx

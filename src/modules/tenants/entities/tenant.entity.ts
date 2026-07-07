@@ -44,30 +44,36 @@ export const tenants = pgTable(
 /**
  * The tenant_id column every domain table carries.
  *
- * DEFAULT current_setting('app.tenant_id', true)::uuid is deliberate: existing
- * INSERT paths that do not name tenant_id pick up the tenant bound to the
- * current transaction by TenantDb (set_config with is_local=true), and the RLS
- * WITH CHECK then verifies it. With no tenant bound the default evaluates to
- * NULL and the NOT NULL constraint rejects the write — fail-closed, loudly.
+ * DEFAULT NULLIF(current_setting('app.tenant_id', true), '')::uuid is
+ * deliberate: existing INSERT paths that do not name tenant_id pick up the
+ * tenant bound to the current transaction by TenantDb (set_config with
+ * is_local=true), and the RLS WITH CHECK then verifies it. With no tenant
+ * bound the default evaluates to NULL and the NOT NULL constraint rejects the
+ * write — fail-closed, loudly. The NULLIF matters: after a SET LOCAL
+ * transaction ends, an otherwise-unset custom GUC reads back as the EMPTY
+ * STRING (not NULL) on that session, and ''::uuid would turn every later
+ * unbound query on that pooled connection into a 22P02 cast error.
  */
 export const tenantIdColumn = () =>
   uuid('tenant_id')
     .notNull()
-    .default(sql`current_setting('app.tenant_id', true)::uuid`)
+    .default(sql`NULLIF(current_setting('app.tenant_id', true), '')::uuid`)
     .references(() => tenants.id, { onDelete: 'cascade' });
 
 /**
  * The single RLS policy attached to every domain table. USING gates reads,
- * WITH CHECK gates writes; current_setting(..., true) (missing_ok) returns NULL
- * when no tenant is bound, so the predicate matches zero rows — fail-closed,
- * never an error, never a leak. Table owners bypass it (migrations run as the
- * owner); the app connects as the non-owner app_runtime role, which is bound.
+ * WITH CHECK gates writes; NULLIF(current_setting(..., true), '') returns NULL
+ * both when the GUC was never set AND when a finished SET LOCAL left it as an
+ * empty string on the session, so the predicate matches zero rows — fail-
+ * closed, never an error, never a leak. Table owners bypass it (migrations run
+ * as the owner); the app connects as the non-owner app_runtime role, which is
+ * bound.
  */
 export const tenantIsolationPolicy = () =>
   pgPolicy('tenant_isolation', {
     for: 'all',
-    using: sql`tenant_id = current_setting('app.tenant_id', true)::uuid`,
-    withCheck: sql`tenant_id = current_setting('app.tenant_id', true)::uuid`,
+    using: sql`tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid`,
+    withCheck: sql`tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid`,
   });
 
 export const insertTenantSchema = createInsertSchema(tenants, {

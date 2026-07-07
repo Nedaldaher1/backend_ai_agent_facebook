@@ -13,7 +13,7 @@
  */
 
 import { ConversationsRepository } from '../conversations.repository';
-import type { Database } from '@/core/database/drizzle';
+import type { TenantDb } from '@/core/tenancy/tenant-db';
 
 // A chainable query builder whose every step returns itself and which resolves
 // (via `then`) to the supplied result when awaited — mirroring how Drizzle's
@@ -38,7 +38,10 @@ function makeRepo(rows: unknown[], total: number): ConversationsRepository {
       .mockReturnValueOnce(makeChain(rows))
       .mockReturnValueOnce(makeChain([{ value: total }])),
   };
-  return new ConversationsRepository(db as unknown as Database);
+  const tenantDb = {
+    tx: (fn: (db: unknown) => unknown) => fn(db),
+  } as unknown as TenantDb;
+  return new ConversationsRepository(tenantDb);
 }
 
 describe('ConversationsRepository.listConversationsWithPreview', () => {

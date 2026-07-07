@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import type { TenantContext } from '@/core/tenancy/tenant-context';
 import { ColorsService } from '../colors.service';
 import type { ColorsRepository } from '../colors.repository';
 import type { ProductImageColorsRepository } from '../product-image-colors.repository';
@@ -56,12 +57,16 @@ describe('ColorsService', () => {
     colorUsage,
   } as unknown as ProductImageColorsRepository;
 
+  // Single-tenant stub: these tests don't exercise cross-tenant isolation of
+  // the sentinel-id cache, just that it still resolves/caches correctly.
+  const tenantContext = { tenantId: 'tenant-a' } as unknown as TenantContext;
+
   let service: ColorsService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     // Fresh instance each test so the cached sentinel id never leaks across tests.
-    service = new ColorsService(repo, imageColors);
+    service = new ColorsService(repo, imageColors, tenantContext);
   });
 
   // --- getById ---

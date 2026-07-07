@@ -1,7 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, exists, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { DRIZZLE, type Database } from '@/core/database/drizzle';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { normalizeListOptions, type ListOptions } from '@/common/types/query';
 import { colors, type Color, type NewColor } from './entities/color.entity';
 import { productImageColors } from './entities/product-image-color.entity';
@@ -14,7 +14,7 @@ import { productImageColors } from './entities/product-image-color.entity';
  */
 @Injectable()
 export class ColorsRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDb) {}
 
   /**
    * The assignable-color list (used by the admin to tag images). System colors
@@ -23,33 +23,39 @@ export class ColorsRepository {
    * display via findById/findByFamily.
    */
   async list(opts: ListOptions = {}): Promise<Color[]> {
-    const { limit, offset, orderBy } = normalizeListOptions(opts);
-    const direction = orderBy === 'asc' ? asc : desc;
-    return this.db
-      .select()
-      .from(colors)
-      .where(eq(colors.isSystem, false))
-      .orderBy(direction(colors.createdAt))
-      .limit(limit)
-      .offset(offset);
+    return this.tenantDb.tx(async (db) => {
+      const { limit, offset, orderBy } = normalizeListOptions(opts);
+      const direction = orderBy === 'asc' ? asc : desc;
+      return db
+        .select()
+        .from(colors)
+        .where(eq(colors.isSystem, false))
+        .orderBy(direction(colors.createdAt))
+        .limit(limit)
+        .offset(offset);
+    });
   }
 
   async findById(id: string): Promise<Color | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(colors)
-      .where(eq(colors.id, id))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(colors)
+        .where(eq(colors.id, id))
+        .limit(1);
+      return row;
+    });
   }
 
   async findByFamily(family: string): Promise<Color | undefined> {
-    const [row] = await this.db
-      .select()
-      .from(colors)
-      .where(eq(colors.family, family))
-      .limit(1);
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .select()
+        .from(colors)
+        .where(eq(colors.family, family))
+        .limit(1);
+      return row;
+    });
   }
 
   /**
@@ -58,43 +64,53 @@ export class ColorsRepository {
    * the vision pipeline uses; `family` is unique per row, selectDistinct guards.
    */
   async distinctFamilies(): Promise<string[]> {
-    const rows = await this.db
-      .selectDistinct({ family: colors.family })
-      .from(colors)
-      .where(eq(colors.isSystem, false))
-      .orderBy(asc(colors.family));
-    return rows.map((r) => r.family);
+    return this.tenantDb.tx(async (db) => {
+      const rows = await db
+        .selectDistinct({ family: colors.family })
+        .from(colors)
+        .where(eq(colors.isSystem, false))
+        .orderBy(asc(colors.family));
+      return rows.map((r) => r.family);
+    });
   }
 
   /** Fetch the colors whose ids are in `ids` (used to validate image color sets). */
   async findManyByIds(ids: string[]): Promise<Color[]> {
-    if (ids.length === 0) return [];
-    return this.db.select().from(colors).where(inArray(colors.id, ids));
+    return this.tenantDb.tx(async (db) => {
+      if (ids.length === 0) return [];
+      return db.select().from(colors).where(inArray(colors.id, ids));
+    });
   }
 
   async insert(input: NewColor): Promise<Color> {
-    const [row] = await this.db.insert(colors).values(input).returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db.insert(colors).values(input).returning();
+      return row;
+    });
   }
 
   async updateById(
     id: string,
     patch: Partial<NewColor>,
   ): Promise<Color | undefined> {
-    const [row] = await this.db
-      .update(colors)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(eq(colors.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .update(colors)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(colors.id, id))
+        .returning();
+      return row;
+    });
   }
 
   async deleteById(id: string): Promise<Color | undefined> {
-    const [row] = await this.db
-      .delete(colors)
-      .where(eq(colors.id, id))
-      .returning();
-    return row;
+    return this.tenantDb.tx(async (db) => {
+      const [row] = await db
+        .delete(colors)
+        .where(eq(colors.id, id))
+        .returning();
+      return row;
+    });
   }
 
   /**
@@ -120,7 +136,7 @@ export class ColorsRepository {
   ): Promise<
     { reassignedImages: number; affectedProducts: number } | undefined
   > {
-    return this.db.transaction(async (tx) => {
+    return this.tenantDb.tx(async (tx) => {
       const [affected] = await tx
         .select({
           value: sql<number>`count(distinct ${productImageColors.productId})::int`,

@@ -11,6 +11,7 @@
 
 import { ConversationsRepository } from '../conversations.repository';
 import type { Database } from '@/core/database/drizzle';
+import type { TenantDb } from '@/core/tenancy/tenant-db';
 
 // ---------------------------------------------------------------------------
 // Drizzle mock: chainable UPDATE builder
@@ -31,6 +32,13 @@ function makeUpdateDb(rows: unknown[]): Database {
   } as unknown as Database;
 }
 
+/** Wrap a mocked Database so it satisfies the TenantDb.tx() contract in tests. */
+function makeTenantDb(db: Database): TenantDb {
+  return {
+    tx: (fn: (db: unknown) => unknown) => fn(db),
+  } as unknown as TenantDb;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -46,7 +54,7 @@ describe('ConversationsRepository.recordFirstTouchAttribution', () => {
       attributedAt: new Date(),
     };
     const db = makeUpdateDb([fakeRow]);
-    const repo = new ConversationsRepository(db);
+    const repo = new ConversationsRepository(makeTenantDb(db));
 
     const result = await repo.recordFirstTouchAttribution('conv-1', {
       adId: 'ad_111',
@@ -62,7 +70,7 @@ describe('ConversationsRepository.recordFirstTouchAttribution', () => {
   it('returns undefined when the conversation is already attributed (0 rows updated)', async () => {
     // Drizzle returns an empty array when WHERE matches no rows.
     const db = makeUpdateDb([]);
-    const repo = new ConversationsRepository(db);
+    const repo = new ConversationsRepository(makeTenantDb(db));
 
     const result = await repo.recordFirstTouchAttribution('conv-1', {
       adId: 'ad_111',
@@ -85,7 +93,7 @@ describe('ConversationsRepository.recordFirstTouchAttribution', () => {
         .mockResolvedValue([{ id: 'conv-guard', attributedAt: new Date() }]),
     };
     const db = { update: jest.fn(() => chain) } as unknown as Database;
-    const repo = new ConversationsRepository(db);
+    const repo = new ConversationsRepository(makeTenantDb(db));
 
     await repo.recordFirstTouchAttribution('conv-guard', { adRef: 'ref-1' });
 
@@ -134,7 +142,7 @@ describe('ConversationsRepository.recordFirstTouchAttribution', () => {
     };
     const db = { update: jest.fn(() => chain) } as unknown as Database;
 
-    const repo = new ConversationsRepository(db);
+    const repo = new ConversationsRepository(makeTenantDb(db));
     await repo.recordFirstTouchAttribution('conv-2', { adRef: 'spring-ref' });
 
     expect(db.update).toHaveBeenCalledTimes(1);
@@ -147,7 +155,7 @@ describe('ConversationsRepository.recordFirstTouchAttribution', () => {
 
   it('still writes attributedAt even when the attrib object is empty', async () => {
     const db = makeUpdateDb([{ id: 'conv-3', attributedAt: new Date() }]);
-    const repo = new ConversationsRepository(db);
+    const repo = new ConversationsRepository(makeTenantDb(db));
     const result = await repo.recordFirstTouchAttribution('conv-3', {});
 
     // A row was returned → the update succeeded.

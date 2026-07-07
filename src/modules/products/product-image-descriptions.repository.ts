@@ -1,6 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import { DRIZZLE, type Database } from '@/core/database/drizzle';
+import { TenantDb } from '@/core/tenancy/tenant-db';
 import { productImageDescriptions } from './entities/product-image-description.entity';
 
 /**
@@ -11,18 +11,20 @@ import { productImageDescriptions } from './entities/product-image-description.e
  */
 @Injectable()
 export class ProductImageDescriptionsRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDb) {}
 
   /** Every (storage key -> description) for a product, as a lookup map. */
   async getMapByProduct(productId: string): Promise<Record<string, string>> {
-    const rows = await this.db
-      .select({
-        storageKey: productImageDescriptions.storageKey,
-        description: productImageDescriptions.description,
-      })
-      .from(productImageDescriptions)
-      .where(eq(productImageDescriptions.productId, productId));
-    return Object.fromEntries(rows.map((r) => [r.storageKey, r.description]));
+    return this.tenantDb.tx(async (db) => {
+      const rows = await db
+        .select({
+          storageKey: productImageDescriptions.storageKey,
+          description: productImageDescriptions.description,
+        })
+        .from(productImageDescriptions)
+        .where(eq(productImageDescriptions.productId, productId));
+      return Object.fromEntries(rows.map((r) => [r.storageKey, r.description]));
+    });
   }
 
   /** Insert or replace the description of one image (idempotent upsert on PK). */
@@ -31,27 +33,31 @@ export class ProductImageDescriptionsRepository {
     storageKey: string,
     description: string,
   ): Promise<void> {
-    await this.db
-      .insert(productImageDescriptions)
-      .values({ productId, storageKey, description })
-      .onConflictDoUpdate({
-        target: [
-          productImageDescriptions.productId,
-          productImageDescriptions.storageKey,
-        ],
-        set: { description },
-      });
+    await this.tenantDb.tx(async (db) => {
+      await db
+        .insert(productImageDescriptions)
+        .values({ productId, storageKey, description })
+        .onConflictDoUpdate({
+          target: [
+            productImageDescriptions.productId,
+            productImageDescriptions.storageKey,
+          ],
+          set: { description },
+        });
+    });
   }
 
   /** Drop the description for one image (called when the image is removed). */
   async deleteForImage(productId: string, storageKey: string): Promise<void> {
-    await this.db
-      .delete(productImageDescriptions)
-      .where(
-        and(
-          eq(productImageDescriptions.productId, productId),
-          eq(productImageDescriptions.storageKey, storageKey),
-        ),
-      );
+    await this.tenantDb.tx(async (db) => {
+      await db
+        .delete(productImageDescriptions)
+        .where(
+          and(
+            eq(productImageDescriptions.productId, productId),
+            eq(productImageDescriptions.storageKey, storageKey),
+          ),
+        );
+    });
   }
 }
